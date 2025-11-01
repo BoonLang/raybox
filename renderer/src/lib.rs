@@ -1,10 +1,16 @@
+mod border_pipeline;
 mod layout;
 mod pipeline;
 mod rectangle_pipeline;
+mod text_renderer;
+mod textured_quad_pipeline;
 
 pub use layout::*;
+use border_pipeline::{BorderPipeline, create_border_edges};
 use pipeline::TrianglePipeline;
 use rectangle_pipeline::{RectanglePipeline, RectangleInstance};
+use text_renderer::{TextRenderer, TextTexture};
+use textured_quad_pipeline::{TexturedQuadPipeline, TexturedQuadInstance};
 
 use wasm_bindgen::prelude::*;
 
@@ -48,6 +54,9 @@ struct GpuContext {
     surface_config: wgpu::SurfaceConfiguration,
     pipeline: TrianglePipeline,
     rectangle_pipeline: RectanglePipeline,
+    border_pipeline: BorderPipeline,
+    text_pipeline: TexturedQuadPipeline,
+    text_renderer: TextRenderer,
 }
 
 async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
@@ -127,10 +136,28 @@ async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
     let rectangle_pipeline = RectanglePipeline::new(
         &device,
         surface_format,
-        width,
-        height,
+        700, // Canvas width (full viewport)
+        700, // Canvas height (full viewport)
         100, // initial capacity for 100 rectangles
     );
+    let border_pipeline = BorderPipeline::new(
+        &device,
+        surface_format,
+        700, // Canvas width (full viewport)
+        700, // Canvas height (full viewport)
+        400, // initial capacity for 400 border edges (100 elements × 4 edges)
+    );
+    let text_pipeline = TexturedQuadPipeline::new(
+        &device,
+        surface_format,
+        700, // Canvas width (full viewport)
+        700, // Canvas height (full viewport)
+        100, // initial capacity for 100 text elements
+    );
+
+    // Create text renderer
+    let text_renderer = TextRenderer::new()
+        .map_err(|e| JsValue::from_str(&format!("Failed to create text renderer: {}", e)))?;
 
     Ok(GpuContext {
         device,
@@ -139,6 +166,9 @@ async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
         surface_config,
         pipeline,
         rectangle_pipeline,
+        border_pipeline,
+        text_pipeline,
+        text_renderer,
     })
 }
 
@@ -160,8 +190,16 @@ fn render_triangle(gpu: &GpuContext) -> Result<(), JsValue> {
 
 /// Convert layout elements to rectangle instances and render them
 fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValue> {
-    // Create rectangle instances from visible layout elements
-    let mut instances = Vec::new();
+    // Calculate content area offset from header element to translate coordinates to (0,0) origin
+    let (offset_x, offset_y) = layout.elements.iter()
+        .find(|e| e.has_class("header"))
+        .map(|e| (e.x, e.y))
+        .unwrap_or((0.0, 0.0));
+
+    log::info!("Content area offset: ({}, {})", offset_x, offset_y);
+
+    // Phase 1: Collect rectangle instances (backgrounds)
+    let mut rect_instances = Vec::new();
 
     for element in &layout.elements {
         // Skip invisible elements
@@ -169,32 +207,84 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
             continue;
         }
 
-        // Parse background color (default to white if not specified)
+        // Parse background color
         let color = if let Some(bg_color) = &element.background_color {
             let (r, g, b, a) = parse_color(bg_color).unwrap_or((1.0, 1.0, 1.0, 1.0));
             [r, g, b, a]
         } else {
-            // Transparent for elements without background
-            [1.0, 1.0, 1.0, 0.0]
+            [1.0, 1.0, 1.0, 0.0] // Transparent
         };
 
-        // Skip fully transparent elements
-        if color[3] == 0.0 {
+        if color[3] > 0.0 {
+            rect_instances.push(RectangleInstance::new(
+                element.x - offset_x,
+                element.y - offset_y,
+                element.width,
+                element.height,
+                color,
+            ));
+        }
+    }
+
+    // Phase 1.5: Collect border instances
+    let mut border_instances = Vec::new();
+
+    for element in &layout.elements {
+        if !element.is_visible() || !element.has_border() {
             continue;
         }
 
-        instances.push(RectangleInstance::new(
-            element.x,
-            element.y,
-            element.width,
-            element.height,
-            color,
-        ));
+        if let (Some(border_width), Some(border_color)) =
+            (element.get_border_width(), &element.border_color)
+        {
+            if let Some((r, g, b, a)) = parse_color(border_color) {
+                let edges = create_border_edges(
+                    element.x - offset_x,
+                    element.y - offset_y,
+                    element.width,
+                    element.height,
+                    border_width,
+                    [r, g, b, a],
+                );
+                border_instances.extend_from_slice(&edges);
+            }
+        }
+    }
+
+    // Phase 2: Render text elements to textures
+    let mut text_instances = Vec::new();
+    let mut text_textures = Vec::new();
+
+    for element in &layout.elements {
+        if !element.is_visible() {
+            continue;
+        }
+
+        // Render text if element has text content
+        if let Some(rendered_text) = gpu.text_renderer.render_text(element) {
+            let texture = TextTexture::from_rendered_text(
+                &gpu.device,
+                &gpu.queue,
+                gpu.text_pipeline.bind_group_layout(),
+                &rendered_text,
+            );
+
+            text_instances.push(TexturedQuadInstance::new(
+                rendered_text.x - offset_x,
+                rendered_text.y - offset_y,
+                texture.width as f32,
+                texture.height as f32,
+            ));
+
+            text_textures.push(texture);
+        }
     }
 
     log::info!(
-        "Rendering {} visible rectangles out of {} total elements",
-        instances.len(),
+        "Rendering {} rectangles, {} border edges, and {} text elements out of {} total elements",
+        rect_instances.len(),
+        border_instances.len(),
+        text_instances.len(),
         layout.elements.len()
     );
 
@@ -206,13 +296,48 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
 
     let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-    // Render all rectangles
+    // Render rectangles (backgrounds) first
     gpu.rectangle_pipeline.render(
         &gpu.device,
         &gpu.queue,
         &view,
-        &instances,
+        &rect_instances,
     );
+
+    // Render borders on top of backgrounds
+    if !border_instances.is_empty() {
+        gpu.border_pipeline.render(
+            &gpu.device,
+            &gpu.queue,
+            &view,
+            &border_instances,
+        );
+    }
+
+    // Render text on top
+    if !text_instances.is_empty() {
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Text Render Encoder"),
+            });
+
+        let bind_groups: Vec<&wgpu::BindGroup> = text_textures
+            .iter()
+            .map(|t| &t.bind_group)
+            .collect();
+
+        gpu.text_pipeline.render(
+            &gpu.device,
+            &gpu.queue,
+            &mut encoder,
+            &view,
+            &text_instances,
+            &bind_groups,
+        );
+
+        gpu.queue.submit(std::iter::once(encoder.finish()));
+    }
 
     frame.present();
 

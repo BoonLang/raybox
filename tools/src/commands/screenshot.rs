@@ -1,50 +1,68 @@
 use anyhow::{Context, Result};
-use headless_chrome::{Browser, LaunchOptions};
+use chromiumoxide::browser::{Browser, BrowserConfig};
+use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotParams;
+use futures::StreamExt;
 use std::fs;
 
 pub fn run(url: &str, output: &str, width: u32, height: u32) -> Result<()> {
     log::info!("Taking screenshot of {} ({}x{}) -> {}", url, width, height, output);
 
-    println!("✓ Launching Chrome...");
+    // Use tokio runtime for async operations
+    tokio::runtime::Runtime::new()?.block_on(async {
+        println!("✓ Launching Chrome...");
 
-    // Configure Chrome launch options
-    let options = LaunchOptions::default_builder()
-        .window_size(Some((width, height)))
-        .headless(true)
-        .build()
-        .context("Failed to build launch options")?;
+        // Configure Chrome with WebGPU flags (CRITICAL - see CLAUDE.md)
+        let webgpu_flags = vec![
+            "--enable-unsafe-webgpu",
+            "--enable-webgpu-developer-features",
+            "--enable-features=Vulkan,VulkanFromANGLE",
+            "--enable-vulkan",
+            "--use-angle=vulkan",
+            "--disable-software-rasterizer",
+            "--ozone-platform=x11",
+        ];
 
-    let browser = Browser::new(options)
+        let (browser, mut handler) = Browser::launch(
+            BrowserConfig::builder()
+                .with_head() // Show browser window (WebGPU needs this)
+                .window_size(width, height)
+                .args(webgpu_flags)
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to build browser config: {}", e))?
+        )
+        .await
         .context("Failed to launch Chrome")?;
 
-    println!("  Navigating to: {}", url);
+        // Spawn handler task
+        tokio::spawn(async move {
+            while handler.next().await.is_some() {}
+        });
 
-    let tab = browser.new_tab()
-        .context("Failed to create new tab")?;
+        println!("  Navigating to: {}", url);
 
-    tab.navigate_to(url)
-        .context(format!("Failed to navigate to {}", url))?;
+        let page = browser
+            .new_page(url)
+            .await
+            .context("Failed to create new page")?;
 
-    // Wait for page to load
-    tab.wait_until_navigated()
-        .context("Failed to wait for navigation")?;
+        // Wait for page to load (give WebGPU time to initialize)
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-    println!("  Capturing screenshot...");
+        println!("  Capturing screenshot...");
 
-    let screenshot = tab
-        .capture_screenshot(
-            headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
-            None,
-            None,
-            true,
-        )
-        .context("Failed to capture screenshot")?;
+        let screenshot_data = page
+            .screenshot(CaptureScreenshotParams::default())
+            .await
+            .context("Failed to capture screenshot")?;
 
-    fs::write(output, &screenshot)
-        .context(format!("Failed to write screenshot to {}", output))?;
+        fs::write(output, &screenshot_data)
+            .context(format!("Failed to write screenshot to {}", output))?;
 
-    println!("✓ Screenshot saved: {}", output);
-    println!("  Size: {} bytes", screenshot.len());
+        println!("✓ Screenshot saved: {}", output);
+        println!("  Size: {} bytes", screenshot_data.len());
+
+        Ok::<(), anyhow::Error>(())
+    })?;
 
     Ok(())
 }

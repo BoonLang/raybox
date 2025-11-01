@@ -31,3 +31,4 @@ venv/
 # Node.js (should not exist in Rust-only project!)
 node_modules/
 package-lock.json
+renderer/web/

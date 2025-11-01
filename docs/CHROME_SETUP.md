@@ -22,24 +22,37 @@ google-chrome \
 
 ## Required Flags Explained
 
-### Core WebGPU Flags
+### Core WebGPU Flags (REQUIRED)
 
 - `--enable-unsafe-webgpu` - **REQUIRED** Enables WebGPU on Linux (it's behind a flag)
 - `--enable-webgpu-developer-features` - Additional debug/profiling features
-
-### GPU Backend Flags
-
-- `--enable-features=Vulkan` - Use Vulkan backend (faster than OpenGL)
+- `--enable-features=Vulkan,VulkanFromANGLE` - Use Vulkan backend (faster than OpenGL)
 - `--enable-vulkan` - Enable Vulkan support
 - `--use-angle=vulkan` - ANGLE uses Vulkan (not OpenGL)
 - `--disable-software-rasterizer` - Prevent fallback to CPU renderer
+
+**Minimal flags** (used by `canvas-tools` commands):
+```bash
+--enable-unsafe-webgpu
+--enable-webgpu-developer-features
+--enable-features=Vulkan,VulkanFromANGLE
+--enable-vulkan
+--use-angle=vulkan
+--disable-software-rasterizer
+--ozone-platform=x11
+```
 
 ### Linux-Specific
 
 - `--ozone-platform=x11` - Use X11 instead of Wayland (more stable for WebGPU)
   - Remove this if you're on Wayland and it works
-- `--remote-debugging-port=9222` - For CDP automation (optional for manual testing)
-- `--user-data-dir=/tmp/chrome-canvas-webgpu` - Isolate profile (optional)
+  - **Note:** `canvas-tools` always includes this flag
+
+### Optional Flags (Manual Testing Only)
+
+- `--remote-debugging-port=9222` - For CDP automation
+  - **Note:** `canvas-tools` manages this automatically
+- `--user-data-dir=/tmp/chrome-canvas-webgpu` - Isolate profile
 
 ### Optional (but recommended)
 
@@ -318,7 +331,57 @@ GPU rendering enabled.
 
 ## Automation (CDP)
 
-For automated testing via Chrome DevTools Protocol:
+### Rust Tools (Recommended)
+
+The `canvas-tools` CLI automatically applies WebGPU flags when launching Chrome:
+
+```bash
+# Take screenshot (auto-applies WebGPU flags)
+cargo run -p tools -- screenshot \
+  --url http://localhost:8000 \
+  --output /tmp/test.png \
+  --width 700 \
+  --height 700
+
+# Check console for errors (auto-applies WebGPU flags)
+cargo run -p tools -- check-console \
+  --url http://localhost:8000 \
+  --wait 5
+```
+
+**Standard Testing Sizes**:
+- **Quick verification:** 700×700px (recommended for rapid testing)
+- **Full reference:** 1920×1080px (matches reference layout data)
+
+**Implementation Details**:
+
+Both `screenshot` and `check-console` commands use `chromiumoxide` with the following configuration:
+
+```rust
+let webgpu_flags = vec![
+    "--enable-unsafe-webgpu",
+    "--enable-webgpu-developer-features",
+    "--enable-features=Vulkan,VulkanFromANGLE",
+    "--enable-vulkan",
+    "--use-angle=vulkan",
+    "--disable-software-rasterizer",
+    "--ozone-platform=x11",
+];
+
+Browser::launch(
+    BrowserConfig::builder()
+        .with_head()  // WebGPU requires visible window
+        .args(webgpu_flags)
+        .build()?
+)
+```
+
+**Why Non-Headless?**
+WebGPU hardware acceleration typically requires a visible window (`.with_head()`). Headless mode often falls back to software rendering.
+
+### Manual CDP Testing
+
+For manual automation via Chrome DevTools Protocol:
 
 ```bash
 # Launch with debugging port
@@ -331,7 +394,7 @@ google-chrome \
   http://localhost:8080/test_webgpu.html
 ```
 
-**Note**: Headless WebGPU is experimental. May not work on all systems.
+**Note**: Headless WebGPU is experimental. May not work on all systems. Use Rust tools instead.
 
 ---
 

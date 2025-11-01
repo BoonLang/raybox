@@ -79,6 +79,21 @@ Before claiming a feature is "done":
 
 **No feature is complete without tests.**
 
+**Standard Testing Sizes:**
+- **Quick verification:** 700×700px (use this for rapid manual/automated testing)
+- **Full reference:** 1920×1080px (matches `reference/todomvc_dom_layout.json`)
+
+**Screenshot commands:**
+```bash
+# Quick 700x700 verification
+cargo run -p tools -- screenshot --url http://localhost:8000 --output /tmp/test.png --width 700 --height 700
+
+# Full 1920x1080 reference comparison
+cargo run -p tools -- screenshot --url http://localhost:8000 --output /tmp/full.png --width 1920 --height 1080
+```
+
+**Note:** Both `screenshot` and `check-console` commands automatically use required WebGPU flags.
+
 ### 6. Self-Verification Before Asking User ⚠️ CRITICAL
 
 **NEVER ask the user to confirm something you can verify yourself.**
@@ -112,14 +127,65 @@ Before asking "Can you confirm X works?":
 - Integration tests that verify browser state
 - Log parsing and error detection
 
+### 7. Git and Documentation Practices ⚠️ CRITICAL
+
+**NEVER do these things:**
+
+❌ **NO placeholder authors or bot identities**
+```bash
+# WRONG - placeholder emails
+user.email = "canvas.bot@example.com"
+user.email = "ai@example.com"
+
+# WRONG - mentioning AI in author
+Author: Claude <claude@anthropic.com>
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+
+# CORRECT - use the user's real identity
+user.name = "Martin Kavík"
+user.email = "martin@kavik.cz"
+```
+
+❌ **NO time estimates in tasks or specs**
+```markdown
+WRONG: "Implement feature X (2 hours)"
+WRONG: "Should take about 30 minutes"
+CORRECT: "Implement feature X"
+```
+
+❌ **NO dates or times in specs or documentation**
+```markdown
+WRONG: "Last updated: 2025-11-01"
+WRONG: "Written on November 1, 2025"
+WRONG: "Created at 23:45"
+CORRECT: No date/time stamps in content (git history tracks this)
+```
+
+**Exception:** Date stamps are OK in:
+- CLAUDE.md header (for AI agent context freshness)
+- CHANGELOG.md entries (required for changelogs)
+- Reference metadata (screenshot capture dates)
+
+**Why these rules?**
+
+1. **Git attribution matters** - Commits should reflect the human developer, not the AI
+2. **Time estimates are lies** - They're always wrong and create false expectations
+3. **Dates rot quickly** - Documentation becomes "outdated" even when content is fresh
+4. **Git is the source of truth** - Use `git log` for temporal information
+
+**When committing:**
+- Use `jj config list | grep user` to verify your identity
+- If you see a placeholder, run: `jj config set --user user.email "your@email.com"`
+- Fix commit authors with: `jj metaedit --update-author`
+
 ---
 
 ## 📂 Project Structure
 
 ```
 canvas_3d_6/
-├── Cargo.toml                    # Workspace root
-├── AGENTS.md                     # THIS FILE - read first!
+├── Cargo.toml                    # Workspace root (tools + renderer)
+├── CLAUDE.md                     # THIS FILE - read first!
 ├── specs.md                      # Full technical specification
 ├── RUST_ONLY_ARCHITECTURE.md     # Why and how Rust-only
 ├── PROFILING_STRATEGY.md         # CPU melting prevention
@@ -137,22 +203,52 @@ canvas_3d_6/
 │   ├── REFERENCE_METADATA.md     # Screenshot metadata
 │   └── todomvc_populated.html    # Static HTML for testing
 │
-├── tools/                        # Rust dev tools crate
+├── renderer/                     # WASM WebGPU renderer crate
 │   ├── Cargo.toml
 │   └── src/
-│       ├── main.rs               # CLI entry point
-│       ├── commands/             # Subcommands
-│       │   ├── extract_dom.rs    # ✅ Extracts layout from CSS analysis
-│       │   ├── compare_layouts.rs # TODO: Compare reference vs actual
-│       │   ├── visualize_layout.rs # TODO: Generate HTML visualization
-│       │   ├── serve.rs          # TODO: HTTP server
-│       │   ├── screenshot.rs     # TODO: Chrome CDP screenshots
-│       │   └── watch.rs          # TODO: File watching + auto-rebuild
-│       └── layout/
-│           └── mod.rs            # Layout data types (LayoutData, Element, etc.)
+│       ├── lib.rs                # Entry point, WebGPU init, main render loop
+│       ├── layout.rs             # Layout data types (shared with tools)
+│       ├── pipeline.rs           # Triangle pipeline (demo/debug)
+│       ├── rectangle_pipeline.rs # Rectangle rendering pipeline
+│       ├── border_pipeline.rs    # Border rendering pipeline
+│       ├── textured_quad_pipeline.rs # Textured quad for text rendering
+│       └── text_renderer.rs      # Canvas2D text-to-texture renderer
 │
-└── tools_python_old/             # OLD Python tools - DO NOT USE
-    └── *.py                      # ❌ Delete these after Rust versions done
+├── web/                          # Web assets (served by wasm-start)
+│   ├── index.html                # Main HTML with WASM bootstrap
+│   └── pkg/                      # Auto-generated WASM + JS bindings
+│       ├── renderer_bg.wasm      # Compiled WASM binary
+│       ├── renderer.js           # JS bindings (wasm-bindgen output)
+│       └── renderer.d.ts         # TypeScript definitions
+│
+├── tools/                        # Rust dev tools crate (canvas-tools CLI)
+│   ├── Cargo.toml
+│   ├── README.md                 # Full command documentation
+│   └── src/
+│       ├── main.rs               # CLI entry point
+│       ├── commands/
+│       │   ├── mod.rs            # Command registry
+│       │   ├── extract_dom.rs    # ✅ Extracts layout from CSS analysis
+│       │   ├── compare_layouts.rs # ✅ Compare reference vs actual
+│       │   ├── visualize_layout.rs # ✅ Generate HTML visualization
+│       │   ├── serve.rs          # ✅ HTTP server for static files
+│       │   ├── screenshot.rs     # ✅ Chrome CDP screenshots (with WebGPU flags)
+│       │   ├── integration_test.rs # ✅ Full workflow integration tests
+│       │   ├── check_console.rs  # ✅ Console monitoring via CDP (in cdp module)
+│       │   ├── wasm_build.rs     # ✅ WASM build orchestration
+│       │   └── wasm_start.rs     # ✅ Dev server with auto-reload
+│       ├── layout/
+│       │   └── mod.rs            # Layout data types (LayoutData, Element, etc.)
+│       ├── cdp/
+│       │   └── mod.rs            # Chrome DevTools Protocol helpers
+│       ├── wasm_bindgen.rs       # wasm-bindgen wrapper
+│       └── wasm_opt.rs           # wasm-opt wrapper
+│
+└── target/                       # Build artifacts
+    ├── wasm32-unknown-unknown/   # WASM build output
+    │   ├── debug/
+    │   └── release/
+    └── debug/                    # Native (tools) build output
 ```
 
 ---
@@ -166,22 +262,25 @@ canvas_3d_6/
 3. **extract-dom command** - Generates reference layout JSON (723 lines, 45 elements)
 4. **Documentation** - Comprehensive specs, architecture, profiling, workflow docs
 5. **Reference data** - todomvc_dom_layout.json with all positions
+6. **screenshot command** - Uses chromiumoxide with WebGPU flags (700×700 and 1920×1080)
+7. **check-console command** - Browser console monitoring with WebGPU support
+8. **wasm-build command** - Full WASM build pipeline with wasm-bindgen
+9. **wasm-start command** - Dev server with file watching and auto-reload
+10. **WebGPU automation** - All CDP tools apply required Chrome flags automatically
 
 ### 🚧 In Progress
 
-1. **AGENTS.md** - This document
-2. **Tests** - Need to write tests for extract-dom
-3. **compare-layouts** - Stub exists, needs implementation
-4. **visualize-layout** - Stub exists, needs implementation
+1. **Tests** - Need to write tests for extract-dom, screenshot, check-console
+2. **compare-layouts** - Stub exists, needs implementation
+3. **visualize-layout** - Stub exists, needs implementation
 
 ### ⏳ TODO
 
 1. **Implement remaining tools commands:**
    - compare-layouts (port from Python)
    - visualize-layout (port from Python)
-   - serve (use axum or miniserve wrapper)
-   - screenshot (use headless_chrome)
-   - watch (use notify crate)
+   - serve (HTTP server for static files)
+   - watch (file watcher for custom commands)
 
 2. **Write comprehensive tests:**
    - tools/src/layout/mod.rs - test LayoutData methods
@@ -208,22 +307,49 @@ canvas_3d_6/
 
 ---
 
-## 🔧 Tools Usage
+## 🔧 Development Workflow
+
+### Quick Start (Development Mode)
+
+The fastest way to start developing with auto-reload:
+
+```bash
+# Start dev server with file watching and auto-reload
+cargo run -p tools -- wasm-start
+
+# Or with browser auto-open:
+cargo run -p tools -- wasm-start --open
+```
+
+This command:
+1. Builds the WASM renderer (debug mode, fast compilation)
+2. Generates JS bindings with wasm-bindgen
+3. Starts HTTP server on http://localhost:8000
+4. Watches `renderer/src/` for file changes
+5. Auto-rebuilds and triggers browser reload on changes
+
+**The auto-reload workflow is CRITICAL for rapid iteration!**
 
 ### Build and Run
 
 ```bash
 # Build tools crate
-cargo build --release
+cargo build --release -p tools
+
+# Build WASM renderer
+cargo run -p tools -- wasm-build
 
 # Run extract-dom command
-./target/release/canvas-tools extract-dom --output reference/todomvc_dom_layout.json
+cargo run -p tools -- extract-dom --output reference/todomvc_dom_layout.json
+
+# Take screenshot for verification
+cargo run -p tools -- screenshot --url http://localhost:8000 --output /tmp/screenshot.png --width 1920
+
+# Check browser console for errors
+cargo run -p tools -- check-console --url http://localhost:8000
 
 # Run tests
-cargo test
-
-# Watch and auto-rebuild (once implemented)
-cargo run -p tools -- watch . --command "cargo build"
+cargo test --all
 ```
 
 ### Using `just` (recommended)

@@ -41,6 +41,7 @@ pub struct Element {
     pub height: f32,
 
     // Text content
+    #[serde(rename = "textContent")]
     pub text: Option<String>,
 
     // Font properties (all optional)
@@ -144,6 +145,39 @@ impl Element {
             width: self.width,
             height: self.height,
         }
+    }
+
+    /// Parse border width from CSS string (e.g., "1px" -> 1.0)
+    pub fn get_border_width(&self) -> Option<f32> {
+        let border_str = self.border_width.as_deref()?;
+        if border_str == "0px" || border_str == "0" {
+            return None;
+        }
+        if border_str.ends_with("px") {
+            border_str[..border_str.len() - 2].parse::<f32>().ok()
+        } else {
+            border_str.parse::<f32>().ok()
+        }
+    }
+
+    /// Check if element has a visible border
+    pub fn has_border(&self) -> bool {
+        if let Some(width) = self.get_border_width() {
+            if width > 0.0 {
+                if let Some(border_color) = &self.border_color {
+                    if parse_color(border_color).is_some() {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if element is header or footer (should be filtered out)
+    pub fn is_header_or_footer(&self) -> bool {
+        // Filter out header with class "header" and footer with classes "footer" or "info"
+        self.has_class("header") || self.has_class("footer") || self.has_class("info")
     }
 }
 

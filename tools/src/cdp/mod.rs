@@ -37,12 +37,24 @@ impl ConsoleMonitor {
         let (browser, mut handler) = match Browser::connect(&url).await {
             Ok(result) => result,
             Err(_) => {
-                // If connection fails, launch our own Chrome instance
+                // If connection fails, launch our own Chrome instance with WebGPU flags
                 use chromiumoxide::browser::BrowserConfig;
+
+                // CRITICAL: WebGPU requires these Chrome flags (see CLAUDE.md)
+                let webgpu_flags = vec![
+                    "--enable-unsafe-webgpu",
+                    "--enable-webgpu-developer-features",
+                    "--enable-features=Vulkan,VulkanFromANGLE",
+                    "--enable-vulkan",
+                    "--use-angle=vulkan",
+                    "--disable-software-rasterizer",
+                    "--ozone-platform=x11",  // Linux only, but harmless on other platforms
+                ];
 
                 Browser::launch(
                     BrowserConfig::builder()
                         .with_head() // Show browser window
+                        .args(webgpu_flags)
                         .build()
                         .map_err(|e| anyhow::anyhow!("Failed to build browser config: {}", e))?
                 )

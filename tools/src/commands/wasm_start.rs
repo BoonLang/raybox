@@ -61,6 +61,10 @@ pub fn run(release: bool, open_browser: bool, port: u16) -> Result<()> {
                 .arg("--remote-debugging-port=9222")
                 .arg("--enable-unsafe-webgpu")
                 .arg("--enable-webgpu-developer-features")
+                .arg("--enable-features=Vulkan")
+                .arg("--use-vulkan=native")
+                .arg("--enable-gpu-rasterization")
+                .arg("--ignore-gpu-blocklist")
                 .spawn()
             {
                 eprintln!("Failed to open Chrome: {}", e);
@@ -94,10 +98,18 @@ fn run_watcher(release: bool, build_id: Arc<Mutex<String>>) -> Result<()> {
         match res {
             Ok(event) => {
                 if let EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) = event.kind {
-                    // Watch Rust files, WGSL shaders, and Cargo.toml
+                    // Watch Rust, WGSL, HTML, JS, CSS files and Cargo.toml
+                    // but exclude build output directories (web/pkg/ and web/_api/)
                     if event.paths.iter().any(|p| {
+                        // Exclude build output directories to prevent infinite loop
+                        let path_str = p.to_string_lossy();
+                        if path_str.contains("web/pkg/") || path_str.contains("web/_api/") {
+                            return false;
+                        }
+
                         let ext = p.extension().and_then(|e| e.to_str());
-                        ext == Some("rs") || ext == Some("wgsl") || p.ends_with("Cargo.toml")
+                        ext == Some("rs") || ext == Some("wgsl") || ext == Some("html")
+                            || ext == Some("js") || ext == Some("css") || p.ends_with("Cargo.toml")
                     }) {
                         let _ = tx.send(());
                     }
@@ -110,6 +122,8 @@ fn run_watcher(release: bool, build_id: Arc<Mutex<String>>) -> Result<()> {
     // Watch renderer/src directory (includes .rs and .wgsl files)
     watcher.watch(Path::new("renderer/src"), RecursiveMode::Recursive)?;
     watcher.watch(Path::new("renderer/Cargo.toml"), RecursiveMode::NonRecursive)?;
+    // Watch web directory (includes .html, .js, .css files)
+    watcher.watch(Path::new("web"), RecursiveMode::Recursive)?;
 
     let mut last_rebuild = SystemTime::now();
 
