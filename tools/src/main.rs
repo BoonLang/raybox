@@ -158,6 +158,13 @@ enum Commands {
         #[arg(short, long, default_value = "8000")]
         port: u16,
     },
+
+    /// Run integration tests (cross-platform Rust implementation)
+    IntegrationTest {
+        /// URL to test
+        #[arg(short, long, default_value = "http://localhost:8000")]
+        url: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -284,6 +291,10 @@ fn main() -> Result<()> {
 
         Commands::WasmStart { release, open, port } => {
             commands::wasm_start::run(release, open, port)?;
+        }
+
+        Commands::IntegrationTest { url } => {
+            commands::integration_test::run(&url)?;
         }
     }
 

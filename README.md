@@ -8,7 +8,7 @@ Chrome-first WebGPU renderer for TodoMVC, proving our layout and text rendering 
 
 - ✅ **Comprehensive specs.md** - Complete technical specification
 - ✅ **100% Rust toolchain** - No Python/Node.js dependencies!
-- ✅ **Complete tools crate** with 10 commands:
+- ✅ **Complete tools crate** with 11 commands (all cross-platform!):
   - `wasm-build` - Build WASM renderer with wasm-opt
   - `wasm-start` - Dev server with auto-reload
   - `watch` - File watcher for auto-rebuild
@@ -19,6 +19,7 @@ Chrome-first WebGPU renderer for TodoMVC, proving our layout and text rendering 
   - `check-console` - CDP console monitoring + profiling + screenshots
   - `pixel-diff` - Screenshot comparison with similarity scoring
   - `screenshot` - Capture screenshots via Chrome
+  - `integration-test` - Full integration test suite (replaces bash script!)
 
 - ✅ **Reference data extracted**:
   - `reference/todomvc_dom_layout.json` - 45 elements with positions
@@ -43,8 +44,8 @@ Chrome-first WebGPU renderer for TodoMVC, proving our layout and text rendering 
 # Build and start development server
 cargo run -p tools -- wasm-start --open
 
-# Run integration tests
-./tools/integration_test.sh
+# Run integration tests (100% Rust, cross-platform!)
+cargo run -p tools -- integration-test
 
 # Check for console errors
 cargo run -p tools -- check-console

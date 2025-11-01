@@ -7,3 +7,4 @@ pub mod watch;
 pub mod pixel_diff;
 pub mod wasm_build;
 pub mod wasm_start;
+pub mod integration_test;

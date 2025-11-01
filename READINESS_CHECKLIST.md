@@ -57,7 +57,12 @@
 - [x] **Layout Visualization** (`cargo run -p tools -- visualize-layout`)
   - HTML visualization of layout
 
-## ✅ Integration Complete
+- [x] **Integration Test** (`cargo run -p tools -- integration-test`)
+  - Cross-platform Rust implementation (Windows/Linux/macOS!)
+  - Replaces bash script for true portability
+  - HTTP/WASM/JSON validation + CDP console checks
+
+## ✅ Integration Complete & Cross-Platform!
 
 ### 1. Integration Test Updated ✅
 **File**: `tools/integration_test.sh`

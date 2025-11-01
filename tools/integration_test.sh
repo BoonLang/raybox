@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
+# DEPRECATED: This bash script is kept for backwards compatibility only.
+# Use the cross-platform Rust command instead:
+#   cargo run -p tools -- integration-test
+#
 # Integration test for WebGPU renderer
 # Tests that the page loads without errors and renders the triangle
 #
-# Usage: ./integration_test.sh
+# Usage: ./integration_test.sh (deprecated - use Rust command above)
 
 set -euo pipefail
+
+echo "⚠️  WARNING: This bash script is deprecated."
+echo "   Please use: cargo run -p tools -- integration-test"
+echo "   (Cross-platform Rust implementation - works on Windows too!)"
+echo ""
 
 URL="http://localhost:8000"
 CDP_PORT=9222
