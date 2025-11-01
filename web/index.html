@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TodoMVC - Canvas WebGPU Renderer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #f5f5f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        #container {
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 100px;
+            font-weight: 100;
+            color: rgba(175, 47, 47, 0.15);
+            margin: 20px 0;
+        }
+
+        #canvas {
+            display: block;
+            width: 1920px;
+            height: 1080px;
+            border: 1px solid #ddd;
+            background: white;
+        }
+
+        #status {
+            margin-top: 20px;
+            padding: 10px 20px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        #status.loading {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        #status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        #status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        #info {
+            margin-top: 15px;
+            color: #777;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>todos</h1>
+        <canvas id="canvas" width="1920" height="1080"></canvas>
+        <div id="status" class="loading">Loading...</div>
+        <div id="info"></div>
+    </div>
+
+    <!-- Live Reload (dev mode) -->
+    <script>
+        // Poll for build changes and reload
+        let lastBuildId = null;
+
+        async function checkReload() {
+            try {
+                const response = await fetch('/_api/build_id');
+                if (response.ok) {
+                    const buildId = await response.text();
+                    if (lastBuildId === null) {
+                        lastBuildId = buildId;
+                    } else if (lastBuildId !== buildId) {
+                        console.log('🔄 Build updated, reloading...');
+                        location.reload();
+                    }
+                }
+            } catch (e) {
+                // Server might not be running (production), ignore
+            }
+        }
+
+        // Check every second
+        setInterval(checkReload, 1000);
+        checkReload();
+    </script>
+
+    <script type="module">
+        const statusEl = document.getElementById('status');
+        const infoEl = document.getElementById('info');
+
+        function setStatus(message, type) {
+            statusEl.textContent = message;
+            statusEl.className = type;
+        }
+
+        function setInfo(message) {
+            infoEl.textContent = message;
+        }
+
+        async function init() {
+            try {
+                // Load WASM module
+                setStatus('Loading WASM module...', 'loading');
+                const { default: init, start_renderer } = await import('./pkg/renderer.js');
+
+                // Initialize WASM
+                await init();
+                setStatus('WASM module loaded', 'loading');
+
+                // Load layout JSON
+                setStatus('Loading layout data...', 'loading');
+                const response = await fetch('/reference/todomvc_dom_layout.json');
+                if (!response.ok) {
+                    throw new Error(`Failed to load layout JSON: ${response.statusText}`);
+                }
+                const layoutJson = await response.text();
+                setInfo(`Loaded layout: ${(layoutJson.length / 1024).toFixed(1)} KB`);
+
+                // Start renderer
+                setStatus('Initializing renderer...', 'loading');
+                await start_renderer('canvas', layoutJson);
+
+                setStatus('Renderer ready!', 'success');
+            } catch (error) {
+                console.error('Initialization error:', error);
+                setStatus(`Error: ${error.message}`, 'error');
+                setInfo(error.stack || '');
+            }
+        }
+
+        // Check WebGPU support
+        if (!navigator.gpu) {
+            setStatus('WebGPU not supported', 'error');
+            setInfo('This demo requires WebGPU support. Use Chrome 113+ or Edge 113+');
+        } else {
+            init();
+        }
+    </script>
+</body>
+</html>

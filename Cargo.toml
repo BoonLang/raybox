@@ -1,0 +1,57 @@
+[workspace]
+members = ["tools", "renderer"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["TodoMVC Renderer Team"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+anyhow = "1.0"
+
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+
+# HTTP server
+miniserve = "0.27"
+
+# Chrome DevTools Protocol
+headless_chrome = "1.0"
+
+# Image processing
+image = "0.25"
+
+# File watching
+notify = "6.1"
+
+# Logging
+env_logger = "0.11"
+log = "0.4"
+
+# Date/time
+chrono = "0.4"
+
+# WebGPU rendering
+wgpu = "27.0"
+wasm-bindgen = "0.2.105"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "TextMetrics",
+    "ImageData",
+    "GpuCanvasContext",
+] }
+console_error_panic_hook = "0.1"
+web-time = "1.0"

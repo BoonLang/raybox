@@ -1,0 +1,33 @@
+# Rust
+/target/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+/dist/
+/output/
+
+# Temporary files
+/tmp/
+*.tmp
+
+# Python (old tools - will be deleted)
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+
+# Node.js (should not exist in Rust-only project!)
+node_modules/
+package-lock.json

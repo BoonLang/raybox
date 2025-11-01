@@ -1,0 +1,26 @@
+[package]
+name = "renderer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# WebGPU rendering
+wgpu = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true }
+console_error_panic_hook = { workspace = true }
+web-time = { workspace = true }
+
+# Serialization (for loading layout JSON)
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Logging
+log = { workspace = true }

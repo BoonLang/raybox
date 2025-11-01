@@ -1,0 +1,58 @@
+[package]
+name = "tools"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "canvas-tools"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { workspace = true }
+anyhow = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# HTTP server
+axum = "0.7"
+tower-http = { version = "0.5", features = ["fs", "trace"] }
+
+# Chrome DevTools Protocol
+headless_chrome = { workspace = true }
+chromiumoxide = { git = "https://github.com/mattsse/chromiumoxide", features = ["tokio-runtime"] }
+futures = "0.3"
+
+# Image processing
+image = { workspace = true }
+image-compare = "0.4"
+
+# File watching
+notify = { workspace = true }
+
+# Logging
+env_logger = { workspace = true }
+log = { workspace = true }
+
+# Utilities
+walkdir = "2.5"
+
+# Date/time
+chrono = { workspace = true }
+
+# WASM build tools
+reqwest = { version = "0.11", features = ["blocking"] }
+tar = "0.4"
+flate2 = { version = "1.0", features = ["rust_backend"] }
+brotli = "3.4"
+open = "5.0"
+
+[dev-dependencies]
+tempfile = "3.8"
