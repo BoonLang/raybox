@@ -76,6 +76,15 @@ impl TextRenderer {
         let metrics = self.context.measure_text(text).ok()?;
         let text_width = metrics.width() as u32;
 
+        // Calculate x position based on text alignment
+        let x_position = if element.text_align.as_deref() == Some("center") {
+            // Center text within element width
+            element.x + (element.width - text_width as f32) / 2.0
+        } else {
+            // Default: left-aligned
+            element.x
+        };
+
         // Add padding for better rendering
         let padding = 4;
         let canvas_width = text_width + padding * 2;
@@ -109,6 +118,21 @@ impl TextRenderer {
             .fill_text(text, padding as f64, baseline_y as f64)
             .ok()?;
 
+        // Render text decoration (strikethrough)
+        if let Some(decoration) = &element.text_decoration {
+            if decoration == "line-through" {
+                // Calculate line position (middle of text, slightly above center)
+                let line_y = baseline_y - (font_size / 3.0);
+
+                self.context.set_stroke_style_str(color);
+                self.context.set_line_width(1.0);
+                self.context.begin_path();
+                self.context.move_to(padding as f64, line_y as f64);
+                self.context.line_to((padding + text_width) as f64, line_y as f64);
+                self.context.stroke();
+            }
+        }
+
         // Extract image data
         let image_data = self
             .context
@@ -118,7 +142,7 @@ impl TextRenderer {
         let rgba_data = image_data.data().0;
 
         Some(RenderedText {
-            x: element.x,
+            x: x_position,
             y: element.y,
             width: canvas_width,
             height: canvas_height,
@@ -134,6 +158,56 @@ impl TextRenderer {
         } else {
             None
         }
+    }
+
+    /// Render a checkbox (circle with optional checkmark) to a bitmap
+    pub fn render_checkbox(&mut self, element: &Element) -> Option<RenderedText> {
+        let checked = element.checked.unwrap_or(false);
+        let size = 40; // 40x40 px from layout
+
+        // Set canvas size
+        self.canvas.set_width(size);
+        self.canvas.set_height(size);
+
+        // Clear canvas
+        self.context.clear_rect(0.0, 0.0, size as f64, size as f64);
+
+        let center = size as f64 / 2.0;
+        let radius = 18.0;
+
+        // Draw circle border
+        self.context.begin_path();
+        self.context.arc(center, center, radius, 0.0, 2.0 * std::f64::consts::PI).ok()?;
+        self.context.set_stroke_style_str("#dddddd");
+        self.context.set_line_width(1.0);
+        self.context.stroke();
+
+        if checked {
+            // Draw checkmark
+            self.context.set_stroke_style_str("#5dc2af");
+            self.context.set_line_width(2.0);
+            self.context.begin_path();
+            self.context.move_to(10.0, 20.0);
+            self.context.line_to(18.0, 28.0);
+            self.context.line_to(30.0, 12.0);
+            self.context.stroke();
+        }
+
+        // Extract image data
+        let image_data = self
+            .context
+            .get_image_data(0.0, 0.0, size as f64, size as f64)
+            .ok()?;
+
+        let rgba_data = image_data.data().0;
+
+        Some(RenderedText {
+            x: element.x,
+            y: element.y,
+            width: size,
+            height: size,
+            image_data: rgba_data,
+        })
     }
 }
 

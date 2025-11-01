@@ -57,6 +57,8 @@ pub struct Element {
     pub line_height: Option<String>,
     #[serde(rename = "textAlign")]
     pub text_align: Option<String>,
+    #[serde(rename = "textDecoration")]
+    pub text_decoration: Option<String>,
 
     // Display and positioning
     pub display: Option<String>,
@@ -76,6 +78,8 @@ pub struct Element {
     pub border_style: Option<String>,
     #[serde(rename = "borderRadius")]
     pub border_radius: Option<String>,
+    #[serde(rename = "borderBottom")]
+    pub border_bottom: Option<String>,
 
     // Other styles
     #[serde(rename = "boxShadow")]
@@ -87,6 +91,10 @@ pub struct Element {
     pub margin: Option<String>,
     #[serde(rename = "maxWidth")]
     pub max_width: Option<String>,
+
+    // Input element properties
+    pub placeholder: Option<String>,
+    pub checked: Option<bool>,
 }
 
 /// Element position and dimensions (helper struct)
@@ -162,6 +170,7 @@ impl Element {
 
     /// Check if element has a visible border
     pub fn has_border(&self) -> bool {
+        // Check standard border properties
         if let Some(width) = self.get_border_width() {
             if width > 0.0 {
                 if let Some(border_color) = &self.border_color {
@@ -171,7 +180,35 @@ impl Element {
                 }
             }
         }
+
+        // Check borderBottom shorthand
+        if self.border_bottom.is_some() {
+            return true;
+        }
+
         false
+    }
+
+    /// Parse borderBottom shorthand (e.g., "1px solid #ededed" -> (width, color))
+    pub fn parse_border_bottom(&self) -> Option<(f32, String)> {
+        let border_str = self.border_bottom.as_ref()?;
+        let parts: Vec<&str> = border_str.split_whitespace().collect();
+
+        if parts.len() >= 3 {
+            // Format: "1px solid #ededed"
+            let width_str = parts[0];
+            let color_str = parts[2];
+
+            let width = if width_str.ends_with("px") {
+                width_str[..width_str.len() - 2].parse::<f32>().ok()?
+            } else {
+                width_str.parse::<f32>().ok()?
+            };
+
+            Some((width, color_str.to_string()))
+        } else {
+            None
+        }
     }
 
     /// Check if element is header or footer (should be filtered out)
@@ -200,6 +237,37 @@ pub fn parse_color(color_str: &str) -> Option<(f32, f32, f32, f32)> {
                 1.0
             };
             return Some((r, g, b, a));
+        }
+    }
+
+    // Handle hex colors (#RGB, #RRGGBB, #RRGGBBAA)
+    if color_str.starts_with('#') {
+        let hex = &color_str[1..];
+
+        match hex.len() {
+            3 => {
+                // #RGB -> #RRGGBB
+                let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()? as f32 / 255.0;
+                let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()? as f32 / 255.0;
+                let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()? as f32 / 255.0;
+                return Some((r, g, b, 1.0));
+            }
+            6 => {
+                // #RRGGBB
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()? as f32 / 255.0;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()? as f32 / 255.0;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()? as f32 / 255.0;
+                return Some((r, g, b, 1.0));
+            }
+            8 => {
+                // #RRGGBBAA
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()? as f32 / 255.0;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()? as f32 / 255.0;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()? as f32 / 255.0;
+                let a = u8::from_str_radix(&hex[6..8], 16).ok()? as f32 / 255.0;
+                return Some((r, g, b, a));
+            }
+            _ => {}
         }
     }
 

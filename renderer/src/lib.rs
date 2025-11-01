@@ -190,11 +190,13 @@ fn render_triangle(gpu: &GpuContext) -> Result<(), JsValue> {
 
 /// Convert layout elements to rectangle instances and render them
 fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValue> {
-    // Calculate content area offset from header element to translate coordinates to (0,0) origin
-    let (offset_x, offset_y) = layout.elements.iter()
-        .find(|e| e.has_class("header"))
-        .map(|e| (e.x, e.y))
-        .unwrap_or((0.0, 0.0));
+    // Calculate vertical offset to bring h1 title to top of canvas
+    // Keep horizontal centering from reference layout (don't offset x-axis)
+    let offset_x = 0.0;
+    let offset_y = layout.elements.iter()
+        .find(|e| e.tag == "h1")
+        .map(|e| e.y)
+        .unwrap_or(0.0);
 
     log::info!("Content area offset: ({}, {})", offset_x, offset_y);
 
@@ -204,6 +206,18 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
     for element in &layout.elements {
         // Skip invisible elements
         if !element.is_visible() {
+            continue;
+        }
+
+        // Special case: input elements default to white background
+        if element.tag == "input" {
+            rect_instances.push(RectangleInstance::new(
+                element.x - offset_x,
+                element.y - offset_y,
+                element.width,
+                element.height,
+                [1.0, 1.0, 1.0, 1.0], // White background for inputs
+            ));
             continue;
         }
 
@@ -234,6 +248,7 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
             continue;
         }
 
+        // Try standard border properties first
         if let (Some(border_width), Some(border_color)) =
             (element.get_border_width(), &element.border_color)
         {
@@ -247,6 +262,22 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
                     [r, g, b, a],
                 );
                 border_instances.extend_from_slice(&edges);
+            }
+        }
+        // Try borderBottom shorthand
+        else if let Some((border_width, border_color_str)) = element.parse_border_bottom() {
+            if let Some((r, g, b, a)) = parse_color(&border_color_str) {
+                // For borderBottom, only draw bottom edge
+                let bottom_edge = create_border_edges(
+                    element.x - offset_x,
+                    element.y - offset_y,
+                    element.width,
+                    element.height,
+                    border_width,
+                    [r, g, b, a],
+                );
+                // Only take the bottom edge (index 2 of the 4 edges)
+                border_instances.push(bottom_edge[2]);
             }
         }
     }
@@ -277,6 +308,58 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
             ));
 
             text_textures.push(texture);
+        }
+
+        // Render placeholder for input elements
+        if element.tag == "input" {
+            if let Some(placeholder) = &element.placeholder {
+                // Create modified element for placeholder rendering
+                let mut placeholder_elem = element.clone();
+                placeholder_elem.text = Some(placeholder.clone());
+                placeholder_elem.color = Some("rgba(0, 0, 0, 0.4)".to_string()); // Gray placeholder
+
+                // Adjust x position for padding-left (60px from CSS)
+                placeholder_elem.x = element.x + 60.0;
+
+                if let Some(rendered_text) = gpu.text_renderer.render_text(&placeholder_elem) {
+                    let texture = TextTexture::from_rendered_text(
+                        &gpu.device,
+                        &gpu.queue,
+                        gpu.text_pipeline.bind_group_layout(),
+                        &rendered_text,
+                    );
+
+                    text_instances.push(TexturedQuadInstance::new(
+                        rendered_text.x - offset_x,
+                        rendered_text.y - offset_y,
+                        texture.width as f32,
+                        texture.height as f32,
+                    ));
+
+                    text_textures.push(texture);
+                }
+            }
+        }
+
+        // Render checkboxes for toggle inputs
+        if element.tag == "input" && element.has_class("toggle") {
+            if let Some(rendered_checkbox) = gpu.text_renderer.render_checkbox(element) {
+                let texture = TextTexture::from_rendered_text(
+                    &gpu.device,
+                    &gpu.queue,
+                    gpu.text_pipeline.bind_group_layout(),
+                    &rendered_checkbox,
+                );
+
+                text_instances.push(TexturedQuadInstance::new(
+                    rendered_checkbox.x - offset_x,
+                    rendered_checkbox.y - offset_y,
+                    texture.width as f32,
+                    texture.height as f32,
+                ));
+
+                text_textures.push(texture);
+            }
         }
     }
 

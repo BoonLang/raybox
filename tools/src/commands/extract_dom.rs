@@ -5,8 +5,8 @@ use std::fs;
 use crate::layout::{Element, LayoutData, Metadata, Summary, Viewport};
 
 // Viewport settings
-const VIEWPORT_WIDTH: u32 = 1920;
-const VIEWPORT_HEIGHT: u32 = 1080;
+const VIEWPORT_WIDTH: u32 = 700;
+const VIEWPORT_HEIGHT: u32 = 700;
 const BODY_MAX_WIDTH: f32 = 550.0;
 
 // CSS-derived measurements

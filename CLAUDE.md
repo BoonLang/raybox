@@ -146,32 +146,62 @@ user.name = "Martin Kavík"
 user.email = "martin@kavik.cz"
 ```
 
-❌ **NO time estimates in tasks or specs**
+❌ **NO time estimates ANYWHERE**
 ```markdown
 WRONG: "Implement feature X (2 hours)"
 WRONG: "Should take about 30 minutes"
+WRONG: "Time estimate: 1-2 hours"
+WRONG: "Quick fix (15 minutes)"
+WRONG: "This will take approximately..."
 CORRECT: "Implement feature X"
+CORRECT: "Fix viewport sizing issue"
 ```
 
-❌ **NO dates or times in specs or documentation**
+**Why NO time estimates?**
+1. **They're always wrong** - Software estimation is fundamentally unreliable
+2. **False expectations** - Users plan around estimates that won't be met
+3. **Wasted effort** - Time spent estimating could be spent implementing
+4. **Pressure and stress** - Creates artificial deadlines
+5. **No accountability** - There's no consequence for wrong estimates
+
+**Instead of estimates:**
+- Break tasks into smaller pieces
+- Report actual progress continuously
+- Focus on completion, not prediction
+
+❌ **NO dates or timestamps in documentation**
 ```markdown
 WRONG: "Last updated: 2025-11-01"
 WRONG: "Written on November 1, 2025"
 WRONG: "Created at 23:45"
+WRONG: "As of 2025-11-01..."
+WRONG: "Date: 2025-11-01"
 CORRECT: No date/time stamps in content (git history tracks this)
+CORRECT: "Current state" (without date)
+CORRECT: "Latest implementation" (without timestamp)
 ```
 
-**Exception:** Date stamps are OK in:
-- CLAUDE.md header (for AI agent context freshness)
-- CHANGELOG.md entries (required for changelogs)
-- Reference metadata (screenshot capture dates)
+**Why NO dates?**
+1. **Documentation rot** - Content appears "outdated" even when accurate
+2. **Maintenance burden** - Dates must be updated manually
+3. **Git exists** - `git log` provides accurate temporal information
+4. **False staleness** - Good docs look old, misleading readers
+5. **No value** - Dates don't indicate correctness or relevance
 
-**Why these rules?**
+**Exception:** Timestamps ARE allowed ONLY in:
+- CLAUDE.md header (AI context freshness indicator)
+- CHANGELOG.md entries (changelog format requirement)
+- Reference metadata (screenshot/extraction provenance)
+- Test data fixtures (known timestamps for reproducibility)
 
-1. **Git attribution matters** - Commits should reflect the human developer, not the AI
-2. **Time estimates are lies** - They're always wrong and create false expectations
-3. **Dates rot quickly** - Documentation becomes "outdated" even when content is fresh
-4. **Git is the source of truth** - Use `git log` for temporal information
+**NOT allowed in:**
+- Technical specifications
+- Implementation docs
+- Architecture documents
+- User guides
+- Task lists
+- Reports
+- Analysis documents
 
 **When committing:**
 - Use `jj config list | grep user` to verify your identity

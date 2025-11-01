@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotParams;
+use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use futures::StreamExt;
 use std::fs;
 
@@ -44,6 +45,16 @@ pub fn run(url: &str, output: &str, width: u32, height: u32) -> Result<()> {
             .new_page(url)
             .await
             .context("Failed to create new page")?;
+
+        // Set exact viewport dimensions (not just window size)
+        page.execute(SetDeviceMetricsOverrideParams::new(
+            width as i64,
+            height as i64,
+            1.0,  // device_scale_factor
+            false // mobile
+        ))
+        .await
+        .context("Failed to set viewport dimensions")?;
 
         // Wait for page to load (give WebGPU time to initialize)
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
