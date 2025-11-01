@@ -1,8 +1,10 @@
 mod layout;
 mod pipeline;
+mod rectangle_pipeline;
 
 pub use layout::*;
 use pipeline::TrianglePipeline;
+use rectangle_pipeline::{RectanglePipeline, RectangleInstance};
 
 use wasm_bindgen::prelude::*;
 
@@ -29,12 +31,12 @@ pub async fn start_renderer(canvas_id: &str, layout_json: &str) -> Result<(), Js
     );
 
     // Initialize WebGPU
-    let gpu = initialize_webgpu(canvas_id).await?;
+    let mut gpu = initialize_webgpu(canvas_id).await?;
     log::info!("WebGPU initialized successfully");
 
-    // Render a test triangle
-    render_triangle(&gpu)?;
-    log::info!("Triangle rendered");
+    // Render layout elements as rectangles
+    render_layout(&mut gpu, &layout)?;
+    log::info!("Layout rendered with {} elements", layout.elements.len());
 
     Ok(())
 }
@@ -45,6 +47,7 @@ struct GpuContext {
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
     pipeline: TrianglePipeline,
+    rectangle_pipeline: RectanglePipeline,
 }
 
 async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
@@ -119,8 +122,15 @@ async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
 
     surface.configure(&device, &surface_config);
 
-    // Create render pipeline
+    // Create render pipelines
     let pipeline = TrianglePipeline::new(&device, surface_format);
+    let rectangle_pipeline = RectanglePipeline::new(
+        &device,
+        surface_format,
+        width,
+        height,
+        100, // initial capacity for 100 rectangles
+    );
 
     Ok(GpuContext {
         device,
@@ -128,6 +138,7 @@ async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
         surface,
         surface_config,
         pipeline,
+        rectangle_pipeline,
     })
 }
 
@@ -141,6 +152,67 @@ fn render_triangle(gpu: &GpuContext) -> Result<(), JsValue> {
 
     // Use the pipeline to render the triangle
     gpu.pipeline.render(&gpu.device, &gpu.queue, &view);
+
+    frame.present();
+
+    Ok(())
+}
+
+/// Convert layout elements to rectangle instances and render them
+fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValue> {
+    // Create rectangle instances from visible layout elements
+    let mut instances = Vec::new();
+
+    for element in &layout.elements {
+        // Skip invisible elements
+        if !element.is_visible() {
+            continue;
+        }
+
+        // Parse background color (default to white if not specified)
+        let color = if let Some(bg_color) = &element.background_color {
+            let (r, g, b, a) = parse_color(bg_color).unwrap_or((1.0, 1.0, 1.0, 1.0));
+            [r, g, b, a]
+        } else {
+            // Transparent for elements without background
+            [1.0, 1.0, 1.0, 0.0]
+        };
+
+        // Skip fully transparent elements
+        if color[3] == 0.0 {
+            continue;
+        }
+
+        instances.push(RectangleInstance::new(
+            element.x,
+            element.y,
+            element.width,
+            element.height,
+            color,
+        ));
+    }
+
+    log::info!(
+        "Rendering {} visible rectangles out of {} total elements",
+        instances.len(),
+        layout.elements.len()
+    );
+
+    // Get current surface texture
+    let frame = gpu
+        .surface
+        .get_current_texture()
+        .map_err(|e| format!("Failed to get surface texture: {:?}", e))?;
+
+    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // Render all rectangles
+    gpu.rectangle_pipeline.render(
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        &instances,
+    );
 
     frame.present();
 

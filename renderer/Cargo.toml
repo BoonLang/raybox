@@ -24,3 +24,6 @@ serde_json = { workspace = true }
 
 # Logging
 log = { workspace = true }
+
+# Byte serialization for GPU buffers
+bytemuck = { version = "1.18", features = ["derive"] }
