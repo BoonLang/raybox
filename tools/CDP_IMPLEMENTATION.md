@@ -10,7 +10,7 @@
 - **CPU profiling via js_protocol::profiler** ✅ WORKING
 - Upgraded to chromiumoxide 0.7.0 (from 0.5)
 - Improved console error extraction to capture ALL arguments
-- Integration test (`tools/integration_test.sh`) - all tests pass
+- Integration test (`cargo run -p tools -- integration-test`) - cross-platform Rust implementation
 - Console checker CLI command: `cargo run -p tools -- check-console`
 - CPU profiling CLI flag: `cargo run -p tools -- check-console --profile 5`
 
@@ -108,15 +108,15 @@ RUST_LOG=chromiumoxide::conn=warn cargo run -p tools -- check-console
 ### Run Integration Test
 
 ```bash
-cd ~/repos/canvas_3d_6
-./tools/integration_test.sh
+# Cross-platform Rust command (works on Windows/Linux/macOS!)
+cargo run -p tools -- integration-test
 ```
 
-### Check Console (Manual)
+### Check Console
 
 ```bash
-# Requires Chrome to be running with CDP enabled
-./tools/check_console.sh http://localhost:8000
+# Launches Chrome with CDP enabled automatically
+cargo run -p tools -- check-console
 ```
 
 ---

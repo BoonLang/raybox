@@ -64,9 +64,9 @@
 
 ## ✅ Integration Complete & Cross-Platform!
 
-### 1. Integration Test Updated ✅
-**File**: `tools/integration_test.sh`
-**Status**: Fully updated to use Rust CDP tools
+### 1. Integration Test - Pure Rust ✅
+**Command**: `cargo run -p tools -- integration-test`
+**Status**: Cross-platform Rust implementation (Windows/Linux/macOS)
 **Tests**:
 - ✅ Server responds (HTTP 200)
 - ✅ HTML structure (canvas, WASM scripts)
@@ -96,15 +96,16 @@
 
 ### Before Starting Implementation:
 
-- [x] **Update `tools/integration_test.sh`**
-  - ✅ Replaced CDP TODO with actual `check-console` call
-  - ✅ Added screenshot capture test
+- [x] **Create cross-platform integration test**
+  - ✅ Rust implementation replacing bash script
+  - ✅ CDP console checking integrated
+  - ✅ Screenshot capture test included
   - ⏳ Performance benchmark (available, not in CI yet)
 
 - [x] **Run Full Test Suite**
   ```bash
-  cargo test -p tools         # ✅ All tests pass
-  ./tools/integration_test.sh # ✅ Updated and working
+  cargo test -p tools                             # ✅ All tests pass
+  cargo run -p tools -- integration-test  # ✅ Cross-platform Rust
   ```
 
 - [x] **Verify All Commands Work**
@@ -192,8 +193,8 @@ cargo run -p tools -- check-console -s -m --profile 10
 # Unit tests
 cargo test -p tools
 
-# Integration test
-./tools/integration_test.sh
+# Integration test (cross-platform!)
+cargo run -p tools -- integration-test
 
 # Manual verification
 cargo run -p tools -- wasm-start --open
