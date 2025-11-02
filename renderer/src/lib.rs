@@ -65,7 +65,6 @@ struct GpuContext {
 async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
     use wasm_bindgen::JsCast;
     use web_sys::{HtmlCanvasElement, window};
-    use std::sync::Arc;
 
     // Get the canvas element
     let window = window().ok_or("No window")?;
@@ -86,10 +85,8 @@ async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
     });
 
     // Create surface from canvas
-    // Wrap canvas in Arc for 'static lifetime requirement
-    let canvas_arc = Arc::new(canvas);
     let surface = instance
-        .create_surface(wgpu::SurfaceTarget::Canvas(canvas_arc))
+        .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
         .map_err(|e| format!("Failed to create surface: {:?}", e))?;
 
     // Request adapter
