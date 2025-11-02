@@ -142,7 +142,7 @@ impl TextRenderer {
         let rgba_data = image_data.data().0;
 
         Some(RenderedText {
-            x: x_position,
+            x: x_position - padding as f32, // Subtract padding because text is drawn at offset `padding` inside canvas
             y: element.y,
             width: canvas_width,
             height: canvas_height,

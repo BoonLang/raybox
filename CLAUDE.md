@@ -8,6 +8,28 @@ This document contains essential context for AI agents (Claude Code, etc.) worki
 
 ## ⚠️ CRITICAL RULES
 
+### 0. Version Control - NEVER Commit Without Permission
+
+**CRITICAL: I must NEVER commit changes or perform any source code management operations without explicit user confirmation.**
+
+- ❌ Do NOT run `jj commit` unless user explicitly asks
+- ❌ Do NOT run `jj describe` to modify commits
+- ❌ Do NOT run `jj squash`, `jj split`, or other history operations
+- ❌ Do NOT assume the user wants changes committed
+- ✅ ALWAYS use `jj` (Jujutsu) as the default VCS (not git)
+- ✅ ONLY commit when user explicitly says "commit" or "commit this"
+- ✅ Ask for confirmation if unclear whether to commit
+
+**This project uses `jj` (Jujutsu) for version control, not git.**
+
+When the user asks me to commit, I should:
+1. Review what changes will be committed with `jj st`
+2. Create a clear, descriptive commit message
+3. Execute `jj commit -m "message"`
+4. Confirm the commit was successful
+
+**Remember: Making changes to code is fine. Committing those changes requires explicit permission.**
+
 ### 1. Rust-Only Architecture
 **NO PYTHON. NO NODE.JS. RUST ONLY.**
 
