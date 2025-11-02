@@ -80,6 +80,7 @@ pub struct Element {
     pub border_radius: Option<String>,
     #[serde(rename = "borderBottom")]
     pub border_bottom: Option<String>,
+    pub border: Option<String>,
 
     // Other styles
     #[serde(rename = "boxShadow")]
@@ -181,6 +182,11 @@ impl Element {
             }
         }
 
+        // Check border shorthand
+        if self.border.is_some() {
+            return true;
+        }
+
         // Check borderBottom shorthand
         if self.border_bottom.is_some() {
             return true;
@@ -196,6 +202,28 @@ impl Element {
 
         if parts.len() >= 3 {
             // Format: "1px solid #ededed"
+            let width_str = parts[0];
+            let color_str = parts[2];
+
+            let width = if width_str.ends_with("px") {
+                width_str[..width_str.len() - 2].parse::<f32>().ok()?
+            } else {
+                width_str.parse::<f32>().ok()?
+            };
+
+            Some((width, color_str.to_string()))
+        } else {
+            None
+        }
+    }
+
+    /// Parse border shorthand (e.g., "1px solid #ce4646" -> (width, color))
+    pub fn parse_border(&self) -> Option<(f32, String)> {
+        let border_str = self.border.as_ref()?;
+        let parts: Vec<&str> = border_str.split_whitespace().collect();
+
+        if parts.len() >= 3 {
+            // Format: "1px solid #ce4646"
             let width_str = parts[0];
             let color_str = parts[2];
 
@@ -274,6 +302,95 @@ pub fn parse_color(color_str: &str) -> Option<(f32, f32, f32, f32)> {
     None
 }
 
+/// A single shadow layer parsed from CSS box-shadow
+#[derive(Debug, Clone)]
+pub struct Shadow {
+    pub inset: bool,
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur_radius: f32,
+    pub spread_radius: f32,
+    pub color: (f32, f32, f32, f32), // RGBA normalized
+}
+
+/// Parse box-shadow CSS property
+/// Format: [inset] offset-x offset-y [blur-radius] [spread-radius] color
+/// Multiple shadows separated by commas
+pub fn parse_box_shadow(box_shadow_str: &str) -> Vec<Shadow> {
+    let mut shadows = Vec::new();
+
+    // Split by commas (multiple shadow layers)
+    for layer in box_shadow_str.split(',') {
+        let layer = layer.trim();
+        if layer.is_empty() {
+            continue;
+        }
+
+        // Check for inset keyword
+        let inset = layer.starts_with("inset");
+        let layer = if inset {
+            layer.strip_prefix("inset").unwrap().trim()
+        } else {
+            layer
+        };
+
+        // Split into tokens
+        let tokens: Vec<&str> = layer.split_whitespace().collect();
+        if tokens.len() < 3 {
+            continue; // Need at least offset-x, offset-y, color
+        }
+
+        // Parse numeric values (offset-x, offset-y, blur, spread)
+        let mut values = Vec::new();
+        let mut color_start = 0;
+
+        for (i, token) in tokens.iter().enumerate() {
+            // Try to parse as number with optional unit
+            if let Some(num) = parse_css_length(token) {
+                values.push(num);
+            } else {
+                // Not a number, must be color
+                color_start = i;
+                break;
+            }
+        }
+
+        // Need at least 2 values (offset-x, offset-y)
+        if values.len() < 2 {
+            continue;
+        }
+
+        let offset_x = values[0];
+        let offset_y = values[1];
+        let blur_radius = values.get(2).copied().unwrap_or(0.0);
+        let spread_radius = values.get(3).copied().unwrap_or(0.0);
+
+        // Parse color (rest of tokens from color_start)
+        let color_str = tokens[color_start..].join(" ");
+        let color = parse_color(&color_str).unwrap_or((0.0, 0.0, 0.0, 0.2));
+
+        shadows.push(Shadow {
+            inset,
+            offset_x,
+            offset_y,
+            blur_radius,
+            spread_radius,
+            color,
+        });
+    }
+
+    shadows
+}
+
+/// Parse CSS length value (e.g., "10px", "0", "-2px")
+fn parse_css_length(s: &str) -> Option<f32> {
+    if s.ends_with("px") {
+        s.strip_suffix("px")?.parse::<f32>().ok()
+    } else {
+        s.parse::<f32>().ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +409,37 @@ mod tests {
             parse_color("rgba(255, 128, 0, 0.5)"),
             Some((1.0, 128.0 / 255.0, 0.0, 0.5))
         );
+    }
+
+    #[test]
+    fn test_parse_box_shadow_simple() {
+        let shadows = parse_box_shadow("0 2px 4px rgba(0,0,0,0.2)");
+        assert_eq!(shadows.len(), 1);
+        assert_eq!(shadows[0].offset_x, 0.0);
+        assert_eq!(shadows[0].offset_y, 2.0);
+        assert_eq!(shadows[0].blur_radius, 4.0);
+        assert_eq!(shadows[0].spread_radius, 0.0);
+        assert!(!shadows[0].inset);
+    }
+
+    #[test]
+    fn test_parse_box_shadow_inset() {
+        let shadows = parse_box_shadow("inset 0 -2px 1px rgba(0,0,0,0.03)");
+        assert_eq!(shadows.len(), 1);
+        assert!(shadows[0].inset);
+        assert_eq!(shadows[0].offset_x, 0.0);
+        assert_eq!(shadows[0].offset_y, -2.0);
+        assert_eq!(shadows[0].blur_radius, 1.0);
+    }
+
+    #[test]
+    fn test_parse_box_shadow_multiple() {
+        let shadows = parse_box_shadow("0 2px 4px 0 rgba(0,0,0,0.2), 0 25px 50px 0 rgba(0,0,0,0.1)");
+        assert_eq!(shadows.len(), 2);
+        assert_eq!(shadows[0].offset_y, 2.0);
+        assert_eq!(shadows[0].blur_radius, 4.0);
+        assert_eq!(shadows[0].spread_radius, 0.0);
+        assert_eq!(shadows[1].offset_y, 25.0);
+        assert_eq!(shadows[1].blur_radius, 50.0);
     }
 }

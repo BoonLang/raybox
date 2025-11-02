@@ -77,7 +77,10 @@ impl TextRenderer {
         let text_width = metrics.width() as u32;
 
         // Calculate x position based on text alignment
-        let x_position = if element.text_align.as_deref() == Some("center") {
+        let should_center = element.text_align.as_deref() == Some("center")
+            || (element.tag == "a" && element.classes.contains(&"selected".to_string()));
+
+        let x_position = if should_center {
             // Center text within element width
             element.x + (element.width - text_width as f32) / 2.0
         } else {
@@ -141,9 +144,12 @@ impl TextRenderer {
 
         let rgba_data = image_data.data().0;
 
+        // Calculate y position to vertically center text within element
+        let y_position = element.y + (element.height - canvas_height as f32) / 2.0;
+
         Some(RenderedText {
             x: x_position - padding as f32, // Subtract padding because text is drawn at offset `padding` inside canvas
-            y: element.y,
+            y: y_position,
             width: canvas_width,
             height: canvas_height,
             image_data: rgba_data,
@@ -206,6 +212,66 @@ impl TextRenderer {
             y: element.y,
             width: size,
             height: size,
+            image_data: rgba_data,
+        })
+    }
+
+    /// Render a chevron icon (downward-pointing arrow) for toggle-all button
+    pub fn render_chevron(&mut self, element: &Element) -> Option<RenderedText> {
+        // Canvas size matches element size (45x65 from layout)
+        let width = element.width as u32;
+        let height = element.height as u32;
+
+        // Set canvas size
+        self.canvas.set_width(width);
+        self.canvas.set_height(height);
+
+        // Clear canvas
+        self.context.clear_rect(0.0, 0.0, width as f64, height as f64);
+
+        // Set font for chevron character
+        let font_size = 22.0;
+        self.context.set_font(&format!("{}px sans-serif", font_size));
+        self.context.set_fill_style_str("#e6e6e6"); // Light gray
+
+        // Render downward-pointing chevron
+        // Use '❯' (U+276F) rotated 90 degrees
+        let chevron_char = "❯";
+
+        // Save context state
+        self.context.save();
+
+        // Move to center of canvas
+        let center_x = width as f64 / 2.0;
+        let center_y = height as f64 / 2.0;
+        self.context.translate(center_x, center_y).ok()?;
+
+        // Rotate 90 degrees clockwise to point down
+        self.context.rotate(std::f64::consts::PI / 2.0).ok()?;
+
+        // Measure text for centering
+        let metrics = self.context.measure_text(chevron_char).ok()?;
+        let text_width = metrics.width();
+
+        // Draw chevron centered (baseline adjustment for vertical centering)
+        self.context.fill_text(chevron_char, -text_width / 2.0, font_size as f64 / 3.0).ok()?;
+
+        // Restore context state
+        self.context.restore();
+
+        // Extract image data
+        let image_data = self
+            .context
+            .get_image_data(0.0, 0.0, width as f64, height as f64)
+            .ok()?;
+
+        let rgba_data = image_data.data().0;
+
+        Some(RenderedText {
+            x: element.x,
+            y: element.y,
+            width,
+            height,
             image_data: rgba_data,
         })
     }

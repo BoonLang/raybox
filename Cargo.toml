@@ -40,7 +40,7 @@ log = "0.4"
 chrono = "0.4"
 
 # WebGPU rendering
-wgpu = "27.0"
+wgpu = { version = "27.0", features = ["webgpu", "wgsl"] }
 wasm-bindgen = "0.2.105"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

@@ -2,6 +2,7 @@ mod border_pipeline;
 mod layout;
 mod pipeline;
 mod rectangle_pipeline;
+mod shadow_pipeline;
 mod text_renderer;
 mod textured_quad_pipeline;
 
@@ -9,6 +10,7 @@ pub use layout::*;
 use border_pipeline::{BorderPipeline, create_border_edges};
 use pipeline::TrianglePipeline;
 use rectangle_pipeline::{RectanglePipeline, RectangleInstance};
+use shadow_pipeline::{ShadowPipeline, ShadowInstance};
 use text_renderer::{TextRenderer, TextTexture};
 use textured_quad_pipeline::{TexturedQuadPipeline, TexturedQuadInstance};
 
@@ -54,6 +56,7 @@ struct GpuContext {
     surface_config: wgpu::SurfaceConfiguration,
     pipeline: TrianglePipeline,
     rectangle_pipeline: RectanglePipeline,
+    shadow_pipeline: ShadowPipeline,
     border_pipeline: BorderPipeline,
     text_pipeline: TexturedQuadPipeline,
     text_renderer: TextRenderer,
@@ -140,6 +143,13 @@ async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
         700, // Canvas height (full viewport)
         100, // initial capacity for 100 rectangles
     );
+    let shadow_pipeline = ShadowPipeline::new(
+        &device,
+        surface_format,
+        700, // Canvas width (full viewport)
+        700, // Canvas height (full viewport)
+        50, // initial capacity for 50 shadow layers (2 shadows × ~25 layers avg)
+    );
     let border_pipeline = BorderPipeline::new(
         &device,
         surface_format,
@@ -166,6 +176,7 @@ async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
         surface_config,
         pipeline,
         rectangle_pipeline,
+        shadow_pipeline,
         border_pipeline,
         text_pipeline,
         text_renderer,
@@ -188,6 +199,12 @@ fn render_triangle(gpu: &GpuContext) -> Result<(), JsValue> {
     Ok(())
 }
 
+/// Helper function to check if element is a footer child that needs vertical centering
+fn is_footer_child(element: &Element, footer_y: f32) -> bool {
+    // Footer children are at the same y position as footer but are NOT the footer itself
+    element.y == footer_y && !element.has_class("footer")
+}
+
 /// Convert layout elements to rectangle instances and render them
 fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValue> {
     // Calculate vertical offset to bring h1 title to top of canvas
@@ -200,6 +217,75 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
 
     log::info!("Content area offset: ({}, {})", offset_x, offset_y);
 
+    // Fix CSS layout bug: vertically center footer children
+    // Footer children are at y=427 (top edge) but should be centered within footer (y=437)
+    let (footer_y, footer_y_adjustment) = if let Some(footer) = layout.elements.iter().find(|e| e.has_class("footer")) {
+        let footer_y = footer.y;
+        let footer_height = footer.height;
+
+        // Calculate adjustment needed to center 20px tall elements in 40px footer
+        // Centered y = footer_y + (footer_height - element_height) / 2
+        // Adjustment = centered_y - current_y = (footer_height - element_height) / 2
+        let adjustment = (footer_height - 20.0) / 2.0;  // Most footer children are 20px tall
+        (footer_y, adjustment)
+    } else {
+        (f32::MIN, 0.0)  // Use MIN as sentinel value if no footer found
+    };
+
+    log::info!("Footer vertical centering adjustment: {}px", footer_y_adjustment);
+
+    // Phase 0: Collect shadow instances (rendered first, behind everything)
+    let mut shadow_instances = Vec::new();
+
+    for element in &layout.elements {
+        // Skip invisible elements
+        if !element.is_visible() {
+            continue;
+        }
+
+        // Parse box-shadow if present
+        if let Some(box_shadow_str) = &element.box_shadow {
+            let shadows = parse_box_shadow(box_shadow_str);
+            for shadow in shadows {
+                // Skip inset shadows for now (requires stencil buffer)
+                if shadow.inset {
+                    continue;
+                }
+
+                // Approximate blur by slightly expanding shadow and adjusting opacity
+                // CSS blur creates a gradient edge, not a size increase
+                // Expand by a fraction of blur radius for soft edge effect
+                let blur_expansion = shadow.blur_radius * 0.5; // Only expand by half the blur radius
+
+                // Calculate shadow size (element size + spread * 2 + small blur expansion)
+                let shadow_width = element.width + (shadow.spread_radius * 2.0) + (blur_expansion * 2.0);
+                let shadow_height = element.height + (shadow.spread_radius * 2.0) + (blur_expansion * 2.0);
+
+                // Calculate shadow position (element position + offset - expansion for centering)
+                let shadow_x = element.x - offset_x + shadow.offset_x - shadow.spread_radius - blur_expansion;
+                let mut shadow_y = element.y - offset_y + shadow.offset_y - shadow.spread_radius - blur_expansion;
+
+                // Apply footer vertical centering adjustment
+                if is_footer_child(element, footer_y) {
+                    shadow_y += footer_y_adjustment;
+                }
+
+                // Reduce opacity slightly based on blur (more blur = slightly more transparent)
+                // Use gentle reduction: larger blurs are more diffuse but not drastically dimmer
+                let blur_factor = 1.0 + (shadow.blur_radius / 50.0); // Gentler reduction
+                let adjusted_alpha = shadow.color.3 / blur_factor;
+
+                shadow_instances.push(ShadowInstance::new(
+                    shadow_x,
+                    shadow_y,
+                    shadow_width,
+                    shadow_height,
+                    [shadow.color.0, shadow.color.1, shadow.color.2, adjusted_alpha],
+                ));
+            }
+        }
+    }
+
     // Phase 1: Collect rectangle instances (backgrounds)
     let mut rect_instances = Vec::new();
 
@@ -211,9 +297,10 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
 
         // Special case: input elements default to white background
         if element.tag == "input" {
+            let y_pos = element.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
             rect_instances.push(RectangleInstance::new(
                 element.x - offset_x,
-                element.y - offset_y,
+                y_pos,
                 element.width,
                 element.height,
                 [1.0, 1.0, 1.0, 1.0], // White background for inputs
@@ -229,13 +316,28 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
             [1.0, 1.0, 1.0, 0.0] // Transparent
         };
 
+        // Only render background rectangles if element has visible background
         if color[3] > 0.0 {
-            rect_instances.push(RectangleInstance::new(
+            // Parse border-radius (e.g., "3px" -> 3.0)
+            let border_radius = element.border_radius.as_ref()
+                .and_then(|s| {
+                    let s = s.trim();
+                    if s.ends_with("px") {
+                        s[..s.len() - 2].parse::<f32>().ok()
+                    } else {
+                        s.parse::<f32>().ok()
+                    }
+                })
+                .unwrap_or(0.0);
+
+            let y_pos = element.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
+            rect_instances.push(RectangleInstance::new_with_radius(
                 element.x - offset_x,
-                element.y - offset_y,
+                y_pos,
                 element.width,
                 element.height,
                 color,
+                border_radius,
             ));
         }
     }
@@ -248,29 +350,86 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
             continue;
         }
 
+        // Parse border-radius first (needed to decide rendering method)
+        let border_radius = element.border_radius.as_ref()
+            .and_then(|s| {
+                let s = s.trim();
+                if s.ends_with("px") {
+                    s[..s.len() - 2].parse::<f32>().ok()
+                } else {
+                    s.parse::<f32>().ok()
+                }
+            })
+            .unwrap_or(0.0);
+
         // Try standard border properties first
         if let (Some(border_width), Some(border_color)) =
             (element.get_border_width(), &element.border_color)
         {
             if let Some((r, g, b, a)) = parse_color(border_color) {
-                let edges = create_border_edges(
-                    element.x - offset_x,
-                    element.y - offset_y,
-                    element.width,
-                    element.height,
-                    border_width,
-                    [r, g, b, a],
-                );
-                border_instances.extend_from_slice(&edges);
+                let y_pos = element.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
+                if border_radius > 0.5 {
+                    // Render as rounded outline using rectangle pipeline
+                    rect_instances.push(RectangleInstance::new_border_outline(
+                        element.x - offset_x,
+                        y_pos,
+                        element.width,
+                        element.height,
+                        [r, g, b, a],
+                        border_radius,
+                        border_width,
+                    ));
+                } else {
+                    // Render as 4 edges using border pipeline
+                    let edges = create_border_edges(
+                        element.x - offset_x,
+                        y_pos,
+                        element.width,
+                        element.height,
+                        border_width,
+                        [r, g, b, a],
+                    );
+                    border_instances.extend_from_slice(&edges);
+                }
+            }
+        }
+        // Try border shorthand (e.g., "1px solid #ce4646")
+        else if let Some((border_width, border_color_str)) = element.parse_border() {
+            if let Some((r, g, b, a)) = parse_color(&border_color_str) {
+                let y_pos = element.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
+                if border_radius > 0.5 {
+                    // Render as rounded outline using rectangle pipeline
+                    rect_instances.push(RectangleInstance::new_border_outline(
+                        element.x - offset_x,
+                        y_pos,
+                        element.width,
+                        element.height,
+                        [r, g, b, a],
+                        border_radius,
+                        border_width,
+                    ));
+                } else {
+                    // Render as 4 edges using border pipeline
+                    let edges = create_border_edges(
+                        element.x - offset_x,
+                        y_pos,
+                        element.width,
+                        element.height,
+                        border_width,
+                        [r, g, b, a],
+                    );
+                    border_instances.extend_from_slice(&edges);
+                }
             }
         }
         // Try borderBottom shorthand
         else if let Some((border_width, border_color_str)) = element.parse_border_bottom() {
             if let Some((r, g, b, a)) = parse_color(&border_color_str) {
-                // For borderBottom, only draw bottom edge
+                let y_pos = element.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
+                // borderBottom always uses 4-edge rendering (no rounded corners for single edge)
                 let bottom_edge = create_border_edges(
                     element.x - offset_x,
-                    element.y - offset_y,
+                    y_pos,
                     element.width,
                     element.height,
                     border_width,
@@ -300,9 +459,10 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
                 &rendered_text,
             );
 
+            let y_pos = rendered_text.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
             text_instances.push(TexturedQuadInstance::new(
                 rendered_text.x - offset_x,
-                rendered_text.y - offset_y,
+                y_pos,
                 texture.width as f32,
                 texture.height as f32,
             ));
@@ -329,9 +489,10 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
                         &rendered_text,
                     );
 
+                    let y_pos = rendered_text.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
                     text_instances.push(TexturedQuadInstance::new(
                         rendered_text.x - offset_x,
-                        rendered_text.y - offset_y,
+                        y_pos,
                         texture.width as f32,
                         texture.height as f32,
                     ));
@@ -351,9 +512,32 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
                     &rendered_checkbox,
                 );
 
+                let y_pos = rendered_checkbox.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
                 text_instances.push(TexturedQuadInstance::new(
                     rendered_checkbox.x - offset_x,
-                    rendered_checkbox.y - offset_y,
+                    y_pos,
+                    texture.width as f32,
+                    texture.height as f32,
+                ));
+
+                text_textures.push(texture);
+            }
+        }
+
+        // Render chevron icon for toggle-all label
+        if element.tag == "label" && element.has_class("toggle-all-label") {
+            if let Some(rendered_chevron) = gpu.text_renderer.render_chevron(element) {
+                let texture = TextTexture::from_rendered_text(
+                    &gpu.device,
+                    &gpu.queue,
+                    gpu.text_pipeline.bind_group_layout(),
+                    &rendered_chevron,
+                );
+
+                let y_pos = rendered_chevron.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
+                text_instances.push(TexturedQuadInstance::new(
+                    rendered_chevron.x - offset_x,
+                    y_pos,
                     texture.width as f32,
                     texture.height as f32,
                 ));
@@ -364,7 +548,8 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
     }
 
     log::info!(
-        "Rendering {} rectangles, {} border edges, and {} text elements out of {} total elements",
+        "Rendering {} shadow layers, {} rectangles, {} border edges, and {} text elements out of {} total elements",
+        shadow_instances.len(),
         rect_instances.len(),
         border_instances.len(),
         text_instances.len(),
@@ -379,7 +564,16 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
 
     let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-    // Render rectangles (backgrounds) first
+    // Render shadows first (behind everything)
+    // Always render to ensure screen is cleared, even with 0 shadows
+    gpu.shadow_pipeline.render(
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        &shadow_instances,
+    );
+
+    // Render rectangles (backgrounds) on top of shadows
     gpu.rectangle_pipeline.render(
         &gpu.device,
         &gpu.queue,

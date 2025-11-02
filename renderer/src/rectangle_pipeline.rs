@@ -9,13 +9,37 @@ pub struct RectangleInstance {
     pub position_size: [f32; 4],
     /// Color as RGBA (0.0 - 1.0)
     pub color: [f32; 4],
+    /// Border radius in pixels (uniform for all corners for now)
+    pub border_radius: f32,
+    /// Border width for outline rendering (0.0 = filled, >0 = outline)
+    pub border_width: f32,
+    /// Padding for alignment (2 floats to align to 16 bytes)
+    pub _padding: [f32; 2],
 }
 
 impl RectangleInstance {
     pub fn new(x: f32, y: f32, width: f32, height: f32, color: [f32; 4]) -> Self {
+        Self::new_with_radius(x, y, width, height, color, 0.0)
+    }
+
+    pub fn new_with_radius(x: f32, y: f32, width: f32, height: f32, color: [f32; 4], border_radius: f32) -> Self {
         Self {
             position_size: [x, y, width, height],
             color,
+            border_radius,
+            border_width: 0.0,
+            _padding: [0.0, 0.0],
+        }
+    }
+
+    /// Create a rounded border outline (ring shape)
+    pub fn new_border_outline(x: f32, y: f32, width: f32, height: f32, color: [f32; 4], border_radius: f32, border_width: f32) -> Self {
+        Self {
+            position_size: [x, y, width, height],
+            color,
+            border_radius,
+            border_width,
+            _padding: [0.0, 0.0],
         }
     }
 
@@ -35,6 +59,12 @@ impl RectangleInstance {
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
                     shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // border_radius (float) + border_width (float) + padding (vec2) = vec4
+                wgpu::VertexAttribute {
+                    offset: (std::mem::size_of::<[f32; 4]>() * 2) as wgpu::BufferAddress,
+                    shader_location: 2,
                     format: wgpu::VertexFormat::Float32x4,
                 },
             ],
@@ -61,7 +91,7 @@ impl RectanglePipeline {
         let viewport_width = viewport_width as f32;
         let viewport_height = viewport_height as f32;
 
-        // WGSL shader for rectangle rendering
+        // WGSL shader for rectangle rendering with rounded corners (SDF)
         let shader_source = format!(
             r#"
 // Viewport dimensions for coordinate transformation
@@ -73,13 +103,18 @@ struct VertexInput {{
 }}
 
 struct InstanceInput {{
-    @location(0) position_size: vec4<f32>,  // x, y, width, height (CSS pixels)
-    @location(1) color: vec4<f32>,          // rgba
+    @location(0) position_size: vec4<f32>,     // x, y, width, height (CSS pixels)
+    @location(1) color: vec4<f32>,             // rgba
+    @location(2) border_radius_pad: vec4<f32>, // border_radius (x), border_width (y), padding (zw)
 }}
 
 struct VertexOutput {{
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) local_pos: vec2<f32>,         // Position within rectangle (0,0 to w,h)
+    @location(2) size: vec2<f32>,              // Rectangle size (w, h)
+    @location(3) border_radius: f32,           // Border radius in pixels
+    @location(4) border_width: f32,            // Border width for outline rendering (0 = filled)
 }}
 
 // Transform CSS pixel coordinates to NDC (Normalized Device Coordinates)
@@ -102,32 +137,87 @@ fn vs_main(
     let y = instance.position_size.y;
     let w = instance.position_size.z;
     let h = instance.position_size.w;
+    let border_radius = instance.border_radius_pad.x;
+    let border_width = instance.border_radius_pad.y;
 
     // Generate quad vertices (two triangles)
     // 0: top-left, 1: top-right, 2: bottom-left
     // 3: bottom-left, 4: top-right, 5: bottom-right
     var pos: vec2<f32>;
+    var local: vec2<f32>;
     let idx = vertex.vertex_index % 6u;
 
     if (idx == 0u) {{
         pos = css_to_ndc(x, y);  // top-left
+        local = vec2<f32>(0.0, 0.0);
     }} else if (idx == 1u || idx == 4u) {{
         pos = css_to_ndc(x + w, y);  // top-right
+        local = vec2<f32>(w, 0.0);
     }} else if (idx == 2u || idx == 3u) {{
         pos = css_to_ndc(x, y + h);  // bottom-left
+        local = vec2<f32>(0.0, h);
     }} else {{
         pos = css_to_ndc(x + w, y + h);  // bottom-right
+        local = vec2<f32>(w, h);
     }}
 
     out.position = vec4<f32>(pos, 0.0, 1.0);
     out.color = instance.color;
+    out.local_pos = local;
+    out.size = vec2<f32>(w, h);
+    out.border_radius = border_radius;
+    out.border_width = border_width;
 
     return out;
 }}
 
+// SDF for rounded rectangle
+fn sd_rounded_box(p: vec2<f32>, size: vec2<f32>, radius: f32) -> f32 {{
+    let q = abs(p) - size + radius;
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - radius;
+}}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
-    return in.color;
+    // Calculate center-relative position
+    let center = in.size * 0.5;
+    let p = in.local_pos - center;
+
+    // Check if rendering outline (border ring) or filled rectangle
+    if (in.border_width > 0.5) {{
+        // Render outline/ring (for rounded borders)
+        // Outer rounded box
+        let outer_dist = sd_rounded_box(p, center, in.border_radius);
+
+        // Inner rounded box (shrunk by border_width)
+        let inner_size = center - vec2<f32>(in.border_width, in.border_width);
+        let inner_radius = max(in.border_radius - in.border_width, 0.0);
+        let inner_dist = sd_rounded_box(p, inner_size, inner_radius);
+
+        // Ring = outside inner box AND inside outer box
+        // dist is positive outside shape, negative inside
+        let ring_dist = max(outer_dist, -inner_dist);
+
+        // Anti-aliasing: smooth edge over 1 pixel
+        let alpha = 1.0 - smoothstep(-0.5, 0.5, ring_dist);
+
+        return vec4<f32>(in.color.rgb, in.color.a * alpha);
+    }} else {{
+        // Render filled rectangle
+        if (in.border_radius < 0.5) {{
+            // No rounded corners, render solid
+            return in.color;
+        }}
+
+        // Rounded corners with SDF
+        let dist = sd_rounded_box(p, center, in.border_radius);
+
+        // Anti-aliasing: smooth edge over 1 pixel
+        let alpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+
+        // Apply alpha to color
+        return vec4<f32>(in.color.rgb, in.color.a * alpha);
+    }}
 }}
 "#,
             viewport_width, viewport_height
@@ -227,12 +317,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
                     view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.96, // #f5f5f5 background
-                            g: 0.96,
-                            b: 0.96,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Load, // Load existing content (shadows already rendered)
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
