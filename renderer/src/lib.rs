@@ -237,7 +237,10 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
     // Phase 0: Collect shadow instances (rendered first, behind everything)
     let mut shadow_instances = Vec::new();
 
-    for element in &layout.elements {
+    // Collect inset shadows for use in rectangle rendering (owned data)
+    let mut inset_shadows: std::collections::HashMap<usize, Shadow> = std::collections::HashMap::new();
+
+    for (idx, element) in layout.elements.iter().enumerate() {
         // Skip invisible elements
         if !element.is_visible() {
             continue;
@@ -247,8 +250,17 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
         if let Some(box_shadow_str) = &element.box_shadow {
             let shadows = parse_box_shadow(box_shadow_str);
 
-            // Filter out inset shadows
-            let non_inset_shadows: Vec<_> = shadows.iter().filter(|s| !s.inset).collect();
+            // Separate inset and outset shadows
+            let non_inset_shadows: Vec<_> = shadows.iter().filter(|s| !s.inset).cloned().collect();
+            let inset_shadow_list: Vec<_> = shadows.into_iter().filter(|s| s.inset).collect();
+
+            // Store first inset shadow for this element (if present)
+            if let Some(inset_shadow) = inset_shadow_list.into_iter().next() {
+                inset_shadows.insert(idx, inset_shadow);
+            }
+
+            // Use non_inset_shadows (already cloned references)
+            let non_inset_shadows: Vec<&Shadow> = non_inset_shadows.iter().collect();
 
             if non_inset_shadows.is_empty() {
                 continue;
@@ -322,7 +334,7 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
     // Phase 1: Collect rectangle instances (backgrounds)
     let mut rect_instances = Vec::new();
 
-    for element in &layout.elements {
+    for (idx, element) in layout.elements.iter().enumerate() {
         // Skip invisible elements
         if !element.is_visible() {
             continue;
@@ -336,13 +348,29 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
         // Special case: input elements default to white background
         if element.tag == "input" {
             let y_pos = element.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
-            rect_instances.push(RectangleInstance::new(
-                element.x - offset_x,
-                y_pos,
-                element.width,
-                element.height,
-                [1.0, 1.0, 1.0, 1.0], // White background for inputs
-            ));
+
+            // Check if this element has an inset shadow
+            if let Some(inset_shadow) = inset_shadows.get(&idx) {
+                rect_instances.push(RectangleInstance::new_with_inset_shadow(
+                    element.x - offset_x,
+                    y_pos,
+                    element.width,
+                    element.height,
+                    [1.0, 1.0, 1.0, 1.0], // White background for inputs
+                    0.0, // border_radius (inputs don't have rounded corners in TodoMVC)
+                    [inset_shadow.color.0, inset_shadow.color.1, inset_shadow.color.2, inset_shadow.color.3],
+                    inset_shadow.blur_radius,
+                    [inset_shadow.offset_x, inset_shadow.offset_y],
+                ));
+            } else {
+                rect_instances.push(RectangleInstance::new(
+                    element.x - offset_x,
+                    y_pos,
+                    element.width,
+                    element.height,
+                    [1.0, 1.0, 1.0, 1.0], // White background for inputs
+                ));
+            }
             continue;
         }
 

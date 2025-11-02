@@ -15,6 +15,16 @@ pub struct RectangleInstance {
     pub border_width: f32,
     /// Padding for alignment (2 floats to align to 16 bytes)
     pub _padding: [f32; 2],
+
+    // Inset shadow (rendered inside the rectangle bounds)
+    /// Inset shadow color (RGBA)
+    pub inset_shadow_color: [f32; 4],
+    /// Inset shadow blur radius
+    pub inset_shadow_blur: f32,
+    /// Inset shadow offset (x, y)
+    pub inset_shadow_offset: [f32; 2],
+    /// Whether inset shadow is enabled (0.0 = no, 1.0 = yes)
+    pub has_inset_shadow: f32,
 }
 
 impl RectangleInstance {
@@ -29,6 +39,10 @@ impl RectangleInstance {
             border_radius,
             border_width: 0.0,
             _padding: [0.0, 0.0],
+            inset_shadow_color: [0.0, 0.0, 0.0, 0.0],
+            inset_shadow_blur: 0.0,
+            inset_shadow_offset: [0.0, 0.0],
+            has_inset_shadow: 0.0,
         }
     }
 
@@ -40,6 +54,32 @@ impl RectangleInstance {
             border_radius,
             border_width,
             _padding: [0.0, 0.0],
+            inset_shadow_color: [0.0, 0.0, 0.0, 0.0],
+            inset_shadow_blur: 0.0,
+            inset_shadow_offset: [0.0, 0.0],
+            has_inset_shadow: 0.0,
+        }
+    }
+
+    /// Create a rectangle with inset shadow
+    pub fn new_with_inset_shadow(
+        x: f32, y: f32, width: f32, height: f32,
+        color: [f32; 4],
+        border_radius: f32,
+        shadow_color: [f32; 4],
+        shadow_blur: f32,
+        shadow_offset: [f32; 2],
+    ) -> Self {
+        Self {
+            position_size: [x, y, width, height],
+            color,
+            border_radius,
+            border_width: 0.0,
+            _padding: [0.0, 0.0],
+            inset_shadow_color: shadow_color,
+            inset_shadow_blur: shadow_blur,
+            inset_shadow_offset: shadow_offset,
+            has_inset_shadow: 1.0,
         }
     }
 
@@ -65,6 +105,18 @@ impl RectangleInstance {
                 wgpu::VertexAttribute {
                     offset: (std::mem::size_of::<[f32; 4]>() * 2) as wgpu::BufferAddress,
                     shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // inset_shadow_color (vec4)
+                wgpu::VertexAttribute {
+                    offset: (std::mem::size_of::<[f32; 4]>() * 3) as wgpu::BufferAddress,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // inset_shadow_blur (float) + inset_shadow_offset (vec2) + has_inset_shadow (float) = vec4
+                wgpu::VertexAttribute {
+                    offset: (std::mem::size_of::<[f32; 4]>() * 4) as wgpu::BufferAddress,
+                    shader_location: 4,
                     format: wgpu::VertexFormat::Float32x4,
                 },
             ],
@@ -103,18 +155,24 @@ struct VertexInput {{
 }}
 
 struct InstanceInput {{
-    @location(0) position_size: vec4<f32>,     // x, y, width, height (CSS pixels)
-    @location(1) color: vec4<f32>,             // rgba
-    @location(2) border_radius_pad: vec4<f32>, // border_radius (x), border_width (y), padding (zw)
+    @location(0) position_size: vec4<f32>,        // x, y, width, height (CSS pixels)
+    @location(1) color: vec4<f32>,                // rgba
+    @location(2) border_radius_pad: vec4<f32>,    // border_radius (x), border_width (y), padding (zw)
+    @location(3) inset_shadow_color: vec4<f32>,   // Inset shadow RGBA
+    @location(4) inset_shadow_params: vec4<f32>,  // blur (x), offset (yz), has_shadow (w)
 }}
 
 struct VertexOutput {{
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
-    @location(1) local_pos: vec2<f32>,         // Position within rectangle (0,0 to w,h)
-    @location(2) size: vec2<f32>,              // Rectangle size (w, h)
-    @location(3) border_radius: f32,           // Border radius in pixels
-    @location(4) border_width: f32,            // Border width for outline rendering (0 = filled)
+    @location(1) local_pos: vec2<f32>,            // Position within rectangle (0,0 to w,h)
+    @location(2) size: vec2<f32>,                 // Rectangle size (w, h)
+    @location(3) border_radius: f32,              // Border radius in pixels
+    @location(4) border_width: f32,               // Border width for outline rendering (0 = filled)
+    @location(5) inset_shadow_color: vec4<f32>,   // Inset shadow RGBA
+    @location(6) inset_shadow_blur: f32,          // Inset shadow blur radius
+    @location(7) inset_shadow_offset: vec2<f32>,  // Inset shadow offset (x, y)
+    @location(8) has_inset_shadow: f32,           // Whether inset shadow is enabled
 }}
 
 // Transform CSS pixel coordinates to NDC (Normalized Device Coordinates)
@@ -168,6 +226,12 @@ fn vs_main(
     out.border_radius = border_radius;
     out.border_width = border_width;
 
+    // Pass inset shadow data
+    out.inset_shadow_color = instance.inset_shadow_color;
+    out.inset_shadow_blur = instance.inset_shadow_params.x;
+    out.inset_shadow_offset = instance.inset_shadow_params.yz;
+    out.has_inset_shadow = instance.inset_shadow_params.w;
+
     return out;
 }}
 
@@ -182,6 +246,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
     // Calculate center-relative position
     let center = in.size * 0.5;
     let p = in.local_pos - center;
+
+    var final_color: vec4<f32>;
 
     // Check if rendering outline (border ring) or filled rectangle
     if (in.border_width > 0.5) {{
@@ -201,23 +267,48 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
         // Anti-aliasing: smooth edge over 1 pixel
         let alpha = 1.0 - smoothstep(-0.5, 0.5, ring_dist);
 
-        return vec4<f32>(in.color.rgb, in.color.a * alpha);
+        final_color = vec4<f32>(in.color.rgb, in.color.a * alpha);
     }} else {{
         // Render filled rectangle
         if (in.border_radius < 0.5) {{
             // No rounded corners, render solid
-            return in.color;
+            final_color = in.color;
+        }} else {{
+            // Rounded corners with SDF
+            let dist = sd_rounded_box(p, center, in.border_radius);
+
+            // Anti-aliasing: smooth edge over 1 pixel
+            let alpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+
+            // Apply alpha to color
+            final_color = vec4<f32>(in.color.rgb, in.color.a * alpha);
         }}
-
-        // Rounded corners with SDF
-        let dist = sd_rounded_box(p, center, in.border_radius);
-
-        // Anti-aliasing: smooth edge over 1 pixel
-        let alpha = 1.0 - smoothstep(-0.5, 0.5, dist);
-
-        // Apply alpha to color
-        return vec4<f32>(in.color.rgb, in.color.a * alpha);
     }}
+
+    // Render inset shadow if enabled
+    if (in.has_inset_shadow > 0.5) {{
+        // SDF distance from edges (accounting for offset)
+        let shadow_center = center + in.inset_shadow_offset;
+        let shadow_p = in.local_pos - shadow_center;
+        let shadow_dist = sd_rounded_box(shadow_p, center, in.border_radius);
+
+        // Inset shadow: only inside rectangle (dist < 0)
+        // Alpha is HIGH at edges (dist ≈ 0) and fades toward center (dist < -blur)
+        if (shadow_dist < 0.0) {{
+            // smoothstep(-blur, 0.0, dist) gives:
+            // - 0.0 when dist <= -blur (center, no shadow)
+            // - 1.0 when dist >= 0.0 (edges, full shadow)
+            // - gradient in between
+            let shadow_alpha = smoothstep(-in.inset_shadow_blur, 0.0, shadow_dist) * in.inset_shadow_color.a;
+
+            // Blend shadow on top using "over" compositing
+            let shadow_rgb = in.inset_shadow_color.rgb * shadow_alpha;
+            let blended_rgb = final_color.rgb * (1.0 - shadow_alpha) + shadow_rgb;
+            final_color = vec4<f32>(blended_rgb, final_color.a);
+        }}
+    }}
+
+    return final_color;
 }}
 "#,
             viewport_width, viewport_height
