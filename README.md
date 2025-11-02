@@ -68,7 +68,7 @@ cargo run -p tools -- pixel-diff \
 ## Project Structure
 
 ```
-canvas_3d_6/
+raybox/
 ├── CLAUDE.md                      # AI agent guide
 ├── README.md                      # This file
 ├── specs.md                       # Technical specification

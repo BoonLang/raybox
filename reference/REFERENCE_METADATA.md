@@ -102,7 +102,7 @@ For V1, we focus on:
 **Current method** (used for initial capture):
 ```bash
 # Serve reference files
-cd ~/repos/canvas_3d_6/reference
+cd ~/repos/raybox/reference
 python3 -m http.server 8765
 
 # Capture screenshot

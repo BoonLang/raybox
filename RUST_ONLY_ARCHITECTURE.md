@@ -12,7 +12,7 @@ Everything in this project uses Rust - no Python, Node.js, or other language dep
 - ✅ `wasm-bindgen-cli` - Wasm ↔ JS bindings
 - ✅ `wasm-opt` - Wasm optimization (from Binaryen project)
 - ✅ `just` - Command runner (Rust alternative to Make)
-- ✅ `canvas-tools` - Our custom dev tools (includes serve, watch, screenshot, etc.)
+- ✅ `raybox-tools` - Our custom dev tools (includes serve, watch, screenshot, etc.)
 
 ### Browser (External)
 - ✅ `google-chrome` or `chromium` - For testing and screenshots
@@ -28,9 +28,9 @@ sudo apt install binaryen
 
 # Or download from: https://github.com/WebAssembly/binaryen/releases
 
-# Build canvas-tools locally
+# Build raybox-tools locally
 cargo build --release -p tools
-# Binary will be at: target/release/canvas-tools
+# Binary will be at: target/release/raybox-tools
 ```
 
 ---
@@ -184,7 +184,7 @@ just build-wasm-dev && just serve
 # Edit code, then re-run build
 ```
 
-**Option 2: Auto-rebuild (with canvas-tools watch)**
+**Option 2: Auto-rebuild (with raybox-tools watch)**
 ```bash
 # Terminal 1: Auto-rebuild
 cargo run -p tools -- watch --command "just build" .

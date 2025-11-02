@@ -132,11 +132,11 @@ verify:
     echo "✓ Build successful"
     echo ""
     echo "Testing extract-dom..."
-    ./target/release/canvas-tools extract-dom --output /tmp/test_layout.json
+    ./target/release/raybox-tools extract-dom --output /tmp/test_layout.json
     echo "✓ extract-dom works"
     echo ""
     echo "Testing compare-layouts..."
-    ./target/release/canvas-tools compare-layouts \
+    ./target/release/raybox-tools compare-layouts \
         --reference /tmp/test_layout.json \
         --actual /tmp/test_layout.json
     echo "✓ compare-layouts works"

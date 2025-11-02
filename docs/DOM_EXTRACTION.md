@@ -11,7 +11,7 @@ Extract precise layout data from the reference TodoMVC so we can compare our ren
 ### Step 1: Serve Reference TodoMVC
 
 ```bash
-cd ~/repos/canvas_3d_6
+cd ~/repos/raybox
 miniserve reference --port 8080
 ```
 

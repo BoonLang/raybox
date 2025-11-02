@@ -263,7 +263,7 @@ CORRECT: "Latest implementation" (without timestamp)
 ## 📂 Project Structure
 
 ```
-canvas_3d_6/
+raybox/
 ├── Cargo.toml                    # Workspace root (tools + renderer)
 ├── CLAUDE.md                     # THIS FILE - read first!
 ├── specs.md                      # Full technical specification
@@ -301,7 +301,7 @@ canvas_3d_6/
 │       ├── renderer.js           # JS bindings (wasm-bindgen output)
 │       └── renderer.d.ts         # TypeScript definitions
 │
-├── tools/                        # Rust dev tools crate (canvas-tools CLI)
+├── tools/                        # Rust dev tools crate (raybox-tools CLI)
 │   ├── Cargo.toml
 │   ├── README.md                 # Full command documentation
 │   └── src/
@@ -590,7 +590,7 @@ cargo watch -x "build --release"
 cargo watch -x test
 
 # Terminal 3: Run commands as needed
-./target/release/canvas-tools extract-dom --output /tmp/test.json
+./target/release/raybox-tools extract-dom --output /tmp/test.json
 ```
 
 ### 2. Verification Workflow
@@ -602,10 +602,10 @@ After implementing a feature:
 cargo build --release
 
 # 2. Run command
-./target/release/canvas-tools extract-dom --output /tmp/actual.json
+./target/release/raybox-tools extract-dom --output /tmp/actual.json
 
 # 3. Compare with reference (once compare-layouts is implemented)
-./target/release/canvas-tools compare-layouts \
+./target/release/raybox-tools compare-layouts \
   --reference reference/todomvc_dom_layout.json \
   --actual /tmp/actual.json
 
@@ -665,13 +665,14 @@ sudo apt install google-chrome # For WebGPU testing
 - ✅ Was very fast when it worked
 - ❌ Harder to iterate than Rust
 
-### canvas_3d_6 (Current - Rust WebGPU)
+### raybox (Current - Rust WebGPU + Future SDF CAD)
 - ✅ Rust-only toolchain for portability
 - ✅ Comprehensive specs and docs
 - ✅ DOM layout reference data
 - ✅ CPU melting prevention strategies
 - ✅ Clear success metrics (<5px error)
-- 🚧 Still in development
+- ✅ V1 Complete - 97.74% visual accuracy
+- 🚀 Evolution: canvas_3d_6 → raybox (aligns with CAD/raymarching future)
 
 **Key Lesson:** Don't just write code - measure, test, compare, and iterate.
 
@@ -808,7 +809,7 @@ Before declaring infrastructure "ready":
 ### File Paths
 - Layout reference: `reference/todomvc_dom_layout.json`
 - Screenshot reference: `reference/todomvc_chrome_reference.png`
-- Tools binary: `target/release/canvas-tools`
+- Tools binary: `target/release/raybox-tools`
 - Main spec: `specs.md`
 
 ### Key Numbers
@@ -844,7 +845,7 @@ When you start working on this project:
 2. **Read `specs.md`** - Understand the full scope
 3. **Read `RUST_ONLY_ARCHITECTURE.md`** - Understand constraints
 4. **Run `cargo build --release`** - Verify everything compiles
-5. **Run `./target/release/canvas-tools extract-dom -o /tmp/test.json`** - Verify tools work
+5. **Run `./target/release/raybox-tools extract-dom -o /tmp/test.json`** - Verify tools work
 6. **Pick a task from TODO section** - Start implementing
 7. **Write tests first** - TDD approach
 8. **Verify with tools** - compare-layouts, cargo test

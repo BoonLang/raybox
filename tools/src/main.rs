@@ -8,7 +8,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "canvas-tools")]
+#[command(name = "raybox-tools")]
 #[command(about = "TodoMVC Canvas Renderer Development Tools", long_about = None)]
 struct Cli {
     #[command(subcommand)]

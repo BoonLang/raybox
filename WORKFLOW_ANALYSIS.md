@@ -324,7 +324,7 @@ Recommendations:
 
 ```bash
 # 1. Create tools crate with CDP support
-cd ~/repos/canvas_3d_6
+cd ~/repos/raybox
 cargo new --bin crates/tools
 
 # 2. Add dependencies
@@ -418,7 +418,7 @@ cargo run -p tools -- visual-diff \
 ## Key Files We Need
 
 ```
-canvas_3d_6/
+raybox/
 ├── reference/
 │   ├── todomvc_dom_layout.json     # 🆕 Extracted DOM positions
 │   ├── todomvc_chrome_reference.png # ✅ Already have

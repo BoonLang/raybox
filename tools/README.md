@@ -4,7 +4,7 @@ Rust-based development tools for the Canvas 3D 6 TodoMVC renderer project.
 
 ## Overview
 
-This crate provides the `canvas-tools` CLI with commands for building, testing, and verifying the WebGPU-based TodoMVC renderer.
+This crate provides the `raybox-tools` CLI with commands for building, testing, and verifying the WebGPU-based TodoMVC renderer.
 
 ## Commands
 
@@ -376,8 +376,8 @@ rm -rf /tmp/chromiumoxide-runner
 cargo build --release -p tools
 
 # Run commands
-./target/release/canvas-tools screenshot --url http://localhost:8000 --output /tmp/test.png --width 700 --height 700
-./target/release/canvas-tools check-console --url http://localhost:8000
+./target/release/raybox-tools screenshot --url http://localhost:8000 --output /tmp/test.png --width 700 --height 700
+./target/release/raybox-tools check-console --url http://localhost:8000
 ```
 
 ## See Also

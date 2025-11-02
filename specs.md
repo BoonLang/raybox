@@ -122,7 +122,7 @@ line-height: 1.4em;
 
 ### Crate Structure
 ```
-canvas_3d_6/
+raybox/
 ├── crates/
 │   ├── renderer/          # Core WebGPU renderer (wasm32 target)
 │   │   ├── src/
@@ -394,13 +394,13 @@ just test                # Run all tests
 just check               # Check Rust code
 just fmt                 # Format code
 
-# Utilities (canvas-tools commands)
-canvas-tools wasm-build [--release]
-canvas-tools wasm-start [--open] [--port 8000]
-canvas-tools screenshot -u URL -o output.png
-canvas-tools pixel-diff -r ref.png -c current.png
-canvas-tools extract-dom -o layout.json
-canvas-tools compare-layouts -r ref.json -a actual.json
+# Utilities (raybox-tools commands)
+raybox-tools wasm-build [--release]
+raybox-tools wasm-start [--open] [--port 8000]
+raybox-tools screenshot -u URL -o output.png
+raybox-tools pixel-diff -r ref.png -c current.png
+raybox-tools extract-dom -o layout.json
+raybox-tools compare-layouts -r ref.json -a actual.json
 ```
 
 ### Development Loop
@@ -489,8 +489,8 @@ Original plan (no longer needed):
 
 ### Milestone 4: Polish & Verification
 - [ ] Fine-tune positioning if needed
-- [ ] Use canvas-tools screenshot to capture render
-- [ ] Use canvas-tools pixel-diff to compare with reference
+- [ ] Use raybox-tools screenshot to capture render
+- [ ] Use raybox-tools pixel-diff to compare with reference
 - [ ] Achieve <5px tolerance on pixel-diff
 - [ ] Verify all 45 elements render correctly
 - [ ] Document any known issues

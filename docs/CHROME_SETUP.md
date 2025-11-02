@@ -31,7 +31,7 @@ google-chrome \
 - `--use-angle=vulkan` - ANGLE uses Vulkan (not OpenGL)
 - `--disable-software-rasterizer` - Prevent fallback to CPU renderer
 
-**Minimal flags** (used by `canvas-tools` commands):
+**Minimal flags** (used by `raybox-tools` commands):
 ```bash
 --enable-unsafe-webgpu
 --enable-webgpu-developer-features
@@ -46,12 +46,12 @@ google-chrome \
 
 - `--ozone-platform=x11` - Use X11 instead of Wayland (more stable for WebGPU)
   - Remove this if you're on Wayland and it works
-  - **Note:** `canvas-tools` always includes this flag
+  - **Note:** `raybox-tools` always includes this flag
 
 ### Optional Flags (Manual Testing Only)
 
 - `--remote-debugging-port=9222` - For CDP automation
-  - **Note:** `canvas-tools` manages this automatically
+  - **Note:** `raybox-tools` manages this automatically
 - `--user-data-dir=/tmp/chrome-canvas-webgpu` - Isolate profile
 
 ### Optional (but recommended)
@@ -309,7 +309,7 @@ Create `web/test_webgpu.html`:
 **Test it**:
 ```bash
 # Serve
-cd ~/repos/canvas_3d_6
+cd ~/repos/raybox
 miniserve web --port 8080
 
 # Open in Chrome (with flags)
@@ -333,7 +333,7 @@ GPU rendering enabled.
 
 ### Rust Tools (Recommended)
 
-The `canvas-tools` CLI automatically applies WebGPU flags when launching Chrome:
+The `raybox-tools` CLI automatically applies WebGPU flags when launching Chrome:
 
 ```bash
 # Take screenshot (auto-applies WebGPU flags)
