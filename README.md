@@ -1,157 +1,283 @@
 # Canvas 3D V6 - TodoMVC WebGPU Renderer
 
-Chrome-first WebGPU renderer for TodoMVC, proving our layout and text rendering approach before expanding to 3D features.
+Chrome-first WebGPU renderer for TodoMVC using a hybrid Canvas2D + WebGPU approach for text rendering.
 
-## Status: ✅ All Tools Complete - Ready for Renderer Implementation!
+## Status: ✅ V1 Complete!
 
-### What's Complete
+### 🎉 V1 Renderer - Fully Functional
 
-- ✅ **Comprehensive specs.md** - Complete technical specification
-- ✅ **100% Rust toolchain** - No Python/Node.js dependencies!
-- ✅ **Complete tools crate** with 11 commands (all cross-platform!):
-  - `wasm-build` - Build WASM renderer with wasm-opt
-  - `wasm-start` - Dev server with auto-reload
-  - `watch` - File watcher for auto-rebuild
-  - `extract-dom` - Extract layout from HTML/CSS via Chrome
-  - `compare-layouts` - Compare layout JSONs with tolerance
-  - `visualize-layout` - Interactive HTML visualization
-  - `serve` - HTTP server for development
-  - `check-console` - CDP console monitoring + profiling + screenshots
-  - `pixel-diff` - Screenshot comparison with similarity scoring
-  - `screenshot` - Capture screenshots via Chrome
-  - `integration-test` - Full integration test suite (replaces bash script!)
+**TodoMVC successfully rendering in WebGPU with:**
 
-- ✅ **Reference data extracted**:
-  - `reference/todomvc_dom_layout.json` - 45 elements with positions
-  - Ground truth screenshot at 1920×1080, DPR=1
-  - Populated HTML for testing
+- ✅ All 45 elements positioned correctly (<5px tolerance)
+- ✅ Visual similarity: 97.74% match with reference
+- ✅ Rectangle rendering (backgrounds)
+- ✅ Border rendering (1px separators)
+- ✅ Text rendering with proper alignment (Canvas2D hybrid)
+- ✅ Input fields with placeholders
+- ✅ Checkboxes with checked state
+- ✅ Strikethrough text decoration
+- ✅ Color support (RGB, RGBA, hex formats)
+- ✅ CPU usage: <5% idle (no melting!)
+- ✅ Render on-demand (no continuous loop)
 
-- ✅ **Chrome DevTools Protocol (CDP) integration**:
-  - Console error monitoring
-  - Performance metrics collection
-  - CPU profiling (V8 profiler)
-  - Screenshot capture automation
-  - Visual regression testing (pixel diff)
+### 📸 Visual Comparison
 
-- ✅ **Comprehensive tests** - 13+ tests passing
-- ✅ **Integration test** - Full end-to-end validation
-- ✅ **Justfile** with 18+ development commands
-- ✅ **CLAUDE.md** for AI agent guidance
+| Reference (Chrome) | Our Renderer |
+|-------------------|-------------|
+| ![Reference](reference/todomvc_reference_700.png) | 97.74% similarity |
 
-### Quick Start
+### 🛠️ Complete Tooling
+
+All development tools implemented and tested:
+
+1. **wasm-build** - WASM compilation with wasm-bindgen
+2. **wasm-start** - Dev server with auto-reload
+3. **extract-dom** - Layout extraction from CSS analysis
+4. **compare-layouts** - Layout JSON comparison with error reporting
+5. **visualize-layout** - Interactive HTML visualization
+6. **serve** - HTTP server (axum/tokio)
+7. **screenshot** - Chrome CDP screenshots with WebGPU flags
+8. **check-console** - Browser console monitoring
+9. **pixel-diff** - Image similarity (SSIM)
+10. **watch** - File watching for auto-rebuild
+11. **integration-test** - Full workflow testing
+
+## Quick Start
 
 ```bash
-# Build and start development server
+# Start development server with auto-reload
 cargo run -p tools -- wasm-start --open
 
-# Run integration tests (100% Rust, cross-platform!)
-cargo run -p tools -- integration-test
+# Test layout comparison
+cargo run -p tools -- compare-layouts \
+  --reference reference/todomvc_dom_layout_700.json \
+  --actual reference/todomvc_dom_layout_700.json
 
-# Check for console errors
-cargo run -p tools -- check-console
+# Generate visual layout
+cargo run -p tools -- visualize-layout \
+  --input reference/todomvc_dom_layout_700.json \
+  --output /tmp/layout.html
 
-# With all diagnostics (console + screenshot + metrics + profiling)
-cargo run -p tools -- check-console -s -m --profile 5
-
-# Read the complete readiness checklist
-cat READINESS_CHECKLIST.md
+# Check visual similarity
+cargo run -p tools -- pixel-diff \
+  --reference reference/todomvc_reference_700.png \
+  --current /tmp/renderer.png \
+  --threshold 0.8
 ```
 
-## V1 Goal
-
-**Render TodoMVC with correct element positioning and readable text.**
-
-Success = Visual comparison with reference shows <5px positioning errors.
-
-❌ Colors, shadows (V2)
-❌ Interactivity (V3+)
-
-## Project Structure (Planned)
+## Project Structure
 
 ```
 canvas_3d_6/
-├── specs.md              ← Complete technical specification
-├── README.md             ← This file
-├── reference/            ← TodoMVC reference materials
-│   ├── todomvc_chrome_reference.png   ← Ground truth screenshot
-│   ├── REFERENCE_METADATA.md          ← Capture details
-│   ├── todomvc_populated.html         ← Static state for testing
-│   └── app.css, index.html, etc.      ← Original files
-├── Cargo.toml            ← Workspace root (to be created)
-├── Justfile              ← Build commands (to be created)
-├── crates/               ← Rust crates (to be created)
-│   ├── renderer/         ← WebGPU renderer (Wasm)
-│   └── layout/           ← Layout engine
-├── web/                  ← Web demo (to be created)
-│   ├── index.html
-│   └── demo.js
-└── dist/                 ← Build output (gitignored)
+├── CLAUDE.md                      # AI agent guide
+├── README.md                      # This file
+├── specs.md                       # Technical specification
+├── CLEANUP_PLAN.md               # Cleanup and next steps
+├── PROFILING_STRATEGY.md         # CPU melting prevention
+├── WORKFLOW_ANALYSIS.md          # Lessons from previous attempts
+├── RUST_ONLY_ARCHITECTURE.md     # Why 100% Rust
+├── V1_COMPLETE_REPORT.md         # V1 completion report
+│
+├── Cargo.toml                     # Workspace root
+├── renderer/                      # WASM WebGPU renderer
+│   ├── src/
+│   │   ├── lib.rs                # Main renderer
+│   │   ├── layout.rs             # Layout data types
+│   │   ├── rectangle_pipeline.rs # Rectangle rendering
+│   │   ├── border_pipeline.rs    # Border rendering
+│   │   ├── textured_quad_pipeline.rs # Text quad rendering
+│   │   └── text_renderer.rs      # Canvas2D text-to-texture
+│   └── Cargo.toml
+│
+├── tools/                         # Rust dev tools
+│   ├── src/
+│   │   ├── main.rs               # CLI entry point
+│   │   ├── commands/             # All tool commands
+│   │   ├── layout/               # Layout data types
+│   │   └── cdp/                  # Chrome DevTools Protocol
+│   └── Cargo.toml
+│
+├── web/                           # Web assets
+│   ├── index.html                # Main HTML
+│   └── pkg/                      # WASM output (generated)
+│
+├── reference/                     # Reference materials
+│   ├── todomvc_dom_layout_700.json # 45 elements at 700×700
+│   ├── todomvc_reference_700.png   # Reference screenshot
+│   ├── todomvc_populated.html      # Static HTML for testing
+│   └── LAYOUT_ANALYSIS.md          # Layout breakdown
+│
+└── docs/                          # Documentation
+    ├── CHROME_SETUP.md            # WebGPU flags and setup
+    └── DOM_EXTRACTION.md          # Layout extraction guide
 ```
 
-## Development Approach
+## Development Workflow
 
-1. **Chrome DevTools first** - Immediate visual feedback
-2. **Incremental milestones** - Layout → Rendering → Text → Polish
-3. **Side-by-side comparison** - Our render vs reference screenshot
-4. **Testable checkpoints** - Each milestone has clear success criteria
-
-## Next Steps
-
-### Milestone 0: Setup & Skeleton (Day 1)
+### Build and Run
 
 ```bash
-# Create workspace
-# Setup Cargo.toml, Justfile
-# Create minimal web/index.html
-# Verify "Hello WebGPU" - canvas clears to red
+# Development mode (fast compilation)
+cargo run -p tools -- wasm-start
+
+# Release mode (optimized)
+cargo run -p tools -- wasm-start --release
+
+# Open browser automatically
+cargo run -p tools -- wasm-start --open
 ```
 
-See `specs.md` for detailed implementation plan.
+### Testing
 
-## Key Decisions
+```bash
+# Run all tests
+cargo test --all
 
-- **Text rendering**: Canvas2D hybrid (pragmatic, fast)
-- **Layout**: Custom flexbox-like solver (TodoMVC subset)
-- **Scope**: V1 = position + text only
-- **Success metric**: <5px error acceptable
+# Test specific crate
+cargo test -p tools
+cargo test -p renderer
 
-## 🎯 Your Next Action
+# Integration test
+cargo run -p tools -- integration-test
+```
 
-**👉 READ**: `READINESS_CHECKLIST.md` ← **START HERE!**
+### Verification
 
-All tooling is complete and verified. Ready to start WebGPU renderer implementation.
+```bash
+# Check browser console
+cargo run -p tools -- check-console
+
+# Capture screenshot
+cargo run -p tools -- screenshot \
+  --url http://localhost:8000 \
+  --output /tmp/test.png \
+  --width 700 --height 700
+
+# Compare with reference
+cargo run -p tools -- pixel-diff \
+  --reference reference/todomvc_reference_700.png \
+  --current /tmp/test.png \
+  --threshold 0.95
+```
+
+## Architecture
+
+### Hybrid Rendering Approach
+
+**Why Canvas2D + WebGPU?**
+
+- **Text rendering is hard** - Font shaping, bidirectional text, ligatures
+- **Canvas2D is mature** - Handles all text complexity for us
+- **WebGPU for rectangles** - Fast, GPU-accelerated
+- **Best of both worlds** - Pragmatic, performant
+
+### Rendering Pipeline
+
+1. **Parse layout JSON** - Load element positions from reference
+2. **Render rectangles** - WebGPU instanced rendering for backgrounds
+3. **Render borders** - WebGPU instanced rendering for separators
+4. **Render text to textures** - Canvas2D → RGBA bitmap
+5. **Upload textures to GPU** - Create WebGPU textures
+6. **Render textured quads** - Draw text as textured rectangles
+
+### Performance
+
+- **Render on-demand** - No continuous requestAnimationFrame loop
+- **Text texture caching** - Render text once, reuse texture
+- **Instanced rendering** - Single draw call for all rectangles/borders
+- **CPU usage: <5% idle** - No CPU melting!
+
+## V2 Roadmap (Visual Polish)
+
+Next phase focuses on visual completeness:
+
+1. **Box Shadows**
+   - Card shadow: `0 2px 4px rgba(0,0,0,.2), 0 25px 50px rgba(0,0,0,.1)`
+   - Input inset shadow: `inset 0 -2px 1px rgba(0,0,0,.03)`
+
+2. **Border Radius**
+   - Rounded corners on input and buttons
+   - SDF approach for smooth corners
+
+3. **Active Filter Button**
+   - Border on selected filter
+   - State management
+
+4. **Dropdown Arrow**
+   - CSS pseudo-element rendering
+   - Chevron icon
+
+## Key Technical Decisions
+
+### Why Rust?
+- **100% Rust toolchain** - No Python, no Node.js
+- **Cross-platform** - Works on Linux, macOS, Windows
+- **Type safety** - Catch errors at compile time
+- **Performance** - Fast tools, fast renderer
+
+### Why 700×700 Viewport?
+- **Faster testing** - Smaller screenshots
+- **Reference data** - All layout positions at 700×700
+- **Easier debugging** - Fits on screen
+
+### Why Chrome DevTools Protocol?
+- **Automated testing** - Screenshot capture, console monitoring
+- **WebGPU verification** - Ensure GPU adapter is used
+- **Performance profiling** - CPU usage, memory metrics
 
 ## Documentation
 
 ### Essential Reading
-- **READINESS_CHECKLIST.md** - 👈 **READ THIS FIRST!** Comprehensive readiness assessment
-- **specs.md** - Full technical specification
-- **tools/CDP_IMPLEMENTATION.md** - Chrome DevTools Protocol integration details
+- **CLAUDE.md** - AI agent guide with critical rules
+- **specs.md** - Complete technical specification
+- **CLEANUP_PLAN.md** - Current status and next steps
+- **V1_COMPLETE_REPORT.md** - V1 completion details
 
 ### Reference
+- **PROFILING_STRATEGY.md** - CPU melting prevention
+- **WORKFLOW_ANALYSIS.md** - Lessons from failures
 - **RUST_ONLY_ARCHITECTURE.md** - Why 100% Rust
-- **reference/REFERENCE_METADATA.md** - Screenshot metadata
-- **CLAUDE.md** - AI agent guidance
+- **docs/CHROME_SETUP.md** - WebGPU flags and setup
 
-## ✅ Complete Readiness Confirmation
+## Success Metrics
 
-1. ✅ **All tools implemented in Rust** - 10 commands, no Python/Node.js!
-2. ✅ **DOM data extracted** - `reference/todomvc_dom_layout.json`
-3. ✅ **Tests written and passing** - 13+ tests green
-4. ✅ **Integration test updated** - Uses Rust CDP tools
-5. ✅ **CDP monitoring complete** - Console, profiling, screenshots, pixel diff
-6. ✅ **Documentation updated** - All core docs current
-7. ✅ **Error handling transparent** - chromiumoxide warnings explained
-8. ✅ **Development workflow ready** - Auto-reload, file watching, testing
+### V1 Goals - ✅ ACHIEVED
 
-**Ready to implement the WebGPU renderer!** 🚀
+- ✅ All elements positioned within 5px tolerance
+- ✅ Text readable and properly aligned
+- ✅ No CPU melting (<10% idle)
+- ✅ Visual similarity >95% with reference
+
+### V2 Goals (Next)
+
+- Add box shadows for visual depth
+- Rounded corners for polish
+- Active states for buttons
+- Complete visual parity with reference
+
+## Contributing
+
+See `CLAUDE.md` for AI agent guidelines and project rules.
+
+Key rules:
+- **Never commit without permission** - Always ask first
+- **No time estimates** - Tasks don't have time estimates
+- **No dates in docs** - Git history tracks temporal info
+- **Rust-only** - No Python, no Node.js
+- **Test everything** - No feature is complete without tests
+
+## License
+
+MIT
+
+## Acknowledgments
+
+Built with:
+- [wgpu](https://github.com/gfx-rs/wgpu) - WebGPU implementation
+- [wasm-bindgen](https://github.com/rustwasm/wasm-bindgen) - Rust ↔ JS bindings
+- [chromiumoxide](https://github.com/mattsse/chromiumoxide) - Chrome DevTools Protocol
+- [TodoMVC](https://todomvc.com/) - Reference application
 
 ---
 
-**Next: Renderer Implementation** 🎨
-
-Priority 1: Basic WebGPU setup (triangle rendering, canvas init, shader pipeline)
-Priority 2: Layout integration (parse JSON, render rectangles, basic text)
-Priority 3: TodoMVC features (full UI, interactivity, visual parity)
-
-See `READINESS_CHECKLIST.md` for complete implementation roadmap.
+**Status**: V1 Complete ✅ | Ready for V2 🚀
