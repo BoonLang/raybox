@@ -1,4 +1,4 @@
-# Canvas 3D V6 - TodoMVC WebGPU Renderer
+# Raybox - TodoMVC WebGPU Renderer
 
 Chrome-first WebGPU renderer for TodoMVC using a hybrid Canvas2D + WebGPU approach for text rendering.
 
