@@ -3,7 +3,7 @@
     "url": "http://localhost:8765/todomvc_populated.html",
     "title": "TodoMVC: JavaScript Es6",
     "generator": "Rust CSS/HTML analyzer",
-    "timestamp": "2025-11-01T23:20:25.239799142+00:00",
+    "timestamp": "2025-11-02T00:04:06.811942522+00:00",
     "viewport": {
       "width": 700,
       "height": 700,
@@ -650,6 +650,7 @@
       "width": 550.0,
       "height": 20.0,
       "fontSize": "11px",
+      "textAlign": "center",
       "display": "block",
       "textContent": "Double-click to edit a todo"
     },
@@ -663,6 +664,7 @@
       "width": 550.0,
       "height": 20.0,
       "fontSize": "11px",
+      "textAlign": "center",
       "display": "block",
       "textContent": "Created by the TodoMVC Team"
     },
@@ -676,6 +678,7 @@
       "width": 550.0,
       "height": 20.0,
       "fontSize": "11px",
+      "textAlign": "center",
       "display": "block",
       "textContent": "Part of TodoMVC"
     }
@@ -683,42 +686,42 @@
   "summary": {
     "totalElements": 45,
     "byTag": {
-      "a": 3,
-      "div": 5,
-      "body": 1,
-      "section": 1,
-      "main": 1,
-      "input": 6,
       "ul": 2,
-      "h1": 1,
-      "html": 1,
-      "button": 5,
-      "footer": 2,
-      "span": 1,
-      "header": 1,
+      "a": 3,
       "label": 5,
+      "div": 5,
+      "main": 1,
+      "body": 1,
+      "input": 6,
+      "p": 3,
+      "section": 1,
+      "span": 1,
+      "h1": 1,
+      "header": 1,
       "li": 7,
-      "p": 3
+      "button": 5,
+      "html": 1,
+      "footer": 2
     },
     "byClass": {
-      "todo-list": 1,
-      "todoapp": 1,
-      "info": 1,
       "header": 1,
-      "todo-count": 1,
-      "clear-completed": 1,
       "toggle-all-label": 1,
-      "toggle": 4,
-      "completed": 1,
-      "selected": 1,
-      "new-todo": 1,
-      "footer": 1,
-      "main": 1,
-      "destroy": 4,
-      "view": 4,
+      "todo-count": 1,
       "filters": 1,
+      "selected": 1,
+      "main": 1,
       "toggle-all": 1,
-      "toggle-all-container": 1
+      "toggle": 4,
+      "new-todo": 1,
+      "toggle-all-container": 1,
+      "todoapp": 1,
+      "footer": 1,
+      "completed": 1,
+      "view": 4,
+      "info": 1,
+      "destroy": 4,
+      "todo-list": 1,
+      "clear-completed": 1
     }
   }
 }

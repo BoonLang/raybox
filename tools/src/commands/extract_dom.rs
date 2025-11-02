@@ -486,6 +486,7 @@ fn generate_layout() -> LayoutData {
         elem.height = 20.0;
         elem.text_content = Some(text.to_string());
         elem.font_size = Some("11px".to_string());
+        elem.text_align = Some("center".to_string()); // Inherit from parent .info footer
         elem.display = Some("block".to_string());
         elements.push(elem);
         idx += 1;
