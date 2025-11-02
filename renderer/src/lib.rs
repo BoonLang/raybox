@@ -270,17 +270,19 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
                     shadow_y += footer_y_adjustment;
                 }
 
-                // Reduce opacity slightly based on blur (more blur = slightly more transparent)
-                // Use gentle reduction: larger blurs are more diffuse but not drastically dimmer
-                let blur_factor = 1.0 + (shadow.blur_radius / 50.0); // Gentler reduction
-                let adjusted_alpha = shadow.color.3 / blur_factor;
+                // Content size is the element size plus spread (before blur expansion)
+                let content_width = element.width + (shadow.spread_radius * 2.0);
+                let content_height = element.height + (shadow.spread_radius * 2.0);
 
                 shadow_instances.push(ShadowInstance::new(
                     shadow_x,
                     shadow_y,
                     shadow_width,
                     shadow_height,
-                    [shadow.color.0, shadow.color.1, shadow.color.2, adjusted_alpha],
+                    [shadow.color.0, shadow.color.1, shadow.color.2, shadow.color.3],
+                    content_width,
+                    content_height,
+                    shadow.blur_radius,
                 ));
             }
         }

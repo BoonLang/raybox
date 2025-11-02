@@ -9,19 +9,37 @@
 pub struct ShadowInstance {
     /// Position (x, y) in screen coordinates
     pub position: [f32; 2],
-    /// Size (width, height) in pixels
+    /// Size (width, height) in pixels - includes blur expansion
     pub size: [f32; 2],
     /// RGBA color (normalized 0-1)
     pub color: [f32; 4],
+    /// Content rectangle size (without blur expansion)
+    pub content_size: [f32; 2],
+    /// Blur radius in pixels
+    pub blur_radius: f32,
+    /// Padding for alignment
+    pub _padding: f32,
 }
 
 impl ShadowInstance {
     /// Create a new shadow instance
-    pub fn new(x: f32, y: f32, width: f32, height: f32, color: [f32; 4]) -> Self {
+    pub fn new(
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: [f32; 4],
+        content_width: f32,
+        content_height: f32,
+        blur_radius: f32,
+    ) -> Self {
         Self {
             position: [x, y],
             size: [width, height],
             color,
+            content_size: [content_width, content_height],
+            blur_radius,
+            _padding: 0.0,
         }
     }
 
@@ -39,15 +57,27 @@ impl ShadowInstance {
                 },
                 // size
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+                    offset: 8,
                     shader_location: 1,
                     format: wgpu::VertexFormat::Float32x2,
                 },
                 // color
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                    offset: 16,
                     shader_location: 2,
                     format: wgpu::VertexFormat::Float32x4,
+                },
+                // content_size
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // blur_radius
+                wgpu::VertexAttribute {
+                    offset: 40,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32,
                 },
             ],
         }
