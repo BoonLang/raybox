@@ -246,45 +246,76 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
         // Parse box-shadow if present
         if let Some(box_shadow_str) = &element.box_shadow {
             let shadows = parse_box_shadow(box_shadow_str);
-            for shadow in shadows {
-                // Skip inset shadows for now (requires stencil buffer)
-                if shadow.inset {
-                    continue;
-                }
 
-                // Approximate blur by slightly expanding shadow and adjusting opacity
-                // CSS blur creates a gradient edge, not a size increase
-                // Expand by a fraction of blur radius for soft edge effect
-                let blur_expansion = shadow.blur_radius * 0.5; // Only expand by half the blur radius
+            // Filter out inset shadows
+            let non_inset_shadows: Vec<_> = shadows.iter().filter(|s| !s.inset).collect();
 
-                // Calculate shadow size (element size + spread * 2 + small blur expansion)
-                let shadow_width = element.width + (shadow.spread_radius * 2.0) + (blur_expansion * 2.0);
-                let shadow_height = element.height + (shadow.spread_radius * 2.0) + (blur_expansion * 2.0);
-
-                // Calculate shadow position (element position + offset - expansion for centering)
-                let shadow_x = element.x - offset_x + shadow.offset_x - shadow.spread_radius - blur_expansion;
-                let mut shadow_y = element.y - offset_y + shadow.offset_y - shadow.spread_radius - blur_expansion;
-
-                // Apply footer vertical centering adjustment
-                if is_footer_child(element, footer_y) {
-                    shadow_y += footer_y_adjustment;
-                }
-
-                // Content size is the element size plus spread (before blur expansion)
-                let content_width = element.width + (shadow.spread_radius * 2.0);
-                let content_height = element.height + (shadow.spread_radius * 2.0);
-
-                shadow_instances.push(ShadowInstance::new(
-                    shadow_x,
-                    shadow_y,
-                    shadow_width,
-                    shadow_height,
-                    [shadow.color.0, shadow.color.1, shadow.color.2, shadow.color.3],
-                    content_width,
-                    content_height,
-                    shadow.blur_radius,
-                ));
+            if non_inset_shadows.is_empty() {
+                continue;
             }
+
+            // Combine shadow layers into one unified shadow (like a physical object)
+            // Use the first two layers (most common case: small sharp + large diffuse)
+            let shadow1 = non_inset_shadows[0];
+            let shadow2 = if non_inset_shadows.len() > 1 {
+                non_inset_shadows[1]
+            } else {
+                // If only one layer, duplicate it (will blend to same result)
+                shadow1
+            };
+
+            // Calculate bounding box that contains both shadow layers
+            // For each layer, calculate how far the shadow extends from element edges
+            // (positive values = distance from element edge)
+            let extent_top_1 = shadow1.spread_radius + shadow1.blur_radius - shadow1.offset_y;
+            let extent_bottom_1 = shadow1.spread_radius + shadow1.blur_radius + shadow1.offset_y;
+            let extent_left_1 = shadow1.spread_radius + shadow1.blur_radius - shadow1.offset_x;
+            let extent_right_1 = shadow1.spread_radius + shadow1.blur_radius + shadow1.offset_x;
+
+            let extent_top_2 = shadow2.spread_radius + shadow2.blur_radius - shadow2.offset_y;
+            let extent_bottom_2 = shadow2.spread_radius + shadow2.blur_radius + shadow2.offset_y;
+            let extent_left_2 = shadow2.spread_radius + shadow2.blur_radius - shadow2.offset_x;
+            let extent_right_2 = shadow2.spread_radius + shadow2.blur_radius + shadow2.offset_x;
+
+            // Union of both bounding boxes (take maximum extent in each direction)
+            let extent_top = extent_top_1.max(extent_top_2);
+            let extent_bottom = extent_bottom_1.max(extent_bottom_2);
+            let extent_left = extent_left_1.max(extent_left_2);
+            let extent_right = extent_right_1.max(extent_right_2);
+
+            // Shadow quad size
+            let shadow_width = element.width + extent_left + extent_right;
+            let shadow_height = element.height + extent_top + extent_bottom;
+
+            // Shadow quad position (top-left corner)
+            let shadow_x = element.x - offset_x - extent_left;
+            let mut shadow_y = element.y - offset_y - extent_top;
+
+            // Apply footer vertical centering adjustment
+            if is_footer_child(element, footer_y) {
+                shadow_y += footer_y_adjustment;
+            }
+
+            // Content size (same for both layers)
+            let content_width = element.width;
+            let content_height = element.height;
+
+            shadow_instances.push(ShadowInstance::new_dual_layer(
+                shadow_x,
+                shadow_y,
+                shadow_width,
+                shadow_height,
+                content_width,
+                content_height,
+                // Layer 1
+                [shadow1.color.0, shadow1.color.1, shadow1.color.2, shadow1.color.3],
+                shadow1.blur_radius,
+                [shadow1.offset_x, shadow1.offset_y],
+                // Layer 2
+                [shadow2.color.0, shadow2.color.1, shadow2.color.2, shadow2.color.3],
+                shadow2.blur_radius,
+                [shadow2.offset_x, shadow2.offset_y],
+            ));
         }
     }
 
@@ -294,6 +325,11 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
     for element in &layout.elements {
         // Skip invisible elements
         if !element.is_visible() {
+            continue;
+        }
+
+        // Skip body element - its background is the canvas clear color, not a rectangle
+        if element.tag == "body" {
             continue;
         }
 

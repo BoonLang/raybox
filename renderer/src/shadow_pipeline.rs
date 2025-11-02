@@ -3,7 +3,8 @@
 /// Renders box shadows as semi-transparent rectangles using instanced rendering.
 /// Shadows are rendered BEFORE rectangles to ensure proper layering.
 
-/// Instance data for a single shadow layer
+/// Instance data for a unified multi-layer shadow
+/// Supports up to 2 shadow layers blended together
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ShadowInstance {
@@ -11,35 +12,50 @@ pub struct ShadowInstance {
     pub position: [f32; 2],
     /// Size (width, height) in pixels - includes blur expansion
     pub size: [f32; 2],
-    /// RGBA color (normalized 0-1)
-    pub color: [f32; 4],
     /// Content rectangle size (without blur expansion)
     pub content_size: [f32; 2],
-    /// Blur radius in pixels
-    pub blur_radius: f32,
+
+    // Layer 1 (usually the small sharp shadow)
+    pub color1: [f32; 4],
+    pub blur_radius1: f32,
+    pub offset1: [f32; 2],
+
+    // Layer 2 (usually the large diffuse shadow)
+    pub color2: [f32; 4],
+    pub blur_radius2: f32,
+    pub offset2: [f32; 2],
+
     /// Padding for alignment
-    pub _padding: f32,
+    pub _padding: [f32; 2],
 }
 
 impl ShadowInstance {
-    /// Create a new shadow instance
-    pub fn new(
+    /// Create a unified shadow with two layers blended together
+    pub fn new_dual_layer(
         x: f32,
         y: f32,
         width: f32,
         height: f32,
-        color: [f32; 4],
         content_width: f32,
         content_height: f32,
-        blur_radius: f32,
+        color1: [f32; 4],
+        blur1: f32,
+        offset1: [f32; 2],
+        color2: [f32; 4],
+        blur2: f32,
+        offset2: [f32; 2],
     ) -> Self {
         Self {
             position: [x, y],
             size: [width, height],
-            color,
             content_size: [content_width, content_height],
-            blur_radius,
-            _padding: 0.0,
+            color1,
+            blur_radius1: blur1,
+            offset1,
+            color2,
+            blur_radius2: blur2,
+            offset2,
+            _padding: [0.0, 0.0],
         }
     }
 
@@ -61,23 +77,47 @@ impl ShadowInstance {
                     shader_location: 1,
                     format: wgpu::VertexFormat::Float32x2,
                 },
-                // color
+                // content_size
                 wgpu::VertexAttribute {
                     offset: 16,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // content_size
-                wgpu::VertexAttribute {
-                    offset: 32,
-                    shader_location: 3,
                     format: wgpu::VertexFormat::Float32x2,
                 },
-                // blur_radius
+                // color1
+                wgpu::VertexAttribute {
+                    offset: 24,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // blur_radius1
                 wgpu::VertexAttribute {
                     offset: 40,
                     shader_location: 4,
                     format: wgpu::VertexFormat::Float32,
+                },
+                // offset1
+                wgpu::VertexAttribute {
+                    offset: 44,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // color2
+                wgpu::VertexAttribute {
+                    offset: 52,
+                    shader_location: 6,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // blur_radius2
+                wgpu::VertexAttribute {
+                    offset: 68,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                // offset2
+                wgpu::VertexAttribute {
+                    offset: 72,
+                    shader_location: 8,
+                    format: wgpu::VertexFormat::Float32x2,
                 },
             ],
         }
