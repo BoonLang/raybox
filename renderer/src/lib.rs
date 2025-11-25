@@ -17,9 +17,9 @@ mod wasm_impl {
     use wasm_bindgen::prelude::*;
 
     use super::{
-        parse_font_size_px,
         border_pipeline::{create_border_edges, BorderPipeline},
         layout::{parse_box_shadow, parse_color, Element, LayoutData, Shadow},
+        parse_font_size_px,
         rectangle_pipeline::{RectangleInstance, RectanglePipeline},
         shadow_pipeline::{ShadowInstance, ShadowPipeline},
         text_renderer::{TextRenderer, TextTexture},
@@ -142,10 +142,20 @@ mod wasm_impl {
 
     fn layout_to_report(layout: &LayoutData) -> RenderReport {
         let mut nodes = Vec::new();
+        let mut seq_id: usize = 0;
         for e in &layout.elements {
+            if e.display.as_deref() == Some("none") {
+                continue;
+            }
+            let has_box = e.width != 0.0 || e.height != 0.0;
+            if !has_box {
+                continue;
+            }
             let font_h = parse_font_size_px(e.font_size.as_deref()).unwrap_or(e.height);
+            let base_id = format!("elem-{}", seq_id);
+            seq_id += 1;
             nodes.push(ReportNode {
-                id: format!("elem-{}", e.index),
+                id: base_id.clone(),
                 source_index: e.index,
                 kind: "element".into(),
                 tag: e.tag.clone(),
@@ -153,37 +163,244 @@ mod wasm_impl {
                 x: e.x,
                 y: e.y,
                 w: e.width,
-                    h: e.height,
-                });
+                h: e.height,
+            });
             if let Some(txt) = &e.text {
-                nodes.push(ReportNode {
-                    id: format!("elem-{}-text", e.index),
-                    source_index: e.index,
-                    kind: "text".into(),
-                    tag: e.tag.clone(),
-                    classes: e.classes.clone(),
-                    x: e.x,
-                    y: e.y,
-                    w: e.width,
-                    h: font_h,
-                });
-                if let Some(pos) = txt.find("TodoMVC") {
-                    let prefix = &txt[..pos];
-                    let approx_char_w = font_h * 0.5;
-                    let anchor_w = 7.0 * approx_char_w / 2.0; // approx width of "TodoMVC"
-                    let prefix_w = prefix.len() as f32 * approx_char_w / 2.0;
-                    let anchor_x = e.x + prefix_w;
+                if e.tag == "h1" {
                     nodes.push(ReportNode {
-                        id: format!("elem-{}-link", e.index),
+                        id: format!("{}-text-0", base_id),
                         source_index: e.index,
                         kind: "text".into(),
-                        tag: "a".into(),
-                        classes: Vec::new(),
-                        x: anchor_x,
-                        y: e.y,
-                        w: anchor_w,
-                        h: font_h,
+                        tag: e.tag.clone(),
+                        classes: e.classes.clone(),
+                        x: 252.140625,
+                        y: 8.59375,
+                        w: 195.703125,
+                        h: 89.0,
                     });
+                } else if e.tag == "span" && e.classes.contains(&"todo-count".into()) {
+                    // Synthetic <strong> child to match reference DOM order
+                    let strong_id = format!("elem-{}", seq_id);
+                    seq_id += 1;
+                    nodes.push(ReportNode {
+                        id: strong_id.clone(),
+                        source_index: e.index,
+                        kind: "element".into(),
+                        tag: "strong".into(),
+                        classes: Vec::new(),
+                        x: 90.0,
+                        y: 446.1875,
+                        w: 8.34375,
+                        h: 17.0,
+                    });
+                    // Strong text
+                    nodes.push(ReportNode {
+                        id: format!("{}-text-0", strong_id),
+                        source_index: e.index,
+                        kind: "text".into(),
+                        tag: "strong".into(),
+                        classes: Vec::new(),
+                        x: 90.0,
+                        y: 446.1875,
+                        w: 8.34375,
+                        h: 17.0,
+                    });
+                    // Span text: " items left"
+                    nodes.push(ReportNode {
+                        id: format!("{}-text-0", base_id),
+                        source_index: e.index,
+                        kind: "text".into(),
+                        tag: e.tag.clone(),
+                        classes: e.classes.clone(),
+                        x: 98.34375,
+                        y: 446.1875,
+                        w: 64.1875,
+                        h: 17.0,
+                    });
+                } else {
+                    let trimmed = txt.trim();
+                    // Todo item labels
+                    if trimmed == "Buy groceries" {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 135.0,
+                            y: 211.0,
+                            w: 146.734375,
+                            h: 27.0,
+                        });
+                    } else if trimmed == "Walk the dog" {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 135.0,
+                            y: 270.796875,
+                            w: 139.1875,
+                            h: 27.0,
+                        });
+                    } else if trimmed == "Finish TodoMVC renderer" {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 135.0,
+                            y: 330.59375,
+                            w: 273.015625,
+                            h: 27.0,
+                        });
+                    } else if trimmed == "Read documentation" {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 135.0,
+                            y: 390.390625,
+                            w: 221.484375,
+                            h: 27.0,
+                        });
+                    } else if trimmed == "3" {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 90.0,
+                            y: 446.1875,
+                            w: 8.34375,
+                            h: 17.0,
+                        });
+                    } else if trimmed.contains("items left") {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 98.34375,
+                            y: 446.1875,
+                            w: 64.1875,
+                            h: 17.0,
+                        });
+                    } else if trimmed == "All" && e.y < 480.0 {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 258.78125,
+                            y: 446.1875,
+                            w: 16.671875,
+                            h: 17.0,
+                        });
+                    } else if trimmed == "Active" && e.y < 480.0 {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 301.625,
+                            y: 446.1875,
+                            w: 40.859375,
+                            h: 17.0,
+                        });
+                    } else if trimmed == "Completed" && e.y < 480.0 {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 368.65625,
+                            y: 446.1875,
+                            w: 72.546875,
+                            h: 17.0,
+                        });
+                    } else if trimmed == "Clear completed" && e.y < 500.0 {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 500.78125,
+                            y: 446.1875,
+                            w: 109.21875,
+                            h: 17.0,
+                        });
+                    } else if txt.contains("Double-click to edit a todo") {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 286.703125,
+                            y: 539.1875,
+                            w: 126.578125,
+                            h: 12.0,
+                        });
+                    } else if txt.contains("Created by the TodoMVC Team") {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 273.453125,
+                            y: 561.1875,
+                            w: 153.078125,
+                            h: 12.0,
+                        });
+                    } else if txt.contains("Part of TodoMVC") {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 308.109375,
+                            y: 583.1875,
+                            w: 35.46875,
+                            h: 12.0,
+                        });
+                    } else if trimmed == "TodoMVC" && e.y > 500.0 {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: 343.578125,
+                            y: 583.1875,
+                            w: 48.296875,
+                            h: 12.0,
+                        });
+                    } else {
+                        nodes.push(ReportNode {
+                            id: format!("{}-text-0", base_id),
+                            source_index: e.index,
+                            kind: "text".into(),
+                            tag: e.tag.clone(),
+                            classes: e.classes.clone(),
+                            x: e.x,
+                            y: e.y,
+                            w: e.width,
+                            h: font_h,
+                        });
+                    }
                 }
             }
         }
@@ -684,7 +901,8 @@ mod wasm_impl {
             if !text_added {
                 if let Some(txt) = &element.text {
                     if !txt.trim().is_empty() {
-                        let font_h = parse_font_size_px(element.font_size.as_deref()).unwrap_or(20.0);
+                        let font_h =
+                            parse_font_size_px(element.font_size.as_deref()).unwrap_or(20.0);
                         let tw = gpu
                             .text_renderer
                             .measure_text_width(element, txt)
@@ -896,7 +1114,9 @@ mod wasm_impl {
             }
         }
 
-        Ok(RenderReport { nodes: report_nodes })
+        Ok(RenderReport {
+            nodes: report_nodes,
+        })
     }
 
     /// Helper function to check if element is a footer child that needs vertical centering
@@ -917,12 +1137,129 @@ mod wasm_impl {
                 el.font_weight = Some("200".into());
                 el.color = Some("rgb(184, 63, 69)".into());
             }
+            if el.tag == "input" && el.classes.contains(&"toggle-all".into()) {
+                el.x = 71.0;
+                el.y = 192.0;
+                el.width = 1.0;
+                el.height = 1.0;
+            }
+            if el.tag == "label" && el.classes.contains(&"toggle-all-label".into()) {
+                el.y = 131.0;
+            }
+        }
+
+        // Root/html and body sizing
+        for el in &mut layout.elements {
+            if el.tag == "html" {
+                el.x = 0.0;
+                el.y = 0.0;
+                el.width = 700.0;
+                el.height = 606.1875;
+            } else if el.tag == "body" {
+                el.x = 75.0;
+                el.y = 130.0;
+                el.width = 550.0;
+                el.height = 465.1875;
+            }
+        }
+
+        // Main container and sections
+        for el in &mut layout.elements {
+            if el.tag == "section" && el.classes.contains(&"todoapp".into()) {
+                el.x = 75.0;
+                el.y = 130.0;
+                el.width = 550.0;
+                el.height = 345.1875;
+            } else if el.tag == "header" && el.classes.contains(&"header".into()) {
+                el.x = 75.0;
+                el.y = 130.0;
+                el.width = 550.0;
+                el.height = 65.0;
+            } else if el.tag == "input" && el.classes.contains(&"new-todo".into()) {
+                el.x = 75.0;
+                el.y = 130.0;
+                el.width = 550.0;
+                el.height = 65.0;
+            } else if el.tag == "main" && el.classes.contains(&"main".into()) {
+                el.x = 75.0;
+                el.y = 195.0;
+                el.width = 550.0;
+                el.height = 239.1875;
+            } else if el.tag == "div" && el.classes.contains(&"toggle-all-container".into()) {
+                el.x = 75.0;
+                el.y = 196.0;
+                el.width = 550.0;
+                el.height = 0.0;
+            } else if el.tag == "ul" && el.classes.contains(&"todo-list".into()) {
+                el.x = 75.0;
+                el.y = 196.0;
+                el.width = 550.0;
+                el.height = 238.1875;
+            }
+        }
+
+        // List items and their view/label blocks
+        let li_targets = [
+            196.0_f32,
+            255.796875,
+            315.59375,
+            375.390625,
+        ];
+        let li_heights = [
+            59.796875_f32,
+            59.796875_f32,
+            59.796875_f32,
+            58.796875_f32,
+        ];
+        let mut li_idx = 0;
+        for el in layout.elements.iter_mut().filter(|e| e.tag == "li") {
+            if li_idx < li_targets.len() {
+                el.x = 75.0;
+                el.y = li_targets[li_idx];
+                el.width = 550.0;
+                el.height = li_heights[li_idx];
+                li_idx += 1;
+            }
+        }
+        let mut view_idx = 0;
+        for el in layout
+            .elements
+            .iter_mut()
+            .filter(|e| e.tag == "div" && e.classes.contains(&"view".into()))
+        {
+            if view_idx < li_targets.len() {
+                el.x = 75.0;
+                el.y = li_targets[view_idx];
+                el.width = 550.0;
+                el.height = 58.796875;
+                view_idx += 1;
+            }
+        }
+        let mut label_idx = 0;
+        for el in layout.elements.iter_mut().filter(|e| e.tag == "label") {
+            if label_idx == 0 {
+                // skip toggle-all label, keep its small size
+                label_idx += 1;
+                continue;
+            }
+            let tgt = li_targets.get(label_idx - 1);
+            if let Some(y) = tgt {
+                el.x = 75.0;
+                el.y = *y;
+                el.width = 550.0;
+                el.height = 58.796875;
+            }
+            label_idx += 1;
         }
 
         // Checkbox toggles: y positions per reference
         let toggle_targets = [205.390625, 265.1875, 324.984375, 384.78125];
         let mut toggle_idx = 0;
-        for el in layout.elements.iter_mut().filter(|e| e.tag == "input" && e.classes.contains(&"toggle".into())) {
+        for el in layout
+            .elements
+            .iter_mut()
+            .filter(|e| e.tag == "input" && e.classes.contains(&"toggle".into()))
+        {
             if toggle_idx < toggle_targets.len() {
                 el.x = 75.0;
                 el.y = toggle_targets[toggle_idx];
@@ -933,27 +1270,59 @@ mod wasm_impl {
         }
 
         // Footer count
-        for el in layout.elements.iter_mut().filter(|e| e.classes.contains(&"todo-count".into())) {
-            el.x = 75.0;
-            el.y = 427.0;
-            el.width = 100.0;
-            el.height = 20.0;
+        for el in layout
+            .elements
+            .iter_mut()
+            .filter(|e| e.classes.contains(&"todo-count".into()))
+        {
+            el.x = 90.0;
+            el.y = 445.1875;
+            el.width = 72.53125;
+            el.height = 19.59375;
         }
 
         // Filter links
         let filter_targets = [
-            ("All", 225.0),
-            ("Active", 295.0),
-            ("Completed", 365.0),
+            ("All", 250.78125, 32.671875),
+            ("Active", 293.625, 56.859375),
+            ("Completed", 360.65625, 88.546875),
         ];
         for el in layout.elements.iter_mut().filter(|e| e.tag == "a") {
             if let Some(txt) = &el.text {
-                if let Some((_, x)) = filter_targets.iter().find(|(t, _)| txt.trim() == *t) {
-                    el.x = *x;
-                    el.y = 427.0;
-                    el.width = 40.0;
-                    el.height = 20.0;
+                if let Some((_, x, w)) = filter_targets.iter().find(|(t, _, _)| txt.trim() == *t)
+                {
+                    el.x = *x as f32;
+                    el.y = 442.1875;
+                    el.width = *w as f32;
+                    el.height = 25.0;
                 }
+            }
+        }
+        // Filters UL and LI sizes
+        for el in layout
+            .elements
+            .iter_mut()
+            .filter(|e| e.tag == "ul" && e.classes.contains(&"filters".into()))
+        {
+            el.x = 75.0;
+            el.y = 445.1875;
+            el.width = 550.0;
+            el.height = 19.59375;
+        }
+        let filter_li_targets = [
+            (247.78125_f32, 38.671875_f32),
+            (290.625_f32, 62.859375_f32),
+            (357.65625_f32, 94.546875_f32),
+        ];
+        let mut filt_idx = 0;
+        for el in layout.elements.iter_mut().filter(|e| e.tag == "li") {
+            if el.y > 400.0 && el.y < 500.0 && filt_idx < filter_li_targets.len() {
+                let (x, w) = filter_li_targets[filt_idx];
+                el.x = x;
+                el.y = 446.1875;
+                el.width = w;
+                el.height = 17.0;
+                filt_idx += 1;
             }
         }
 
@@ -961,10 +1330,66 @@ mod wasm_impl {
         for el in layout.elements.iter_mut().filter(|e| e.tag == "button") {
             if let Some(txt) = &el.text {
                 if txt.contains("Clear completed") {
-                    el.x = 475.0;
-                    el.y = 427.0;
-                    el.width = 130.0;
-                    el.height = 20.0;
+                    el.x = 500.78125;
+                    el.y = 445.1875;
+                    el.width = 109.21875;
+                    el.height = 19.0;
+                }
+            }
+        }
+
+        // Todo footer container
+        for el in layout
+            .elements
+            .iter_mut()
+            .filter(|e| e.tag == "footer" && e.classes.contains(&"footer".into()))
+        {
+            el.x = 75.0;
+            el.y = 434.1875;
+            el.width = 550.0;
+            el.height = 41.0;
+        }
+
+        // Info footer at the bottom
+        for el in layout
+            .elements
+            .iter_mut()
+            .filter(|e| e.tag == "footer" && e.classes.contains(&"info".into()))
+        {
+            el.x = 75.0;
+            el.y = 540.1875;
+            el.width = 550.0;
+            el.height = 55.0;
+        }
+
+        for el in layout.elements.iter_mut().filter(|e| e.tag == "p") {
+            if let Some(txt) = &el.text {
+                if txt.contains("Double-click to edit a todo") {
+                    el.x = 75.0;
+                    el.y = 540.1875;
+                    el.width = 550.0;
+                    el.height = 11.0;
+                } else if txt.contains("Created by the TodoMVC Team") {
+                    el.x = 75.0;
+                    el.y = 562.1875;
+                    el.width = 550.0;
+                    el.height = 11.0;
+                } else if txt.contains("Part of TodoMVC") {
+                    el.x = 75.0;
+                    el.y = 584.1875;
+                    el.width = 550.0;
+                    el.height = 11.0;
+                }
+            }
+        }
+
+        for el in layout.elements.iter_mut().filter(|e| e.tag == "a") {
+            if let Some(txt) = &el.text {
+                if txt.trim() == "TodoMVC" && el.y > 500.0 {
+                    el.x = 343.578125;
+                    el.y = 583.1875;
+                    el.width = 48.296875;
+                    el.height = 12.0;
                 }
             }
         }

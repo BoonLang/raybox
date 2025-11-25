@@ -8,11 +8,11 @@
 - Make `diff-layouts` operate only on these node sets (no DOMSnapshot leftovers).
 
 ## Renderer alignment fixes (use measured reference)
-- Title (h1): y=43.59375, h≈19.59375, x=75, w=550; color rgb(184,63,69); font 80px, weight 200.
+- Title (h1): x=75, y=43.59375, w=550, h=19.59375; color rgb(184,63,69); font 80px, weight 200.
 - Checkbox toggles: x=75; y=[205.390625, 265.1875, 324.984375, 384.78125]; size 40×40.
-- Footer count: x=75, y=427, w=100, h=20.
-- Filters: All/Active/Completed at x=225/295/365, y=427, w=40, h=20.
-- Clear completed: x=475, y=427, w=130, h=20.
+- Footer count: x=90, y=445.1875, w=72.53125, h=19.59375.
+- Filters: All/Active/Completed at (x,w) = (250.78125, 32.671875) / (293.625, 56.859375) / (360.65625, 88.546875); y=442.1875, h=25.
+- Clear completed: x=500.78125, y=445.1875, w=109.21875, h=19.0.
 - Make text renderer use the element’s target height for h1 and small footer text (no extra padding inflation).
 
 ## Verification loop

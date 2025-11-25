@@ -6,12 +6,12 @@
       "h": 700,
       "dpr": 1.0
     },
-    "captured_at": "2025-11-25T04:31:14.425971283+00:00",
-    "chrome": "js-capture"
+    "captured_at": "2025-11-25T05:52:11.291193193+00:00",
+    "chrome": "Chrome/142.0.7444.59"
   },
   "nodes": [
     {
-      "id": "root/html[0]",
+      "id": "elem-0",
       "source_index": 0,
       "backend_node_id": null,
       "node_type": "element",
@@ -39,167 +39,8 @@
       }
     },
     {
-      "id": "root/html[0]/head[0]",
+      "id": "elem-1",
       "source_index": 1,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "head",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgba(0, 0, 0, 0)",
-        "color": "rgb(0, 0, 0)",
-        "font-family": "\"Times New Roman\"",
-        "font-size": "16px",
-        "font-weight": "400",
-        "line-height": "normal",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/head[0]/meta[0]",
-      "source_index": 2,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "meta",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgba(0, 0, 0, 0)",
-        "color": "rgb(0, 0, 0)",
-        "font-family": "\"Times New Roman\"",
-        "font-size": "16px",
-        "font-weight": "400",
-        "line-height": "normal",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/head[0]/meta[1]",
-      "source_index": 3,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "meta",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgba(0, 0, 0, 0)",
-        "color": "rgb(0, 0, 0)",
-        "font-family": "\"Times New Roman\"",
-        "font-size": "16px",
-        "font-weight": "400",
-        "line-height": "normal",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/head[0]/title[0]",
-      "source_index": 4,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "title",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgba(0, 0, 0, 0)",
-        "color": "rgb(0, 0, 0)",
-        "font-family": "\"Times New Roman\"",
-        "font-size": "16px",
-        "font-weight": "400",
-        "line-height": "normal",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/head[0]/title[0]/#text[0]",
-      "source_index": 5,
-      "backend_node_id": null,
-      "node_type": "text",
-      "tag": "#text",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "root/html[0]/head[0]/link[0]",
-      "source_index": 6,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "link",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgba(0, 0, 0, 0)",
-        "color": "rgb(0, 0, 0)",
-        "font-family": "\"Times New Roman\"",
-        "font-size": "16px",
-        "font-weight": "400",
-        "line-height": "normal",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/body[0]",
-      "source_index": 7,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "body",
@@ -226,8 +67,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]",
-      "source_index": 8,
+      "id": "elem-2",
+      "source_index": 2,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "section",
@@ -256,8 +97,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/header[0]",
-      "source_index": 9,
+      "id": "elem-3",
+      "source_index": 3,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "header",
@@ -286,8 +127,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/header[0]/h1[0]",
-      "source_index": 10,
+      "id": "elem-4",
+      "source_index": 4,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "h1",
@@ -314,8 +155,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/header[0]/h1[0]/#text[0]",
-      "source_index": 11,
+      "id": "elem-4-text-0",
+      "source_index": 5,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -340,8 +181,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/header[0]/input[0]",
-      "source_index": 12,
+      "id": "elem-5",
+      "source_index": 6,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "input",
@@ -370,8 +211,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]",
-      "source_index": 13,
+      "id": "elem-6",
+      "source_index": 7,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "main",
@@ -400,8 +241,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/div[0]",
-      "source_index": 14,
+      "id": "elem-7",
+      "source_index": 8,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "div",
@@ -430,8 +271,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/div[0]/input[0]",
-      "source_index": 15,
+      "id": "elem-8",
+      "source_index": 9,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "input",
@@ -460,8 +301,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/div[0]/label[0]",
-      "source_index": 16,
+      "id": "elem-9",
+      "source_index": 10,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "label",
@@ -490,34 +331,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/div[0]/label[0]/#text[0]",
-      "source_index": 17,
-      "backend_node_id": null,
-      "node_type": "text",
-      "tag": "#text",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 133.71875,
-        "y": 162.703125,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [
-        {
-          "x": 133.71875,
-          "y": 162.703125,
-          "w": 0.0,
-          "h": 0.0
-        }
-      ],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]",
-      "source_index": 18,
+      "id": "elem-10",
+      "source_index": 11,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "ul",
@@ -546,8 +361,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[0]",
-      "source_index": 19,
+      "id": "elem-11",
+      "source_index": 12,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "li",
@@ -574,8 +389,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[0]/div[0]",
-      "source_index": 20,
+      "id": "elem-12",
+      "source_index": 13,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "div",
@@ -604,8 +419,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[0]/div[0]/input[0]",
-      "source_index": 21,
+      "id": "elem-13",
+      "source_index": 14,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "input",
@@ -634,8 +449,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[0]/div[0]/label[0]",
-      "source_index": 22,
+      "id": "elem-14",
+      "source_index": 15,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "label",
@@ -662,8 +477,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[0]/div[0]/label[0]/#text[0]",
-      "source_index": 23,
+      "id": "elem-14-text-0",
+      "source_index": 16,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -688,68 +503,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[0]/div[0]/button[0]",
-      "source_index": 24,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "button",
-      "classes": [
-        "destroy"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgba(0, 0, 0, 0)",
-        "color": "rgb(148, 148, 148)",
-        "font-family": "\"Helvetica Neue\", Helvetica, Arial, sans-serif",
-        "font-size": "30px",
-        "font-weight": "300",
-        "line-height": "normal",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[0]/input[0]",
-      "source_index": 25,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "input",
-      "classes": [
-        "edit"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgb(255, 255, 255)",
-        "color": "rgb(17, 17, 17)",
-        "font-family": "\"Helvetica Neue\", Helvetica, Arial, sans-serif",
-        "font-size": "24px",
-        "font-weight": "300",
-        "line-height": "33.6px",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[1]",
-      "source_index": 26,
+      "id": "elem-15",
+      "source_index": 17,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "li",
@@ -776,8 +531,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[1]/div[0]",
-      "source_index": 27,
+      "id": "elem-16",
+      "source_index": 18,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "div",
@@ -806,8 +561,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[1]/div[0]/input[0]",
-      "source_index": 28,
+      "id": "elem-17",
+      "source_index": 19,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "input",
@@ -836,8 +591,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[1]/div[0]/label[0]",
-      "source_index": 29,
+      "id": "elem-18",
+      "source_index": 20,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "label",
@@ -864,8 +619,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[1]/div[0]/label[0]/#text[0]",
-      "source_index": 30,
+      "id": "elem-18-text-0",
+      "source_index": 21,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -890,68 +645,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[1]/div[0]/button[0]",
-      "source_index": 31,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "button",
-      "classes": [
-        "destroy"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgba(0, 0, 0, 0)",
-        "color": "rgb(148, 148, 148)",
-        "font-family": "\"Helvetica Neue\", Helvetica, Arial, sans-serif",
-        "font-size": "30px",
-        "font-weight": "300",
-        "line-height": "normal",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[1]/input[0]",
-      "source_index": 32,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "input",
-      "classes": [
-        "edit"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgb(255, 255, 255)",
-        "color": "rgb(17, 17, 17)",
-        "font-family": "\"Helvetica Neue\", Helvetica, Arial, sans-serif",
-        "font-size": "24px",
-        "font-weight": "300",
-        "line-height": "33.6px",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[2]",
-      "source_index": 33,
+      "id": "elem-19",
+      "source_index": 22,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "li",
@@ -980,8 +675,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[2]/div[0]",
-      "source_index": 34,
+      "id": "elem-20",
+      "source_index": 23,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "div",
@@ -1010,8 +705,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[2]/div[0]/input[0]",
-      "source_index": 35,
+      "id": "elem-21",
+      "source_index": 24,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "input",
@@ -1040,8 +735,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[2]/div[0]/label[0]",
-      "source_index": 36,
+      "id": "elem-22",
+      "source_index": 25,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "label",
@@ -1068,8 +763,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[2]/div[0]/label[0]/#text[0]",
-      "source_index": 37,
+      "id": "elem-22-text-0",
+      "source_index": 26,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -1094,68 +789,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[2]/div[0]/button[0]",
-      "source_index": 38,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "button",
-      "classes": [
-        "destroy"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgba(0, 0, 0, 0)",
-        "color": "rgb(148, 148, 148)",
-        "font-family": "\"Helvetica Neue\", Helvetica, Arial, sans-serif",
-        "font-size": "30px",
-        "font-weight": "300",
-        "line-height": "normal",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[2]/input[0]",
-      "source_index": 39,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "input",
-      "classes": [
-        "edit"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgb(255, 255, 255)",
-        "color": "rgb(17, 17, 17)",
-        "font-family": "\"Helvetica Neue\", Helvetica, Arial, sans-serif",
-        "font-size": "24px",
-        "font-weight": "300",
-        "line-height": "33.6px",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[3]",
-      "source_index": 40,
+      "id": "elem-23",
+      "source_index": 27,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "li",
@@ -1182,8 +817,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[3]/div[0]",
-      "source_index": 41,
+      "id": "elem-24",
+      "source_index": 28,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "div",
@@ -1212,8 +847,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[3]/div[0]/input[0]",
-      "source_index": 42,
+      "id": "elem-25",
+      "source_index": 29,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "input",
@@ -1242,8 +877,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[3]/div[0]/label[0]",
-      "source_index": 43,
+      "id": "elem-26",
+      "source_index": 30,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "label",
@@ -1270,8 +905,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[3]/div[0]/label[0]/#text[0]",
-      "source_index": 44,
+      "id": "elem-26-text-0",
+      "source_index": 31,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -1296,68 +931,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[3]/div[0]/button[0]",
-      "source_index": 45,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "button",
-      "classes": [
-        "destroy"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgba(0, 0, 0, 0)",
-        "color": "rgb(148, 148, 148)",
-        "font-family": "\"Helvetica Neue\", Helvetica, Arial, sans-serif",
-        "font-size": "30px",
-        "font-weight": "300",
-        "line-height": "normal",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/body[0]/section[0]/main[0]/ul[0]/li[3]/input[0]",
-      "source_index": 46,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "input",
-      "classes": [
-        "edit"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 0.0,
-        "h": 0.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {
-        "background-color": "rgb(255, 255, 255)",
-        "color": "rgb(17, 17, 17)",
-        "font-family": "\"Helvetica Neue\", Helvetica, Arial, sans-serif",
-        "font-size": "24px",
-        "font-weight": "300",
-        "line-height": "33.6px",
-        "opacity": "1",
-        "visibility": "visible"
-      }
-    },
-    {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]",
-      "source_index": 47,
+      "id": "elem-27",
+      "source_index": 32,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "footer",
@@ -1386,8 +961,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/span[0]",
-      "source_index": 48,
+      "id": "elem-28",
+      "source_index": 33,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "span",
@@ -1416,8 +991,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/span[0]/strong[0]",
-      "source_index": 49,
+      "id": "elem-29",
+      "source_index": 34,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "strong",
@@ -1444,8 +1019,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/span[0]/strong[0]/#text[0]",
-      "source_index": 50,
+      "id": "elem-29-text-0",
+      "source_index": 35,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -1470,8 +1045,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/span[0]/#text[0]",
-      "source_index": 51,
+      "id": "elem-28-text-0",
+      "source_index": 36,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -1496,8 +1071,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/ul[0]",
-      "source_index": 52,
+      "id": "elem-30",
+      "source_index": 37,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "ul",
@@ -1526,8 +1101,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/ul[0]/li[0]",
-      "source_index": 53,
+      "id": "elem-31",
+      "source_index": 38,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "li",
@@ -1554,8 +1129,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/ul[0]/li[0]/a[0]",
-      "source_index": 54,
+      "id": "elem-32",
+      "source_index": 39,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "a",
@@ -1584,8 +1159,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/ul[0]/li[0]/a[0]/#text[0]",
-      "source_index": 55,
+      "id": "elem-32-text-0",
+      "source_index": 40,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -1610,8 +1185,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/ul[0]/li[1]",
-      "source_index": 56,
+      "id": "elem-33",
+      "source_index": 41,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "li",
@@ -1638,8 +1213,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/ul[0]/li[1]/a[0]",
-      "source_index": 57,
+      "id": "elem-34",
+      "source_index": 42,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "a",
@@ -1666,8 +1241,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/ul[0]/li[1]/a[0]/#text[0]",
-      "source_index": 58,
+      "id": "elem-34-text-0",
+      "source_index": 43,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -1692,8 +1267,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/ul[0]/li[2]",
-      "source_index": 59,
+      "id": "elem-35",
+      "source_index": 44,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "li",
@@ -1720,8 +1295,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/ul[0]/li[2]/a[0]",
-      "source_index": 60,
+      "id": "elem-36",
+      "source_index": 45,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "a",
@@ -1748,8 +1323,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/ul[0]/li[2]/a[0]/#text[0]",
-      "source_index": 61,
+      "id": "elem-36-text-0",
+      "source_index": 46,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -1774,8 +1349,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/button[0]",
-      "source_index": 62,
+      "id": "elem-37",
+      "source_index": 47,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "button",
@@ -1804,8 +1379,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/section[0]/footer[0]/button[0]/#text[0]",
-      "source_index": 63,
+      "id": "elem-37-text-0",
+      "source_index": 48,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -1830,8 +1405,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/footer[0]",
-      "source_index": 64,
+      "id": "elem-38",
+      "source_index": 49,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "footer",
@@ -1860,8 +1435,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/footer[0]/p[0]",
-      "source_index": 65,
+      "id": "elem-39",
+      "source_index": 50,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "p",
@@ -1888,8 +1463,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/footer[0]/p[0]/#text[0]",
-      "source_index": 66,
+      "id": "elem-39-text-0",
+      "source_index": 51,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -1914,8 +1489,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/footer[0]/p[1]",
-      "source_index": 67,
+      "id": "elem-40",
+      "source_index": 52,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "p",
@@ -1942,8 +1517,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/footer[0]/p[1]/#text[0]",
-      "source_index": 68,
+      "id": "elem-40-text-0",
+      "source_index": 53,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -1968,8 +1543,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/footer[0]/p[2]",
-      "source_index": 69,
+      "id": "elem-41",
+      "source_index": 54,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "p",
@@ -1996,8 +1571,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/footer[0]/p[2]/#text[0]",
-      "source_index": 70,
+      "id": "elem-41-text-0",
+      "source_index": 55,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -2022,8 +1597,8 @@
       "styles": {}
     },
     {
-      "id": "root/html[0]/body[0]/footer[0]/p[2]/a[0]",
-      "source_index": 71,
+      "id": "elem-42",
+      "source_index": 56,
       "backend_node_id": null,
       "node_type": "element",
       "tag": "a",
@@ -2050,8 +1625,8 @@
       }
     },
     {
-      "id": "root/html[0]/body[0]/footer[0]/p[2]/a[0]/#text[0]",
-      "source_index": 72,
+      "id": "elem-42-text-0",
+      "source_index": 57,
       "backend_node_id": null,
       "node_type": "text",
       "tag": "#text",
@@ -2072,915 +1647,6 @@
           "h": 12.0
         }
       ],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-0",
-      "source_index": 0,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "html",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 0.0,
-        "y": 0.0,
-        "w": 700.0,
-        "h": 700.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-1",
-      "source_index": 1,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "body",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 0.0,
-        "w": 550.0,
-        "h": 700.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-2",
-      "source_index": 2,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "section",
-      "classes": [
-        "todoapp"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 130.0,
-        "w": 550.0,
-        "h": 337.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-3",
-      "source_index": 3,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "header",
-      "classes": [
-        "header"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 130.0,
-        "w": 550.0,
-        "h": 65.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-4",
-      "source_index": 4,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "h1",
-      "classes": [],
-      "pseudo": null,
-      "text": "todos",
-      "box_model": {
-        "x": 75.0,
-        "y": -10.0,
-        "w": 550.0,
-        "h": 80.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-5",
-      "source_index": 5,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "input",
-      "classes": [
-        "new-todo"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 130.0,
-        "w": 550.0,
-        "h": 65.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-6",
-      "source_index": 6,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "main",
-      "classes": [
-        "main"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 195.0,
-        "w": 550.0,
-        "h": 232.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-7",
-      "source_index": 7,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "div",
-      "classes": [
-        "toggle-all-container"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 195.0,
-        "w": 45.0,
-        "h": 65.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-8",
-      "source_index": 8,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "input",
-      "classes": [
-        "toggle-all"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 195.0,
-        "w": 1.0,
-        "h": 1.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-9",
-      "source_index": 9,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "label",
-      "classes": [
-        "toggle-all-label"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 130.0,
-        "w": 45.0,
-        "h": 65.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-10",
-      "source_index": 10,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "ul",
-      "classes": [
-        "todo-list"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 195.0,
-        "w": 550.0,
-        "h": 232.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-11",
-      "source_index": 11,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "li",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 195.0,
-        "w": 550.0,
-        "h": 58.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-12",
-      "source_index": 12,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "div",
-      "classes": [
-        "view"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 195.0,
-        "w": 550.0,
-        "h": 58.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-13",
-      "source_index": 13,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "input",
-      "classes": [
-        "toggle"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 195.0,
-        "w": 40.0,
-        "h": 40.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-14",
-      "source_index": 14,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "label",
-      "classes": [],
-      "pseudo": null,
-      "text": "Buy groceries",
-      "box_model": {
-        "x": 135.0,
-        "y": 195.0,
-        "w": 490.0,
-        "h": 58.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-15",
-      "source_index": 15,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "button",
-      "classes": [
-        "destroy"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 575.0,
-        "y": 195.0,
-        "w": 40.0,
-        "h": 40.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-16",
-      "source_index": 16,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "li",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 253.0,
-        "w": 550.0,
-        "h": 58.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-17",
-      "source_index": 17,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "div",
-      "classes": [
-        "view"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 253.0,
-        "w": 550.0,
-        "h": 58.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-18",
-      "source_index": 18,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "input",
-      "classes": [
-        "toggle"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 253.0,
-        "w": 40.0,
-        "h": 40.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-19",
-      "source_index": 19,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "label",
-      "classes": [],
-      "pseudo": null,
-      "text": "Walk the dog",
-      "box_model": {
-        "x": 135.0,
-        "y": 253.0,
-        "w": 490.0,
-        "h": 58.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-20",
-      "source_index": 20,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "button",
-      "classes": [
-        "destroy"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 575.0,
-        "y": 253.0,
-        "w": 40.0,
-        "h": 40.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-21",
-      "source_index": 21,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "li",
-      "classes": [
-        "completed"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 311.0,
-        "w": 550.0,
-        "h": 58.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-22",
-      "source_index": 22,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "div",
-      "classes": [
-        "view"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 311.0,
-        "w": 550.0,
-        "h": 58.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-23",
-      "source_index": 23,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "input",
-      "classes": [
-        "toggle"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 311.0,
-        "w": 40.0,
-        "h": 40.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-24",
-      "source_index": 24,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "label",
-      "classes": [],
-      "pseudo": null,
-      "text": "Finish TodoMVC renderer",
-      "box_model": {
-        "x": 135.0,
-        "y": 311.0,
-        "w": 490.0,
-        "h": 58.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-25",
-      "source_index": 25,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "button",
-      "classes": [
-        "destroy"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 575.0,
-        "y": 311.0,
-        "w": 40.0,
-        "h": 40.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-26",
-      "source_index": 26,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "li",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 369.0,
-        "w": 550.0,
-        "h": 58.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-27",
-      "source_index": 27,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "div",
-      "classes": [
-        "view"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 369.0,
-        "w": 550.0,
-        "h": 58.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-28",
-      "source_index": 28,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "input",
-      "classes": [
-        "toggle"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 369.0,
-        "w": 40.0,
-        "h": 40.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-29",
-      "source_index": 29,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "label",
-      "classes": [],
-      "pseudo": null,
-      "text": "Read documentation",
-      "box_model": {
-        "x": 135.0,
-        "y": 369.0,
-        "w": 490.0,
-        "h": 58.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-30",
-      "source_index": 30,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "button",
-      "classes": [
-        "destroy"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 575.0,
-        "y": 369.0,
-        "w": 40.0,
-        "h": 40.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-31",
-      "source_index": 31,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "footer",
-      "classes": [
-        "footer"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 427.0,
-        "w": 550.0,
-        "h": 40.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-32",
-      "source_index": 32,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "span",
-      "classes": [
-        "todo-count"
-      ],
-      "pseudo": null,
-      "text": "3 items left",
-      "box_model": {
-        "x": 75.0,
-        "y": 427.0,
-        "w": 100.0,
-        "h": 20.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-33",
-      "source_index": 33,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "ul",
-      "classes": [
-        "filters"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 225.0,
-        "y": 427.0,
-        "w": 200.0,
-        "h": 20.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-34",
-      "source_index": 34,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "li",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 225.0,
-        "y": 427.0,
-        "w": 60.0,
-        "h": 20.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-35",
-      "source_index": 35,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "a",
-      "classes": [
-        "selected"
-      ],
-      "pseudo": null,
-      "text": "All",
-      "box_model": {
-        "x": 225.0,
-        "y": 427.0,
-        "w": 40.0,
-        "h": 20.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-36",
-      "source_index": 36,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "li",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 295.0,
-        "y": 427.0,
-        "w": 60.0,
-        "h": 20.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-37",
-      "source_index": 37,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "a",
-      "classes": [],
-      "pseudo": null,
-      "text": "Active",
-      "box_model": {
-        "x": 295.0,
-        "y": 427.0,
-        "w": 40.0,
-        "h": 20.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-38",
-      "source_index": 38,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "li",
-      "classes": [],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 365.0,
-        "y": 427.0,
-        "w": 60.0,
-        "h": 20.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-39",
-      "source_index": 39,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "a",
-      "classes": [],
-      "pseudo": null,
-      "text": "Completed",
-      "box_model": {
-        "x": 365.0,
-        "y": 427.0,
-        "w": 40.0,
-        "h": 20.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-40",
-      "source_index": 40,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "button",
-      "classes": [
-        "clear-completed"
-      ],
-      "pseudo": null,
-      "text": "Clear completed",
-      "box_model": {
-        "x": 475.0,
-        "y": 427.0,
-        "w": 130.0,
-        "h": 20.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-41",
-      "source_index": 41,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "footer",
-      "classes": [
-        "info"
-      ],
-      "pseudo": null,
-      "text": null,
-      "box_model": {
-        "x": 75.0,
-        "y": 527.0,
-        "w": 550.0,
-        "h": 100.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-42",
-      "source_index": 42,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "p",
-      "classes": [],
-      "pseudo": null,
-      "text": "Double-click to edit a todo",
-      "box_model": {
-        "x": 75.0,
-        "y": 527.0,
-        "w": 550.0,
-        "h": 20.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-43",
-      "source_index": 43,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "p",
-      "classes": [],
-      "pseudo": null,
-      "text": "Created by the TodoMVC Team",
-      "box_model": {
-        "x": 75.0,
-        "y": 547.0,
-        "w": 550.0,
-        "h": 20.0
-      },
-      "client_rects": [],
-      "inline_text_boxes": [],
-      "styles": {}
-    },
-    {
-      "id": "elem-44",
-      "source_index": 44,
-      "backend_node_id": null,
-      "node_type": "element",
-      "tag": "p",
-      "classes": [],
-      "pseudo": null,
-      "text": "Part of TodoMVC",
-      "box_model": {
-        "x": 75.0,
-        "y": 567.0,
-        "w": 550.0,
-        "h": 20.0
-      },
-      "client_rects": [],
       "inline_text_boxes": [],
       "styles": {}
     }
