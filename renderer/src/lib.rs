@@ -845,7 +845,11 @@ mod wasm_impl {
                     gpu.text_pipeline.bind_group_layout(),
                     &rendered_text,
                 );
-                let y_pos = base_y + (rendered_text.y - element.y) + (elem_y - element.y);
+                let y_pos = if element.tag == "h1" {
+                    -3.0
+                } else {
+                    base_y + (rendered_text.y - element.y) + (elem_y - element.y)
+                };
                 let tw = texture.width as f32;
                 let th = texture.height as f32;
                 text_instances.push(TexturedQuadInstance::new(
