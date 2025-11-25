@@ -22,8 +22,8 @@ pub fn run(directory: &str, command: &str) -> Result<()> {
     let (tx, rx) = channel();
 
     // Create watcher
-    let mut watcher = RecommendedWatcher::new(tx, Config::default())
-        .context("Failed to create file watcher")?;
+    let mut watcher =
+        RecommendedWatcher::new(tx, Config::default()).context("Failed to create file watcher")?;
 
     // Watch the directory recursively
     watcher
@@ -105,7 +105,10 @@ fn run_command(command: &str) -> Result<()> {
     if output.status.success() {
         println!("\n✓ Command completed in {:.2}s", duration.as_secs_f64());
     } else {
-        println!("\n✗ Command failed with exit code: {:?}", output.status.code());
+        println!(
+            "\n✗ Command failed with exit code: {:?}",
+            output.status.code()
+        );
     }
 
     println!("\nWatching for changes...");

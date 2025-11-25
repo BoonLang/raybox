@@ -89,12 +89,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         Self { render_pipeline }
     }
 
-    pub fn render(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        view: &wgpu::TextureView,
-    ) {
+    pub fn render(&self, device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Triangle Render Encoder"),
         });
@@ -122,7 +117,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.draw(0..3, 0..1);  // Draw 3 vertices (triangle)
+            render_pass.draw(0..3, 0..1); // Draw 3 vertices (triangle)
         }
 
         queue.submit(std::iter::once(encoder.finish()));

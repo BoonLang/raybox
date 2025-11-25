@@ -21,6 +21,7 @@ web-time = { workspace = true }
 # Serialization (for loading layout JSON)
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde-wasm-bindgen = "0.6"
 
 # Logging
 log = { workspace = true }

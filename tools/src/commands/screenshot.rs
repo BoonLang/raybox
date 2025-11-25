@@ -1,12 +1,18 @@
 use anyhow::{Context, Result};
 use chromiumoxide::browser::{Browser, BrowserConfig};
-use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotParams;
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
+use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotParams;
 use futures::StreamExt;
 use std::fs;
 
 pub fn run(url: &str, output: &str, width: u32, height: u32) -> Result<()> {
-    log::info!("Taking screenshot of {} ({}x{}) -> {}", url, width, height, output);
+    log::info!(
+        "Taking screenshot of {} ({}x{}) -> {}",
+        url,
+        width,
+        height,
+        output
+    );
 
     // Use tokio runtime for async operations
     tokio::runtime::Runtime::new()?.block_on(async {
@@ -29,15 +35,13 @@ pub fn run(url: &str, output: &str, width: u32, height: u32) -> Result<()> {
                 .window_size(width, height)
                 .args(webgpu_flags)
                 .build()
-                .map_err(|e| anyhow::anyhow!("Failed to build browser config: {}", e))?
+                .map_err(|e| anyhow::anyhow!("Failed to build browser config: {}", e))?,
         )
         .await
         .context("Failed to launch Chrome")?;
 
         // Spawn handler task
-        tokio::spawn(async move {
-            while handler.next().await.is_some() {}
-        });
+        tokio::spawn(async move { while handler.next().await.is_some() {} });
 
         println!("  Navigating to: {}", url);
 
@@ -50,8 +54,8 @@ pub fn run(url: &str, output: &str, width: u32, height: u32) -> Result<()> {
         page.execute(SetDeviceMetricsOverrideParams::new(
             width as i64,
             height as i64,
-            1.0,  // device_scale_factor
-            false // mobile
+            1.0,   // device_scale_factor
+            false, // mobile
         ))
         .await
         .context("Failed to set viewport dimensions")?;

@@ -3,8 +3,8 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::path::Path;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::commands::wasm_build;
 
@@ -97,7 +97,9 @@ fn run_watcher(release: bool, build_id: Arc<Mutex<String>>) -> Result<()> {
     let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
         match res {
             Ok(event) => {
-                if let EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) = event.kind {
+                if let EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) =
+                    event.kind
+                {
                     // Watch Rust, WGSL, HTML, JS, CSS files and Cargo.toml
                     // but exclude build output directories (web/pkg/ and web/_api/)
                     if event.paths.iter().any(|p| {
@@ -108,8 +110,12 @@ fn run_watcher(release: bool, build_id: Arc<Mutex<String>>) -> Result<()> {
                         }
 
                         let ext = p.extension().and_then(|e| e.to_str());
-                        ext == Some("rs") || ext == Some("wgsl") || ext == Some("html")
-                            || ext == Some("js") || ext == Some("css") || p.ends_with("Cargo.toml")
+                        ext == Some("rs")
+                            || ext == Some("wgsl")
+                            || ext == Some("html")
+                            || ext == Some("js")
+                            || ext == Some("css")
+                            || p.ends_with("Cargo.toml")
                     }) {
                         let _ = tx.send(());
                     }
@@ -121,7 +127,10 @@ fn run_watcher(release: bool, build_id: Arc<Mutex<String>>) -> Result<()> {
 
     // Watch renderer/src directory (includes .rs and .wgsl files)
     watcher.watch(Path::new("renderer/src"), RecursiveMode::Recursive)?;
-    watcher.watch(Path::new("renderer/Cargo.toml"), RecursiveMode::NonRecursive)?;
+    watcher.watch(
+        Path::new("renderer/Cargo.toml"),
+        RecursiveMode::NonRecursive,
+    )?;
     // Watch web directory (includes .html, .js, .css files)
     watcher.watch(Path::new("web"), RecursiveMode::Recursive)?;
 
@@ -134,7 +143,9 @@ fn run_watcher(release: bool, build_id: Arc<Mutex<String>>) -> Result<()> {
         // Wait for file change with debouncing
         if rx.recv_timeout(Duration::from_millis(100)).is_ok() {
             let now = SystemTime::now();
-            let elapsed = now.duration_since(last_rebuild).unwrap_or(Duration::from_secs(0));
+            let elapsed = now
+                .duration_since(last_rebuild)
+                .unwrap_or(Duration::from_secs(0));
 
             // Debounce: wait 300ms after last change
             if elapsed < Duration::from_millis(300) {
@@ -188,19 +199,19 @@ fn write_build_id(id: &str) -> Result<()> {
 }
 
 fn start_server(port: u16, build_id: Arc<Mutex<String>>) -> Result<()> {
-    use axum::{
-        routing::get,
-        Router,
-    };
-    use tower_http::services::ServeDir;
+    use axum::{routing::get, Router};
     use tokio::net::TcpListener;
+    use tower_http::services::ServeDir;
 
     let app = Router::new()
         // Build ID endpoint for reload detection
-        .route("/_api/build_id", get(move || {
-            let id = build_id.lock().unwrap().clone();
-            async move { id }
-        }))
+        .route(
+            "/_api/build_id",
+            get(move || {
+                let id = build_id.lock().unwrap().clone();
+                async move { id }
+            }),
+        )
         // Serve reference directory (for layout JSON)
         .nest_service("/reference", ServeDir::new("reference"))
         // Serve static files from web directory

@@ -154,7 +154,8 @@ fn generate_layout() -> LayoutData {
     elem.height = todoapp_height;
     elem.background_color = Some("rgb(255, 255, 255)".to_string());
     elem.position = Some("relative".to_string());
-    elem.box_shadow = Some("0 2px 4px 0 rgba(0,0,0,0.2), 0 25px 50px 0 rgba(0,0,0,0.1)".to_string());
+    elem.box_shadow =
+        Some("0 2px 4px 0 rgba(0,0,0,0.2), 0 25px 50px 0 rgba(0,0,0,0.1)".to_string());
     elem.display = Some("block".to_string());
     elements.push(elem);
     idx += 1;
@@ -520,7 +521,10 @@ fn generate_layout() -> LayoutData {
                 height: VIEWPORT_HEIGHT,
                 device_pixel_ratio: 1.0,
             },
-            note: Some("Generated from HTML/CSS analysis. Positions calculated from CSS rules.".to_string()),
+            note: Some(
+                "Generated from HTML/CSS analysis. Positions calculated from CSS rules."
+                    .to_string(),
+            ),
             centering_note: Some(centering_note),
         },
         elements: elements.clone(),

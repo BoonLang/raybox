@@ -309,7 +309,10 @@ pub fn run(input: &str, output: &str) -> Result<()> {
 
     println!("✓ Layout visualization generated: {}", output);
     println!("  Total elements: {}", layout.elements.len());
-    println!("  Open in browser: file://{}", std::fs::canonicalize(output)?.display());
+    println!(
+        "  Open in browser: file://{}",
+        std::fs::canonicalize(output)?.display()
+    );
 
     Ok(())
 }

@@ -50,8 +50,10 @@ struct Position {
 
 pub fn run(reference_path: &str, actual_path: &str, diff_output: Option<&str>) -> Result<()> {
     // Load layout data
-    let reference: LayoutData = load_layout(reference_path)
-        .context(format!("Failed to load reference layout: {}", reference_path))?;
+    let reference: LayoutData = load_layout(reference_path).context(format!(
+        "Failed to load reference layout: {}",
+        reference_path
+    ))?;
 
     let actual: LayoutData = load_layout(actual_path)
         .context(format!("Failed to load actual layout: {}", actual_path))?;
@@ -67,12 +69,7 @@ pub fn run(reference_path: &str, actual_path: &str, diff_output: Option<&str>) -
 
     // Export visual diff if requested
     if let Some(output_path) = diff_output {
-        export_visual_diff(
-            reference_path,
-            actual_path,
-            &comparisons,
-            output_path,
-        )?;
+        export_visual_diff(reference_path, actual_path, &comparisons, output_path)?;
         println!("\nVisual diff exported to: {}", output_path);
     }
 
@@ -81,7 +78,11 @@ pub fn run(reference_path: &str, actual_path: &str, diff_output: Option<&str>) -
     let total_count = comparisons.len();
 
     if passed_count < total_count || !errors.is_empty() {
-        anyhow::bail!("Comparison failed: {}/{} elements passed", passed_count, total_count);
+        anyhow::bail!(
+            "Comparison failed: {}/{} elements passed",
+            passed_count,
+            total_count
+        );
     }
 
     Ok(())
@@ -101,8 +102,14 @@ fn calculate_position_error(ref_elem: &Element, actual_elem: &Element) -> HashMa
     errors.insert("y".to_string(), (ref_elem.y - actual_elem.y).abs());
 
     // Size errors
-    errors.insert("width".to_string(), (ref_elem.width - actual_elem.width).abs());
-    errors.insert("height".to_string(), (ref_elem.height - actual_elem.height).abs());
+    errors.insert(
+        "width".to_string(),
+        (ref_elem.width - actual_elem.width).abs(),
+    );
+    errors.insert(
+        "height".to_string(),
+        (ref_elem.height - actual_elem.height).abs(),
+    );
 
     // Calculate total positional error (Euclidean distance)
     let x_err = errors["x"];
@@ -122,17 +129,11 @@ fn compare_by_index(
     let mut results = HashMap::new();
 
     // Create index maps
-    let ref_elements: HashMap<usize, &Element> = reference
-        .elements
-        .iter()
-        .map(|e| (e.index, e))
-        .collect();
+    let ref_elements: HashMap<usize, &Element> =
+        reference.elements.iter().map(|e| (e.index, e)).collect();
 
-    let actual_elements: HashMap<usize, &Element> = actual
-        .elements
-        .iter()
-        .map(|e| (e.index, e))
-        .collect();
+    let actual_elements: HashMap<usize, &Element> =
+        actual.elements.iter().map(|e| (e.index, e)).collect();
 
     // Check all reference elements
     for (&idx, ref_elem) in &ref_elements {
@@ -174,10 +175,7 @@ fn compare_by_index(
     for &idx in actual_elements.keys() {
         if !ref_elements.contains_key(&idx) {
             let elem = actual_elements[&idx];
-            warnings.push(format!(
-                "Extra element at index {}: {}",
-                idx, elem.tag
-            ));
+            warnings.push(format!("Extra element at index {}: {}", idx, elem.tag));
         }
     }
 
@@ -201,7 +199,10 @@ fn generate_report(
     // Summary
     lines.push(format!("Reference: {} elements", reference.elements.len()));
     lines.push(format!("Actual: {} elements", actual.elements.len()));
-    lines.push(format!("Success threshold: ≤{}px error", MAX_ERROR_THRESHOLD));
+    lines.push(format!(
+        "Success threshold: ≤{}px error",
+        MAX_ERROR_THRESHOLD
+    ));
     lines.push(String::new());
 
     // Element-by-element comparison
@@ -217,10 +218,7 @@ fn generate_report(
     lines.push(String::new());
 
     // Show failures
-    let mut failures: Vec<_> = comparisons
-        .iter()
-        .filter(|(_, c)| !c.passed)
-        .collect();
+    let mut failures: Vec<_> = comparisons.iter().filter(|(_, c)| !c.passed).collect();
     failures.sort_by_key(|(idx, _)| *idx);
 
     if !failures.is_empty() {
@@ -300,8 +298,7 @@ fn generate_report(
             .iter()
             .filter(|e| {
                 e.tag == *tag
-                    && (class.is_none()
-                        || e.classes.contains(&class.unwrap().to_string()))
+                    && (class.is_none() || e.classes.contains(&class.unwrap().to_string()))
             })
             .collect();
 
@@ -311,7 +308,11 @@ fn generate_report(
 
         let ref_elem = ref_elems[0];
         if let Some(comparison) = comparisons.get(&ref_elem.index) {
-            let status = if comparison.passed { "✓ PASS" } else { "✗ FAIL" };
+            let status = if comparison.passed {
+                "✓ PASS"
+            } else {
+                "✗ FAIL"
+            };
             lines.push(format!("{} {}:", status, name));
 
             if let Some(dist) = comparison.errors.get("position_distance") {

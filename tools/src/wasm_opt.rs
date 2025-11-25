@@ -26,8 +26,7 @@ pub fn check_or_install_wasm_opt() -> Result<()> {
     let tar_gz = download(&download_url)
         .with_context(|| format!("Failed to download wasm-opt from {}", download_url))?;
 
-    unpack_wasm_opt(tar_gz)
-        .context("Failed to unpack wasm-opt")?;
+    unpack_wasm_opt(tar_gz).context("Failed to unpack wasm-opt")?;
 
     println!("✓ wasm-opt (binaryen {}) installed", VERSION);
     Ok(())
@@ -65,9 +64,7 @@ pub fn run_wasm_opt(wasm_path: &Path, release: bool) -> Result<()> {
 fn check_wasm_opt() -> Result<()> {
     let expected_version = format!("wasm-opt version {}", VERSION);
 
-    let output = StdCommand::new(WASM_OPT_PATH)
-        .arg("--version")
-        .output()?;
+    let output = StdCommand::new(WASM_OPT_PATH).arg("--version").output()?;
 
     let version_str = String::from_utf8_lossy(&output.stdout);
 
@@ -107,15 +104,13 @@ fn get_platform() -> Result<&'static str> {
 fn download(url: &str) -> Result<Vec<u8>> {
     log::info!("Downloading: {}", url);
 
-    let response = reqwest::blocking::get(url)
-        .with_context(|| format!("Failed to GET {}", url))?;
+    let response = reqwest::blocking::get(url).with_context(|| format!("Failed to GET {}", url))?;
 
     if !response.status().is_success() {
         anyhow::bail!("Download failed with status: {}", response.status());
     }
 
-    let bytes = response.bytes()
-        .context("Failed to read response bytes")?;
+    let bytes = response.bytes().context("Failed to read response bytes")?;
 
     Ok(bytes.to_vec())
 }
@@ -158,7 +153,8 @@ fn unpack_wasm_opt(tar_gz: Vec<u8>) -> Result<()> {
 
         let destination = Path::new(output_dir).join(file_name);
 
-        entry.unpack(&destination)
+        entry
+            .unpack(&destination)
             .with_context(|| format!("Failed to unpack to {:?}", destination))?;
 
         // Make executable on Unix
@@ -178,8 +174,7 @@ fn unpack_wasm_opt(tar_gz: Vec<u8>) -> Result<()> {
     }
 
     // Verify installation
-    check_wasm_opt()
-        .context("wasm-opt installation verification failed")?;
+    check_wasm_opt().context("wasm-opt installation verification failed")?;
 
     Ok(())
 }

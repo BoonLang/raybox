@@ -278,8 +278,6 @@ impl LayoutData {
 
     #[allow(dead_code)]
     pub fn find_element_by_id(&self, id: &str) -> Option<&Element> {
-        self.elements
-            .iter()
-            .find(|e| e.id.as_deref() == Some(id))
+        self.elements.iter().find(|e| e.id.as_deref() == Some(id))
     }
 }

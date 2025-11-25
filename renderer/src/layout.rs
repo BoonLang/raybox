@@ -434,7 +434,8 @@ mod tests {
 
     #[test]
     fn test_parse_box_shadow_multiple() {
-        let shadows = parse_box_shadow("0 2px 4px 0 rgba(0,0,0,0.2), 0 25px 50px 0 rgba(0,0,0,0.1)");
+        let shadows =
+            parse_box_shadow("0 2px 4px 0 rgba(0,0,0,0.2), 0 25px 50px 0 rgba(0,0,0,0.1)");
         assert_eq!(shadows.len(), 2);
         assert_eq!(shadows[0].offset_y, 2.0);
         assert_eq!(shadows[0].blur_radius, 4.0);

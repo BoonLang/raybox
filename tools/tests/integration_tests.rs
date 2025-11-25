@@ -198,7 +198,10 @@ fn test_html_escaping() {
         .replace('"', "&quot;")
         .replace('\'', "&#x27;");
 
-    assert_eq!(escaped, "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;");
+    assert_eq!(
+        escaped,
+        "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;"
+    );
     assert!(!escaped.contains("<script>"));
 }
 

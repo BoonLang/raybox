@@ -27,25 +27,21 @@ pub fn check_or_install_wasm_bindgen() -> Result<()> {
     let tar_gz = download(&download_url)
         .with_context(|| format!("Failed to download wasm-bindgen from {}", download_url))?;
 
-    unpack_wasm_bindgen(tar_gz)
-        .context("Failed to unpack wasm-bindgen")?;
+    unpack_wasm_bindgen(tar_gz).context("Failed to unpack wasm-bindgen")?;
 
     println!("✓ wasm-bindgen {} installed", VERSION);
     Ok(())
 }
 
 /// Run wasm-bindgen on compiled WASM
-pub fn run_wasm_bindgen(
-    wasm_path: &Path,
-    out_dir: &Path,
-    target: &str,
-    debug: bool,
-) -> Result<()> {
+pub fn run_wasm_bindgen(wasm_path: &Path, out_dir: &Path, target: &str, debug: bool) -> Result<()> {
     let mut args = vec![
-        "--target", target,
+        "--target",
+        target,
         "--no-typescript",
         "--weak-refs",
-        "--out-dir", out_dir.to_str().unwrap(),
+        "--out-dir",
+        out_dir.to_str().unwrap(),
     ];
 
     if debug {
@@ -73,9 +69,7 @@ pub fn run_wasm_bindgen(
 fn check_wasm_bindgen() -> Result<()> {
     let expected_version = format!("wasm-bindgen {}", VERSION);
 
-    let output = StdCommand::new(WASM_BINDGEN_PATH)
-        .arg("-V")
-        .output()?;
+    let output = StdCommand::new(WASM_BINDGEN_PATH).arg("-V").output()?;
 
     let version_str = String::from_utf8_lossy(&output.stdout);
 
@@ -119,15 +113,13 @@ fn get_platform() -> Result<&'static str> {
 fn download(url: &str) -> Result<Vec<u8>> {
     log::info!("Downloading: {}", url);
 
-    let response = reqwest::blocking::get(url)
-        .with_context(|| format!("Failed to GET {}", url))?;
+    let response = reqwest::blocking::get(url).with_context(|| format!("Failed to GET {}", url))?;
 
     if !response.status().is_success() {
         anyhow::bail!("Download failed with status: {}", response.status());
     }
 
-    let bytes = response.bytes()
-        .context("Failed to read response bytes")?;
+    let bytes = response.bytes().context("Failed to read response bytes")?;
 
     Ok(bytes.to_vec())
 }
@@ -137,8 +129,7 @@ fn unpack_wasm_bindgen(tar_gz: Vec<u8>) -> Result<()> {
     let mut archive = Archive::new(tar);
 
     // Create web/bin directory
-    fs::create_dir_all("web/bin")
-        .context("Failed to create web/bin directory")?;
+    fs::create_dir_all("web/bin").context("Failed to create web/bin directory")?;
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -158,7 +149,8 @@ fn unpack_wasm_bindgen(tar_gz: Vec<u8>) -> Result<()> {
 
         let destination = PathBuf::from("web/bin").join(file_name);
 
-        entry.unpack(&destination)
+        entry
+            .unpack(&destination)
             .with_context(|| format!("Failed to unpack to {:?}", destination))?;
 
         // Make executable on Unix

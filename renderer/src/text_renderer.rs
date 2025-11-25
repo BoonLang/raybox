@@ -34,12 +34,8 @@ impl TextRenderer {
 
         // Create context with willReadFrequently for better getImageData performance
         let context_options = js_sys::Object::new();
-        js_sys::Reflect::set(
-            &context_options,
-            &"willReadFrequently".into(),
-            &true.into(),
-        )
-        .map_err(|_| "Failed to set context options")?;
+        js_sys::Reflect::set(&context_options, &"willReadFrequently".into(), &true.into())
+            .map_err(|_| "Failed to set context options")?;
 
         let context = canvas
             .get_context_with_context_options("2d", &context_options)
@@ -49,6 +45,20 @@ impl TextRenderer {
             .map_err(|_| "Context is not 2d")?;
 
         Ok(Self { canvas, context })
+    }
+
+    /// Measure text width with the element's font settings without rendering.
+    pub fn measure_text_width(&mut self, element: &Element, text: &str) -> Option<f32> {
+        let font_size = Self::parse_font_size(element.font_size.as_deref())?;
+        let font_family = element
+            .font_family
+            .as_deref()
+            .unwrap_or("Helvetica Neue, Helvetica, Arial, sans-serif");
+        let font_weight = element.font_weight.as_deref().unwrap_or("300");
+        let font_str = format!("{} {}px {}", font_weight, font_size, font_family);
+        self.context.set_font(&font_str);
+        let metrics = self.context.measure_text(text).ok()?;
+        Some(metrics.width() as f32)
     }
 
     /// Render text element to a bitmap
@@ -108,12 +118,8 @@ impl TextRenderer {
         self.context.set_image_smoothing_enabled(true);
 
         // Clear canvas
-        self.context.clear_rect(
-            0.0,
-            0.0,
-            canvas_width as f64,
-            canvas_height as f64,
-        );
+        self.context
+            .clear_rect(0.0, 0.0, canvas_width as f64, canvas_height as f64);
 
         // Render text at baseline (text goes up from baseline)
         let baseline_y = font_size + padding as f32;
@@ -131,7 +137,8 @@ impl TextRenderer {
                 self.context.set_line_width(1.0);
                 self.context.begin_path();
                 self.context.move_to(padding as f64, line_y as f64);
-                self.context.line_to((padding + text_width) as f64, line_y as f64);
+                self.context
+                    .line_to((padding + text_width) as f64, line_y as f64);
                 self.context.stroke();
             }
         }
@@ -183,7 +190,9 @@ impl TextRenderer {
 
         // Draw circle border
         self.context.begin_path();
-        self.context.arc(center, center, radius, 0.0, 2.0 * std::f64::consts::PI).ok()?;
+        self.context
+            .arc(center, center, radius, 0.0, 2.0 * std::f64::consts::PI)
+            .ok()?;
         self.context.set_stroke_style_str("#dddddd");
         self.context.set_line_width(1.0);
         self.context.stroke();
@@ -227,11 +236,13 @@ impl TextRenderer {
         self.canvas.set_height(height);
 
         // Clear canvas
-        self.context.clear_rect(0.0, 0.0, width as f64, height as f64);
+        self.context
+            .clear_rect(0.0, 0.0, width as f64, height as f64);
 
         // Set font for chevron character
         let font_size = 22.0;
-        self.context.set_font(&format!("{}px sans-serif", font_size));
+        self.context
+            .set_font(&format!("{}px sans-serif", font_size));
         self.context.set_fill_style_str("#e6e6e6"); // Light gray
 
         // Render downward-pointing chevron
@@ -254,7 +265,9 @@ impl TextRenderer {
         let text_width = metrics.width();
 
         // Draw chevron centered (baseline adjustment for vertical centering)
-        self.context.fill_text(chevron_char, -text_width / 2.0, font_size as f64 / 3.0).ok()?;
+        self.context
+            .fill_text(chevron_char, -text_width / 2.0, font_size as f64 / 3.0)
+            .ok()?;
 
         // Restore context state
         self.context.restore();

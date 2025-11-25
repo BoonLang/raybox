@@ -75,10 +75,12 @@
         async function init() {
             try {
                 // Load WASM module
-                const { default: init, start_renderer } = await import('./pkg/renderer.js');
+                const { default: init, start_renderer, raybox_report_json } = await import('./pkg/renderer.js');
 
                 // Initialize WASM
                 await init();
+                // Expose render report for automation
+                window.raybox_report_json = raybox_report_json;
 
                 // Load layout JSON
                 const response = await fetch('/reference/todomvc_dom_layout_700.json');
@@ -87,7 +89,7 @@
                 }
                 const layoutJson = await response.text();
 
-                // Start renderer
+                // Start renderer (report becomes available once this completes)
                 await start_renderer('canvas', layoutJson);
             } catch (error) {
                 console.error('Initialization error:', error);

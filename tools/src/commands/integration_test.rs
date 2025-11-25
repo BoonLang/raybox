@@ -44,18 +44,14 @@ pub fn run(url: &str) -> Result<()> {
     // Test 3: WASM files exist
     println!("Test 3: WASM build artifacts...");
 
-    let js_response = client
-        .get(format!("{}/pkg/renderer.js", url))
-        .send()?;
+    let js_response = client.get(format!("{}/pkg/renderer.js", url)).send()?;
     if js_response.status().is_success() {
         println!("  ✅ PASS: renderer.js exists");
     } else {
         anyhow::bail!("renderer.js not found");
     }
 
-    let wasm_response = client
-        .get(format!("{}/pkg/renderer_bg.wasm", url))
-        .send()?;
+    let wasm_response = client.get(format!("{}/pkg/renderer_bg.wasm", url)).send()?;
     if wasm_response.status().is_success() {
         println!("  ✅ PASS: renderer_bg.wasm exists");
     } else {
@@ -73,10 +69,14 @@ pub fn run(url: &str) -> Result<()> {
         println!("  ✅ PASS: Layout JSON accessible");
 
         let json_text = json_response.text()?;
-        let json: serde_json::Value = serde_json::from_str(&json_text)
-            .context("Failed to parse JSON")?;
+        let json: serde_json::Value =
+            serde_json::from_str(&json_text).context("Failed to parse JSON")?;
 
-        if json.get("metadata").and_then(|m| m.get("viewport")).is_some() {
+        if json
+            .get("metadata")
+            .and_then(|m| m.get("viewport"))
+            .is_some()
+        {
             println!("  ✅ PASS: JSON structure valid");
         } else {
             anyhow::bail!("Invalid JSON structure");
@@ -88,9 +88,7 @@ pub fn run(url: &str) -> Result<()> {
 
     // Test 5: Build ID endpoint
     println!("Test 5: Auto-reload endpoint...");
-    let build_id_response = client
-        .get(format!("{}/_api/build_id", url))
-        .send()?;
+    let build_id_response = client.get(format!("{}/_api/build_id", url)).send()?;
 
     if build_id_response.status().is_success() {
         let build_id = build_id_response.text()?;
@@ -105,7 +103,17 @@ pub fn run(url: &str) -> Result<()> {
     println!("  Running check-console command...");
 
     let output = std::process::Command::new("cargo")
-        .args(&["run", "-p", "tools", "--", "check-console", "--url", url, "--wait", "2"])
+        .args(&[
+            "run",
+            "-p",
+            "tools",
+            "--",
+            "check-console",
+            "--url",
+            url,
+            "--wait",
+            "2",
+        ])
         .output()
         .context("Failed to run check-console")?;
 
@@ -123,7 +131,18 @@ pub fn run(url: &str) -> Result<()> {
     // Test 7: Screenshot capture (optional)
     println!("Test 7: Screenshot capability...");
     let screenshot_output = std::process::Command::new("cargo")
-        .args(&["run", "-p", "tools", "--", "check-console", "--url", url, "--wait", "1", "-s"])
+        .args(&[
+            "run",
+            "-p",
+            "tools",
+            "--",
+            "check-console",
+            "--url",
+            url,
+            "--wait",
+            "1",
+            "-s",
+        ])
         .output();
 
     match screenshot_output {

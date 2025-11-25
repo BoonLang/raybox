@@ -32,7 +32,14 @@ impl RectangleInstance {
         Self::new_with_radius(x, y, width, height, color, 0.0)
     }
 
-    pub fn new_with_radius(x: f32, y: f32, width: f32, height: f32, color: [f32; 4], border_radius: f32) -> Self {
+    pub fn new_with_radius(
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: [f32; 4],
+        border_radius: f32,
+    ) -> Self {
         Self {
             position_size: [x, y, width, height],
             color,
@@ -47,7 +54,15 @@ impl RectangleInstance {
     }
 
     /// Create a rounded border outline (ring shape)
-    pub fn new_border_outline(x: f32, y: f32, width: f32, height: f32, color: [f32; 4], border_radius: f32, border_width: f32) -> Self {
+    pub fn new_border_outline(
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: [f32; 4],
+        border_radius: f32,
+        border_width: f32,
+    ) -> Self {
         Self {
             position_size: [x, y, width, height],
             color,
@@ -63,7 +78,10 @@ impl RectangleInstance {
 
     /// Create a rectangle with inset shadow
     pub fn new_with_inset_shadow(
-        x: f32, y: f32, width: f32, height: f32,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
         color: [f32; 4],
         border_radius: f32,
         shadow_color: [f32; 4],
@@ -342,7 +360,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,  // No culling for 2D rectangles
+                cull_mode: None, // No culling for 2D rectangles
                 unclipped_depth: false,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 conservative: false,

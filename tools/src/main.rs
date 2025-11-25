@@ -1,6 +1,7 @@
 mod cdp;
 mod commands;
 mod layout;
+mod layout_precise;
 mod wasm_bindgen;
 mod wasm_opt;
 
@@ -165,6 +166,63 @@ enum Commands {
         #[arg(short, long, default_value = "http://localhost:8000")]
         url: String,
     },
+
+    /// Capture precise layout from reference HTML
+    CaptureReference {
+        /// HTML file to open (inside reference/)
+        #[arg(short, long, default_value = "reference/todomvc_populated.html")]
+        file: String,
+
+        /// Optional layout JSON to use instead of DOM snapshot
+        #[arg(long)]
+        layout_json: Option<String>,
+
+        /// Output JSON path
+        #[arg(short, long, default_value = "reference/layout_precise_reference.json")]
+        out: String,
+
+        /// Launch headed Chrome (default headless)
+        #[arg(long, default_value_t = false)]
+        headed: bool,
+
+        /// Path to Chrome/Chromium binary
+        #[arg(long)]
+        chrome_path: Option<String>,
+    },
+
+    /// Capture precise layout from the renderer (requires running server)
+    CaptureRenderer {
+        /// URL of running renderer
+        #[arg(short, long, default_value = "http://localhost:8000")]
+        url: String,
+
+        /// Output JSON path
+        #[arg(short, long, default_value = "reference/layout_precise_renderer.json")]
+        out: String,
+
+        /// Launch headed Chrome (default headless)
+        #[arg(long, default_value_t = false)]
+        headed: bool,
+
+        /// Path to Chrome/Chromium binary
+        #[arg(long)]
+        chrome_path: Option<String>,
+    },
+
+    /// Diff two precise layout files
+    DiffLayouts {
+        /// Left JSON
+        #[arg(short = 'a', long)]
+        left: String,
+
+        /// Right JSON
+        #[arg(short = 'b', long)]
+        right: String,
+
+        /// Threshold in px
+        #[arg(short, long, default_value = "0.1")]
+        threshold: f64,
+    },
 }
 
 fn main() -> Result<()> {
@@ -232,7 +290,9 @@ fn main() -> Result<()> {
             // Run async CDP checking
             tokio::runtime::Runtime::new()?.block_on(async {
                 eprintln!("\n📝 Note: chromiumoxide may log deserialization errors below.");
-                eprintln!("   This occurs when Chrome 141+ sends CDP messages not yet in the library.");
+                eprintln!(
+                    "   This occurs when Chrome 141+ sends CDP messages not yet in the library."
+                );
                 eprintln!("   These errors are harmless and don't affect console monitoring.\n");
 
                 let monitor = cdp::ConsoleMonitor::connect(port).await?;
@@ -289,12 +349,66 @@ fn main() -> Result<()> {
             commands::wasm_build::run(release)?;
         }
 
-        Commands::WasmStart { release, open, port } => {
+        Commands::WasmStart {
+            release,
+            open,
+            port,
+        } => {
             commands::wasm_start::run(release, open, port)?;
         }
 
         Commands::IntegrationTest { url } => {
             commands::integration_test::run(&url)?;
+        }
+
+        Commands::CaptureReference {
+            file,
+            out,
+            headed,
+            chrome_path,
+            layout_json,
+        } => {
+            tokio::runtime::Runtime::new()?.block_on(async {
+                commands::capture::run_capture_reference(
+                    std::path::Path::new(&file),
+                    std::path::Path::new(&out),
+                    headed,
+                    chrome_path.as_deref(),
+                    layout_json.as_deref(),
+                )
+                .await
+            })?;
+            println!("✓ Saved: {}", out);
+        }
+
+        Commands::CaptureRenderer {
+            url,
+            out,
+            headed,
+            chrome_path,
+        } => {
+            tokio::runtime::Runtime::new()?.block_on(async {
+                commands::capture::run_capture_renderer(
+                    &url,
+                    std::path::Path::new(&out),
+                    headed,
+                    chrome_path.as_deref(),
+                )
+                .await
+            })?;
+            println!("✓ Saved: {}", out);
+        }
+
+        Commands::DiffLayouts {
+            left,
+            right,
+            threshold,
+        } => {
+            commands::capture::run_diff_layouts(
+                std::path::Path::new(&left),
+                std::path::Path::new(&right),
+                threshold,
+            )?;
         }
     }
 

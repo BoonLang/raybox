@@ -11,7 +11,10 @@ use crate::wasm_opt::{check_or_install_wasm_opt, run_wasm_opt};
 pub fn run(release: bool) -> Result<()> {
     let start = Instant::now();
 
-    println!("Building WASM renderer{}...", if release { " (release)" } else { "" });
+    println!(
+        "Building WASM renderer{}...",
+        if release { " (release)" } else { "" }
+    );
     println!();
 
     // Phase 1: Check/install tools
@@ -83,8 +86,7 @@ fn compile_to_wasm(release: bool) -> Result<()> {
 
     log::info!("Running: cargo build --target wasm32-unknown-unknown --package renderer");
 
-    let status = cmd.status()
-        .context("Failed to run cargo build")?;
+    let status = cmd.status().context("Failed to run cargo build")?;
 
     if !status.success() {
         anyhow::bail!("Cargo build failed");
@@ -108,13 +110,11 @@ fn generate_bindings(release: bool) -> Result<()> {
 
     // Remove old pkg directory
     if out_dir.exists() {
-        fs::remove_dir_all(out_dir)
-            .context("Failed to remove old pkg directory")?;
+        fs::remove_dir_all(out_dir).context("Failed to remove old pkg directory")?;
     }
 
     // Create new pkg directory
-    fs::create_dir_all(out_dir)
-        .context("Failed to create pkg directory")?;
+    fs::create_dir_all(out_dir).context("Failed to create pkg directory")?;
 
     run_wasm_bindgen(&wasm_path, out_dir, "web", !release)?;
 
@@ -141,8 +141,7 @@ fn compress_wasm() -> Result<()> {
     }
 
     // Read WASM file
-    let wasm_data = fs::read(wasm_path)
-        .context("Failed to read WASM file")?;
+    let wasm_data = fs::read(wasm_path).context("Failed to read WASM file")?;
 
     // Compress with Brotli
     let mut br_output = Vec::new();
@@ -190,8 +189,16 @@ fn print_file_sizes() -> Result<()> {
     println!();
     println!("  File sizes:");
     println!("    WASM:    {} KB", wasm_size / 1024);
-    println!("    Brotli:  {} KB ({:.1}%)", br_size / 1024, (br_size as f64 / wasm_size as f64) * 100.0);
-    println!("    Gzip:    {} KB ({:.1}%)", gz_size / 1024, (gz_size as f64 / wasm_size as f64) * 100.0);
+    println!(
+        "    Brotli:  {} KB ({:.1}%)",
+        br_size / 1024,
+        (br_size as f64 / wasm_size as f64) * 100.0
+    );
+    println!(
+        "    Gzip:    {} KB ({:.1}%)",
+        gz_size / 1024,
+        (gz_size as f64 / wasm_size as f64) * 100.0
+    );
 
     Ok(())
 }

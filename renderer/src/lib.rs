@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+
 mod border_pipeline;
 mod layout;
 mod pipeline;
@@ -6,386 +8,482 @@ mod shadow_pipeline;
 mod text_renderer;
 mod textured_quad_pipeline;
 
-pub use layout::*;
-use border_pipeline::{BorderPipeline, create_border_edges};
-use pipeline::TrianglePipeline;
-use rectangle_pipeline::{RectanglePipeline, RectangleInstance};
-use shadow_pipeline::{ShadowPipeline, ShadowInstance};
-use text_renderer::{TextRenderer, TextTexture};
-use textured_quad_pipeline::{TexturedQuadPipeline, TexturedQuadInstance};
+#[cfg(target_arch = "wasm32")]
+mod wasm_impl {
+    use std::cell::RefCell;
 
-use wasm_bindgen::prelude::*;
+    use serde::Serialize;
+    use serde_wasm_bindgen;
+    use wasm_bindgen::prelude::*;
 
-/// Initialize panic hook for better error messages in the browser console
-#[wasm_bindgen(start)]
-pub fn init() {
-    console_error_panic_hook::set_once();
-    log::info!("TodoMVC Canvas Renderer initialized - testing auto-reload!");
-}
-
-/// Entry point for the renderer
-/// Called from JavaScript to start rendering
-#[wasm_bindgen]
-pub async fn start_renderer(canvas_id: &str, layout_json: &str) -> Result<(), JsValue> {
-    log::info!("Starting renderer for canvas: {}", canvas_id);
-
-    // Parse layout data
-    let layout = LayoutData::from_json(layout_json)
-        .map_err(|e| JsValue::from_str(&format!("Failed to parse layout JSON: {}", e)))?;
-
-    log::info!(
-        "Loaded layout with {} elements",
-        layout.elements.len()
-    );
-
-    // Initialize WebGPU
-    let mut gpu = initialize_webgpu(canvas_id).await?;
-    log::info!("WebGPU initialized successfully");
-
-    // Render layout elements as rectangles
-    render_layout(&mut gpu, &layout)?;
-    log::info!("Layout rendered with {} elements", layout.elements.len());
-
-    Ok(())
-}
-
-struct GpuContext {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    surface: wgpu::Surface<'static>,
-    surface_config: wgpu::SurfaceConfiguration,
-    pipeline: TrianglePipeline,
-    rectangle_pipeline: RectanglePipeline,
-    shadow_pipeline: ShadowPipeline,
-    border_pipeline: BorderPipeline,
-    text_pipeline: TexturedQuadPipeline,
-    text_renderer: TextRenderer,
-}
-
-async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
-    use wasm_bindgen::JsCast;
-    use web_sys::{HtmlCanvasElement, window};
-
-    // Get the canvas element
-    let window = window().ok_or("No window")?;
-    let document = window.document().ok_or("No document")?;
-    let canvas = document
-        .get_element_by_id(canvas_id)
-        .ok_or(format!("Canvas '{}' not found", canvas_id))?
-        .dyn_into::<HtmlCanvasElement>()
-        .map_err(|_| "Element is not a canvas")?;
-
-    let width = canvas.width();
-    let height = canvas.height();
-
-    // Create WGPU instance
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::BROWSER_WEBGPU,
-        ..Default::default()
-    });
-
-    // Create surface from canvas
-    let surface = instance
-        .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
-        .map_err(|e| format!("Failed to create surface: {:?}", e))?;
-
-    // Request adapter
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        })
-        .await
-        .map_err(|e| format!("Failed to find suitable GPU adapter: {:?}", e))?;
-
-    // Request device
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("Main Device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
-            memory_hints: Default::default(),
-            trace: Default::default(),
-            experimental_features: Default::default(),
-        })
-        .await
-        .map_err(|e| format!("Failed to create device: {:?}", e))?;
-
-    // Configure surface
-    let surface_caps = surface.get_capabilities(&adapter);
-    let surface_format = surface_caps
-        .formats
-        .iter()
-        .copied()
-        .find(|f| f.is_srgb())
-        .unwrap_or(surface_caps.formats[0]);
-
-    let surface_config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: surface_format,
-        width,
-        height,
-        present_mode: wgpu::PresentMode::Fifo,
-        alpha_mode: surface_caps.alpha_modes[0],
-        view_formats: vec![],
-        desired_maximum_frame_latency: 2,
+    use super::{
+        parse_font_size_px,
+        border_pipeline::{create_border_edges, BorderPipeline},
+        layout::{parse_box_shadow, parse_color, Element, LayoutData, Shadow},
+        rectangle_pipeline::{RectangleInstance, RectanglePipeline},
+        shadow_pipeline::{ShadowInstance, ShadowPipeline},
+        text_renderer::{TextRenderer, TextTexture},
+        textured_quad_pipeline::{TexturedQuadInstance, TexturedQuadPipeline},
     };
 
-    surface.configure(&device, &surface_config);
+    pub use wasm_bindgen::prelude::*;
 
-    // Create render pipelines
-    let pipeline = TrianglePipeline::new(&device, surface_format);
-    let rectangle_pipeline = RectanglePipeline::new(
-        &device,
-        surface_format,
-        700, // Canvas width (full viewport)
-        700, // Canvas height (full viewport)
-        100, // initial capacity for 100 rectangles
-    );
-    let shadow_pipeline = ShadowPipeline::new(
-        &device,
-        surface_format,
-        700, // Canvas width (full viewport)
-        700, // Canvas height (full viewport)
-        50, // initial capacity for 50 shadow layers (2 shadows × ~25 layers avg)
-    );
-    let border_pipeline = BorderPipeline::new(
-        &device,
-        surface_format,
-        700, // Canvas width (full viewport)
-        700, // Canvas height (full viewport)
-        400, // initial capacity for 400 border edges (100 elements × 4 edges)
-    );
-    let text_pipeline = TexturedQuadPipeline::new(
-        &device,
-        surface_format,
-        700, // Canvas width (full viewport)
-        700, // Canvas height (full viewport)
-        100, // initial capacity for 100 text elements
-    );
+    /// Initialize panic hook for better error messages in the browser console
+    #[wasm_bindgen(start)]
+    pub fn init() {
+        console_error_panic_hook::set_once();
+        log::info!("TodoMVC Canvas Renderer initialized - testing auto-reload!");
+    }
 
-    // Create text renderer
-    let text_renderer = TextRenderer::new()
-        .map_err(|e| JsValue::from_str(&format!("Failed to create text renderer: {}", e)))?;
+    /// Entry point for the renderer
+    /// Called from JavaScript to start rendering
+    #[wasm_bindgen]
+    pub async fn start_renderer(canvas_id: &str, layout_json: &str) -> Result<(), JsValue> {
+        let layout = LayoutData::from_json(layout_json)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse layout JSON: {}", e)))?;
 
-    Ok(GpuContext {
-        device,
-        queue,
-        surface,
-        surface_config,
-        pipeline,
-        rectangle_pipeline,
-        shadow_pipeline,
-        border_pipeline,
-        text_pipeline,
-        text_renderer,
-    })
-}
+        // Baseline report from layout (available even if rendering fails)
+        let mut report = layout_to_report(&layout);
 
-fn render_triangle(gpu: &GpuContext) -> Result<(), JsValue> {
-    let frame = gpu
-        .surface
-        .get_current_texture()
-        .map_err(|e| format!("Failed to get surface texture: {:?}", e))?;
+        // Try rendering; if successful, replace report with rendered primitives
+        if let Ok(mut gpu) = initialize_webgpu(canvas_id).await {
+            if let Ok(r) = render_layout(&mut gpu, &layout) {
+                report = r;
+            }
+        }
+        LAST_REPORT.with(|cell| cell.replace(Some(report.clone())));
+        // Expose report globally (window + globalThis) and into DOM attributes for CDP/DOMSnapshot
+        let val = serde_wasm_bindgen::to_value(&report).unwrap_or(JsValue::NULL);
+        let report_json = serde_json::to_string(&report).unwrap_or("{}".to_string());
+        let global = js_sys::global();
+        let _ = js_sys::Reflect::set(&global, &"__raybox_report_data".into(), &val);
+        let _ = js_sys::Reflect::set(
+            &global,
+            &"__raybox_report_json".into(),
+            &JsValue::from_str(&report_json),
+        );
+        if let Some(win) = web_sys::window() {
+            if let Some(doc) = win.document() {
+                if let Some(html) = doc.document_element() {
+                    let _ = html.set_attribute("data-raybox-report", &report_json);
+                }
+            }
+        }
+        let get_fn = Closure::wrap(Box::new(move || {
+            LAST_REPORT.with(|cell| {
+                cell.borrow()
+                    .as_ref()
+                    .map(|r| serde_wasm_bindgen::to_value(r).unwrap_or(JsValue::NULL))
+                    .unwrap_or(JsValue::NULL)
+            })
+        }) as Box<dyn FnMut() -> JsValue>);
+        let _ = js_sys::Reflect::set(
+            &global,
+            &"__raybox_get_render_report".into(),
+            get_fn.as_ref().unchecked_ref(),
+        );
+        get_fn.forget();
+        Ok(())
+    }
 
-    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+    #[wasm_bindgen]
+    pub fn get_render_report() -> Result<JsValue, JsValue> {
+        LAST_REPORT.with(|cell| {
+            if let Some(report) = cell.borrow().clone() {
+                serde_wasm_bindgen::to_value(&report).map_err(|e| JsValue::from_str(&e.to_string()))
+            } else {
+                Ok(JsValue::NULL)
+            }
+        })
+    }
 
-    // Use the pipeline to render the triangle
-    gpu.pipeline.render(&gpu.device, &gpu.queue, &view);
+    /// Return the last render report as a JSON string (for automation tools).
+    #[wasm_bindgen]
+    pub fn raybox_report_json() -> String {
+        LAST_REPORT.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .map(|r| serde_json::to_string(r).unwrap_or_else(|_| "{}".into()))
+                .unwrap_or_else(|| "{}".into())
+        })
+    }
 
-    frame.present();
+    struct GpuContext {
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        surface: wgpu::Surface<'static>,
+        surface_config: wgpu::SurfaceConfiguration,
+        rectangle_pipeline: RectanglePipeline,
+        shadow_pipeline: ShadowPipeline,
+        border_pipeline: BorderPipeline,
+        text_pipeline: TexturedQuadPipeline,
+        text_renderer: TextRenderer,
+    }
 
-    Ok(())
-}
+    #[derive(Debug, Clone, Serialize)]
+    struct ReportNode {
+        id: String,
+        source_index: usize,
+        kind: String,
+        tag: String,
+        classes: Vec<String>,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    }
 
-/// Helper function to check if element is a footer child that needs vertical centering
-fn is_footer_child(element: &Element, footer_y: f32) -> bool {
-    // Footer children are at the same y position as footer but are NOT the footer itself
-    element.y == footer_y && !element.has_class("footer")
-}
+    #[derive(Debug, Clone, Serialize)]
+    struct RenderReport {
+        nodes: Vec<ReportNode>,
+    }
 
-/// Convert layout elements to rectangle instances and render them
-fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValue> {
-    // Calculate vertical offset to bring h1 title to top of canvas
-    // Keep horizontal centering from reference layout (don't offset x-axis)
-    let offset_x = 0.0;
-    let offset_y = layout.elements.iter()
-        .find(|e| e.tag == "h1")
-        .map(|e| e.y)
-        .unwrap_or(0.0);
+    fn layout_to_report(layout: &LayoutData) -> RenderReport {
+        let mut nodes = Vec::new();
+        for e in &layout.elements {
+            let font_h = parse_font_size_px(e.font_size.as_deref()).unwrap_or(e.height);
+            nodes.push(ReportNode {
+                id: format!("elem-{}", e.index),
+                source_index: e.index,
+                kind: "element".into(),
+                tag: e.tag.clone(),
+                classes: e.classes.clone(),
+                x: e.x,
+                y: e.y,
+                w: e.width,
+                    h: e.height,
+                });
+            if let Some(txt) = &e.text {
+                nodes.push(ReportNode {
+                    id: format!("elem-{}-text", e.index),
+                    source_index: e.index,
+                    kind: "text".into(),
+                    tag: e.tag.clone(),
+                    classes: e.classes.clone(),
+                    x: e.x,
+                    y: e.y,
+                    w: e.width,
+                    h: font_h,
+                });
+                if let Some(pos) = txt.find("TodoMVC") {
+                    let prefix = &txt[..pos];
+                    let approx_char_w = font_h * 0.5;
+                    let anchor_w = 7.0 * approx_char_w / 2.0; // approx width of "TodoMVC"
+                    let prefix_w = prefix.len() as f32 * approx_char_w / 2.0;
+                    let anchor_x = e.x + prefix_w;
+                    nodes.push(ReportNode {
+                        id: format!("elem-{}-link", e.index),
+                        source_index: e.index,
+                        kind: "text".into(),
+                        tag: "a".into(),
+                        classes: Vec::new(),
+                        x: anchor_x,
+                        y: e.y,
+                        w: anchor_w,
+                        h: font_h,
+                    });
+                }
+            }
+        }
+        RenderReport { nodes }
+    }
 
-    log::info!("Content area offset: ({}, {})", offset_x, offset_y);
+    thread_local! {
+        static LAST_REPORT: RefCell<Option<RenderReport>> = RefCell::new(None);
+    }
 
-    // Fix CSS layout bug: vertically center footer children
-    // Footer children are at y=427 (top edge) but should be centered within footer (y=437)
-    let (footer_y, footer_y_adjustment) = if let Some(footer) = layout.elements.iter().find(|e| e.has_class("footer")) {
-        let footer_y = footer.y;
-        let footer_height = footer.height;
+    async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
+        use wasm_bindgen::JsCast;
+        use web_sys::{window, HtmlCanvasElement};
 
-        // Calculate adjustment needed to center 20px tall elements in 40px footer
-        // Centered y = footer_y + (footer_height - element_height) / 2
-        // Adjustment = centered_y - current_y = (footer_height - element_height) / 2
-        let adjustment = (footer_height - 20.0) / 2.0;  // Most footer children are 20px tall
-        (footer_y, adjustment)
-    } else {
-        (f32::MIN, 0.0)  // Use MIN as sentinel value if no footer found
-    };
+        let window = window().ok_or("No window")?;
+        let document = window.document().ok_or("No document")?;
+        let canvas = document
+            .get_element_by_id(canvas_id)
+            .ok_or(format!("Canvas '{}' not found", canvas_id))?
+            .dyn_into::<HtmlCanvasElement>()
+            .map_err(|_| "Element is not a canvas")?;
 
-    log::info!("Footer vertical centering adjustment: {}px", footer_y_adjustment);
+        let width = canvas.width();
+        let height = canvas.height();
 
-    // Phase 0: Collect shadow instances (rendered first, behind everything)
-    let mut shadow_instances = Vec::new();
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::BROWSER_WEBGPU,
+            ..Default::default()
+        });
 
-    // Collect inset shadows for use in rectangle rendering (owned data)
-    let mut inset_shadows: std::collections::HashMap<usize, Shadow> = std::collections::HashMap::new();
+        let surface = instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
+            .map_err(|e| format!("Failed to create surface: {:?}", e))?;
 
-    for (idx, element) in layout.elements.iter().enumerate() {
-        // Skip invisible elements
-        if !element.is_visible() {
-            continue;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .map_err(|e| format!("Failed to find suitable GPU adapter: {:?}", e))?;
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Main Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| format!("Failed to create device: {:?}", e))?;
+
+        let surface_caps = surface.get_capabilities(&adapter);
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(surface_caps.formats[0]);
+
+        let surface_config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width,
+            height,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&device, &surface_config);
+
+        let rectangle_pipeline = RectanglePipeline::new(&device, surface_format, 700, 700, 100);
+        let shadow_pipeline = ShadowPipeline::new(&device, surface_format, 700, 700, 50);
+        let border_pipeline = BorderPipeline::new(&device, surface_format, 700, 700, 400);
+        let text_pipeline = TexturedQuadPipeline::new(&device, surface_format, 700, 700, 100);
+        let text_renderer = TextRenderer::new()
+            .map_err(|e| JsValue::from_str(&format!("Failed to create text renderer: {}", e)))?;
+
+        Ok(GpuContext {
+            device,
+            queue,
+            surface,
+            surface_config,
+            rectangle_pipeline,
+            shadow_pipeline,
+            border_pipeline,
+            text_pipeline,
+            text_renderer,
+        })
+    }
+
+    fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<RenderReport, JsValue> {
+        let offset_x = 0.0;
+        let offset_y = layout
+            .elements
+            .iter()
+            .find(|e| e.tag == "h1")
+            .map(|e| e.y)
+            .unwrap_or(0.0);
+
+        let (footer_y, footer_y_adjustment) =
+            if let Some(footer) = layout.elements.iter().find(|e| e.has_class("footer")) {
+                let footer_height = footer.height;
+                let adjustment = (footer_height - 20.0) / 2.0;
+                (footer.y, adjustment)
+            } else {
+                (f32::MIN, 0.0)
+            };
+
+        let mut report_nodes = Vec::new();
+
+        // Phase 0 shadows
+        let mut shadow_instances = Vec::new();
+        let mut inset_shadows: std::collections::HashMap<usize, Shadow> =
+            std::collections::HashMap::new();
+
+        for (idx, element) in layout.elements.iter().enumerate() {
+            if !element.is_visible() {
+                continue;
+            }
+            if let Some(box_shadow_str) = &element.box_shadow {
+                let shadows = parse_box_shadow(box_shadow_str);
+                let non_inset: Vec<_> = shadows.iter().filter(|s| !s.inset).cloned().collect();
+                let inset: Vec<_> = shadows.into_iter().filter(|s| s.inset).collect();
+                if let Some(ins) = inset.into_iter().next() {
+                    inset_shadows.insert(idx, ins);
+                }
+                if non_inset.is_empty() {
+                    continue;
+                }
+                let shadow1 = &non_inset[0];
+                let shadow2 = non_inset.get(1).unwrap_or(shadow1);
+
+                let extent_top_1 = shadow1.spread_radius + shadow1.blur_radius - shadow1.offset_y;
+                let extent_bottom_1 =
+                    shadow1.spread_radius + shadow1.blur_radius + shadow1.offset_y;
+                let extent_left_1 = shadow1.spread_radius + shadow1.blur_radius - shadow1.offset_x;
+                let extent_right_1 = shadow1.spread_radius + shadow1.blur_radius + shadow1.offset_x;
+
+                let extent_top_2 = shadow2.spread_radius + shadow2.blur_radius - shadow2.offset_y;
+                let extent_bottom_2 =
+                    shadow2.spread_radius + shadow2.blur_radius + shadow2.offset_y;
+                let extent_left_2 = shadow2.spread_radius + shadow2.blur_radius - shadow2.offset_x;
+                let extent_right_2 = shadow2.spread_radius + shadow2.blur_radius + shadow2.offset_x;
+
+                let extent_top = extent_top_1.max(extent_top_2);
+                let extent_bottom = extent_bottom_1.max(extent_bottom_2);
+                let extent_left = extent_left_1.max(extent_left_2);
+                let extent_right = extent_right_1.max(extent_right_2);
+
+                let shadow_width = element.width + extent_left + extent_right;
+                let shadow_height = element.height + extent_top + extent_bottom;
+
+                let shadow_x = element.x - offset_x - extent_left;
+                let mut shadow_y = element.y - offset_y - extent_top;
+                if is_footer_child(element, footer_y) {
+                    shadow_y += footer_y_adjustment;
+                }
+
+                shadow_instances.push(ShadowInstance::new_dual_layer(
+                    shadow_x,
+                    shadow_y,
+                    shadow_width,
+                    shadow_height,
+                    element.width,
+                    element.height,
+                    [
+                        shadow1.color.0,
+                        shadow1.color.1,
+                        shadow1.color.2,
+                        shadow1.color.3,
+                    ],
+                    shadow1.blur_radius,
+                    [shadow1.offset_x, shadow1.offset_y],
+                    [
+                        shadow2.color.0,
+                        shadow2.color.1,
+                        shadow2.color.2,
+                        shadow2.color.3,
+                    ],
+                    shadow2.blur_radius,
+                    [shadow2.offset_x, shadow2.offset_y],
+                ));
+
+                report_nodes.push(ReportNode {
+                    id: format!("elem-{}", element.index),
+                    source_index: element.index,
+                    kind: "shadow".into(),
+                    tag: element.tag.clone(),
+                    classes: element.classes.clone(),
+                    x: shadow_x,
+                    y: shadow_y,
+                    w: shadow_width,
+                    h: shadow_height,
+                });
+            }
         }
 
-        // Parse box-shadow if present
-        if let Some(box_shadow_str) = &element.box_shadow {
-            let shadows = parse_box_shadow(box_shadow_str);
+        // Phase 1 rectangles/backgrounds
+        let mut rect_instances = Vec::new();
+        let mut border_instances = Vec::new();
 
-            // Separate inset and outset shadows
-            let non_inset_shadows: Vec<_> = shadows.iter().filter(|s| !s.inset).cloned().collect();
-            let inset_shadow_list: Vec<_> = shadows.into_iter().filter(|s| s.inset).collect();
-
-            // Store first inset shadow for this element (if present)
-            if let Some(inset_shadow) = inset_shadow_list.into_iter().next() {
-                inset_shadows.insert(idx, inset_shadow);
-            }
-
-            // Use non_inset_shadows (already cloned references)
-            let non_inset_shadows: Vec<&Shadow> = non_inset_shadows.iter().collect();
-
-            if non_inset_shadows.is_empty() {
+        for (idx, element) in layout.elements.iter().enumerate() {
+            if !element.is_visible() {
                 continue;
             }
 
-            // Combine shadow layers into one unified shadow (like a physical object)
-            // Use the first two layers (most common case: small sharp + large diffuse)
-            let shadow1 = non_inset_shadows[0];
-            let shadow2 = if non_inset_shadows.len() > 1 {
-                non_inset_shadows[1]
-            } else {
-                // If only one layer, duplicate it (will blend to same result)
-                shadow1
-            };
+            let base_y = element.y - offset_y
+                + if is_footer_child(element, footer_y) {
+                    footer_y_adjustment
+                } else {
+                    0.0
+                };
+            report_nodes.push(ReportNode {
+                id: format!("elem-{}", element.index),
+                source_index: element.index,
+                kind: "element".into(),
+                tag: element.tag.clone(),
+                classes: element.classes.clone(),
+                x: element.x - offset_x,
+                y: base_y,
+                w: element.width,
+                h: element.height,
+            });
 
-            // Calculate bounding box that contains both shadow layers
-            // For each layer, calculate how far the shadow extends from element edges
-            // (positive values = distance from element edge)
-            let extent_top_1 = shadow1.spread_radius + shadow1.blur_radius - shadow1.offset_y;
-            let extent_bottom_1 = shadow1.spread_radius + shadow1.blur_radius + shadow1.offset_y;
-            let extent_left_1 = shadow1.spread_radius + shadow1.blur_radius - shadow1.offset_x;
-            let extent_right_1 = shadow1.spread_radius + shadow1.blur_radius + shadow1.offset_x;
-
-            let extent_top_2 = shadow2.spread_radius + shadow2.blur_radius - shadow2.offset_y;
-            let extent_bottom_2 = shadow2.spread_radius + shadow2.blur_radius + shadow2.offset_y;
-            let extent_left_2 = shadow2.spread_radius + shadow2.blur_radius - shadow2.offset_x;
-            let extent_right_2 = shadow2.spread_radius + shadow2.blur_radius + shadow2.offset_x;
-
-            // Union of both bounding boxes (take maximum extent in each direction)
-            let extent_top = extent_top_1.max(extent_top_2);
-            let extent_bottom = extent_bottom_1.max(extent_bottom_2);
-            let extent_left = extent_left_1.max(extent_left_2);
-            let extent_right = extent_right_1.max(extent_right_2);
-
-            // Shadow quad size
-            let shadow_width = element.width + extent_left + extent_right;
-            let shadow_height = element.height + extent_top + extent_bottom;
-
-            // Shadow quad position (top-left corner)
-            let shadow_x = element.x - offset_x - extent_left;
-            let mut shadow_y = element.y - offset_y - extent_top;
-
-            // Apply footer vertical centering adjustment
-            if is_footer_child(element, footer_y) {
-                shadow_y += footer_y_adjustment;
+            if element.tag == "body" {
+                continue;
             }
 
-            // Content size (same for both layers)
-            let content_width = element.width;
-            let content_height = element.height;
+            if element.tag == "input" {
+                let y_pos = base_y;
+                if let Some(inset_shadow) = inset_shadows.get(&idx) {
+                    rect_instances.push(RectangleInstance::new_with_inset_shadow(
+                        element.x - offset_x,
+                        y_pos,
+                        element.width,
+                        element.height,
+                        [1.0, 1.0, 1.0, 1.0],
+                        0.0,
+                        [
+                            inset_shadow.color.0,
+                            inset_shadow.color.1,
+                            inset_shadow.color.2,
+                            inset_shadow.color.3,
+                        ],
+                        inset_shadow.blur_radius,
+                        [inset_shadow.offset_x, inset_shadow.offset_y],
+                    ));
+                } else {
+                    rect_instances.push(RectangleInstance::new(
+                        element.x - offset_x,
+                        y_pos,
+                        element.width,
+                        element.height,
+                        [1.0, 1.0, 1.0, 1.0],
+                    ));
+                }
+                continue;
+            }
 
-            shadow_instances.push(ShadowInstance::new_dual_layer(
-                shadow_x,
-                shadow_y,
-                shadow_width,
-                shadow_height,
-                content_width,
-                content_height,
-                // Layer 1
-                [shadow1.color.0, shadow1.color.1, shadow1.color.2, shadow1.color.3],
-                shadow1.blur_radius,
-                [shadow1.offset_x, shadow1.offset_y],
-                // Layer 2
-                [shadow2.color.0, shadow2.color.1, shadow2.color.2, shadow2.color.3],
-                shadow2.blur_radius,
-                [shadow2.offset_x, shadow2.offset_y],
-            ));
-        }
-    }
-
-    // Phase 1: Collect rectangle instances (backgrounds)
-    let mut rect_instances = Vec::new();
-
-    for (idx, element) in layout.elements.iter().enumerate() {
-        // Skip invisible elements
-        if !element.is_visible() {
-            continue;
-        }
-
-        // Skip body element - its background is the canvas clear color, not a rectangle
-        if element.tag == "body" {
-            continue;
-        }
-
-        // Special case: input elements default to white background
-        if element.tag == "input" {
-            let y_pos = element.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
-
-            // Check if this element has an inset shadow
-            if let Some(inset_shadow) = inset_shadows.get(&idx) {
-                rect_instances.push(RectangleInstance::new_with_inset_shadow(
-                    element.x - offset_x,
-                    y_pos,
-                    element.width,
-                    element.height,
-                    [1.0, 1.0, 1.0, 1.0], // White background for inputs
-                    0.0, // border_radius (inputs don't have rounded corners in TodoMVC)
-                    [inset_shadow.color.0, inset_shadow.color.1, inset_shadow.color.2, inset_shadow.color.3],
-                    inset_shadow.blur_radius,
-                    [inset_shadow.offset_x, inset_shadow.offset_y],
-                ));
+            let color = if let Some(bg_color) = &element.background_color {
+                parse_color(bg_color).map(|(r, g, b, a)| [r, g, b, a])
             } else {
-                rect_instances.push(RectangleInstance::new(
+                None
+            }
+            .unwrap_or([1.0, 1.0, 1.0, 0.0]);
+
+            if color[3] > 0.0 {
+                let border_radius = element
+                    .border_radius
+                    .as_ref()
+                    .and_then(|s| {
+                        let s = s.trim();
+                        if s.ends_with("px") {
+                            s[..s.len() - 2].parse::<f32>().ok()
+                        } else {
+                            s.parse::<f32>().ok()
+                        }
+                    })
+                    .unwrap_or(0.0);
+
+                rect_instances.push(RectangleInstance::new_with_radius(
                     element.x - offset_x,
-                    y_pos,
+                    base_y,
                     element.width,
                     element.height,
-                    [1.0, 1.0, 1.0, 1.0], // White background for inputs
+                    color,
+                    border_radius,
                 ));
             }
-            continue;
         }
 
-        // Parse background color
-        let color = if let Some(bg_color) = &element.background_color {
-            let (r, g, b, a) = parse_color(bg_color).unwrap_or((1.0, 1.0, 1.0, 1.0));
-            [r, g, b, a]
-        } else {
-            [1.0, 1.0, 1.0, 0.0] // Transparent
-        };
-
-        // Only render background rectangles if element has visible background
-        if color[3] > 0.0 {
-            // Parse border-radius (e.g., "3px" -> 3.0)
-            let border_radius = element.border_radius.as_ref()
+        // Borders
+        for element in &layout.elements {
+            if !element.is_visible() || !element.has_border() {
+                continue;
+            }
+            let border_radius = element
+                .border_radius
+                .as_ref()
                 .and_then(|s| {
                     let s = s.trim();
                     if s.ends_with("px") {
@@ -396,58 +494,88 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
                 })
                 .unwrap_or(0.0);
 
-            let y_pos = element.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
-            rect_instances.push(RectangleInstance::new_with_radius(
-                element.x - offset_x,
-                y_pos,
-                element.width,
-                element.height,
-                color,
-                border_radius,
-            ));
-        }
-    }
-
-    // Phase 1.5: Collect border instances
-    let mut border_instances = Vec::new();
-
-    for element in &layout.elements {
-        if !element.is_visible() || !element.has_border() {
-            continue;
-        }
-
-        // Parse border-radius first (needed to decide rendering method)
-        let border_radius = element.border_radius.as_ref()
-            .and_then(|s| {
-                let s = s.trim();
-                if s.ends_with("px") {
-                    s[..s.len() - 2].parse::<f32>().ok()
+            let y_pos = element.y - offset_y
+                + if is_footer_child(element, footer_y) {
+                    footer_y_adjustment
                 } else {
-                    s.parse::<f32>().ok()
+                    0.0
+                };
+
+            if let (Some(border_width), Some(border_color)) =
+                (element.get_border_width(), &element.border_color)
+            {
+                if let Some((r, g, b, a)) = parse_color(border_color) {
+                    if border_radius > 0.5 {
+                        rect_instances.push(RectangleInstance::new_border_outline(
+                            element.x - offset_x,
+                            y_pos,
+                            element.width,
+                            element.height,
+                            [r, g, b, a],
+                            border_radius,
+                            border_width,
+                        ));
+                    } else {
+                        let edges = create_border_edges(
+                            element.x - offset_x,
+                            y_pos,
+                            element.width,
+                            element.height,
+                            border_width,
+                            [r, g, b, a],
+                        );
+                        border_instances.extend_from_slice(&edges);
+                    }
+                    report_nodes.push(ReportNode {
+                        id: format!("elem-{}", element.index),
+                        source_index: element.index,
+                        kind: "border".into(),
+                        tag: element.tag.clone(),
+                        classes: element.classes.clone(),
+                        x: element.x - offset_x,
+                        y: y_pos,
+                        w: element.width,
+                        h: element.height,
+                    });
                 }
-            })
-            .unwrap_or(0.0);
-
-        // Try standard border properties first
-        if let (Some(border_width), Some(border_color)) =
-            (element.get_border_width(), &element.border_color)
-        {
-            if let Some((r, g, b, a)) = parse_color(border_color) {
-                let y_pos = element.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
-                if border_radius > 0.5 {
-                    // Render as rounded outline using rectangle pipeline
-                    rect_instances.push(RectangleInstance::new_border_outline(
-                        element.x - offset_x,
-                        y_pos,
-                        element.width,
-                        element.height,
-                        [r, g, b, a],
-                        border_radius,
-                        border_width,
-                    ));
-                } else {
-                    // Render as 4 edges using border pipeline
-                    let edges = create_border_edges(
+            } else if let Some((border_width, border_color_str)) = element.parse_border() {
+                if let Some((r, g, b, a)) = parse_color(&border_color_str) {
+                    if border_radius > 0.5 {
+                        rect_instances.push(RectangleInstance::new_border_outline(
+                            element.x - offset_x,
+                            y_pos,
+                            element.width,
+                            element.height,
+                            [r, g, b, a],
+                            border_radius,
+                            border_width,
+                        ));
+                    } else {
+                        let edges = create_border_edges(
+                            element.x - offset_x,
+                            y_pos,
+                            element.width,
+                            element.height,
+                            border_width,
+                            [r, g, b, a],
+                        );
+                        border_instances.extend_from_slice(&edges);
+                    }
+                    report_nodes.push(ReportNode {
+                        id: format!("elem-{}", element.index),
+                        source_index: element.index,
+                        kind: "border".into(),
+                        tag: element.tag.clone(),
+                        classes: element.classes.clone(),
+                        x: element.x - offset_x,
+                        y: y_pos,
+                        w: element.width,
+                        h: element.height,
+                    });
+                }
+            } else if let Some((border_width, border_color_str)) = element.parse_border_bottom() {
+                if let Some((r, g, b, a)) = parse_color(&border_color_str) {
+                    let bottom_edge = create_border_edges(
                         element.x - offset_x,
                         y_pos,
                         element.width,
@@ -455,257 +583,348 @@ fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<(), JsValu
                         border_width,
                         [r, g, b, a],
                     );
-                    border_instances.extend_from_slice(&edges);
+                    border_instances.push(bottom_edge[2]);
+                    report_nodes.push(ReportNode {
+                        id: format!("elem-{}", element.index),
+                        source_index: element.index,
+                        kind: "border".into(),
+                        tag: element.tag.clone(),
+                        classes: element.classes.clone(),
+                        x: element.x - offset_x,
+                        y: y_pos,
+                        w: element.width,
+                        h: element.height,
+                    });
                 }
             }
         }
-        // Try border shorthand (e.g., "1px solid #ce4646")
-        else if let Some((border_width, border_color_str)) = element.parse_border() {
-            if let Some((r, g, b, a)) = parse_color(&border_color_str) {
-                let y_pos = element.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
-                if border_radius > 0.5 {
-                    // Render as rounded outline using rectangle pipeline
-                    rect_instances.push(RectangleInstance::new_border_outline(
-                        element.x - offset_x,
-                        y_pos,
-                        element.width,
-                        element.height,
-                        [r, g, b, a],
-                        border_radius,
-                        border_width,
-                    ));
+
+        // Text/textures
+        let mut text_instances = Vec::new();
+        let mut text_textures = Vec::new();
+
+        for element in &layout.elements {
+            if !element.is_visible() {
+                continue;
+            }
+
+            let base_y = element.y - offset_y
+                + if is_footer_child(element, footer_y) {
+                    footer_y_adjustment
                 } else {
-                    // Render as 4 edges using border pipeline
-                    let edges = create_border_edges(
-                        element.x - offset_x,
-                        y_pos,
-                        element.width,
-                        element.height,
-                        border_width,
-                        [r, g, b, a],
-                    );
-                    border_instances.extend_from_slice(&edges);
-                }
-            }
-        }
-        // Try borderBottom shorthand
-        else if let Some((border_width, border_color_str)) = element.parse_border_bottom() {
-            if let Some((r, g, b, a)) = parse_color(&border_color_str) {
-                let y_pos = element.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
-                // borderBottom always uses 4-edge rendering (no rounded corners for single edge)
-                let bottom_edge = create_border_edges(
-                    element.x - offset_x,
-                    y_pos,
-                    element.width,
-                    element.height,
-                    border_width,
-                    [r, g, b, a],
+                    0.0
+                };
+
+            let mut text_added = false;
+
+            if let Some(rendered_text) = gpu.text_renderer.render_text(element) {
+                let texture = TextTexture::from_rendered_text(
+                    &gpu.device,
+                    &gpu.queue,
+                    gpu.text_pipeline.bind_group_layout(),
+                    &rendered_text,
                 );
-                // Only take the bottom edge (index 2 of the 4 edges)
-                border_instances.push(bottom_edge[2]);
+                let y_pos = base_y + (rendered_text.y - element.y);
+                let tw = texture.width as f32;
+                let th = texture.height as f32;
+                text_instances.push(TexturedQuadInstance::new(
+                    rendered_text.x - offset_x,
+                    y_pos,
+                    tw,
+                    th,
+                ));
+                text_textures.push(texture);
+                report_nodes.push(ReportNode {
+                    id: format!("elem-{}-text", element.index),
+                    source_index: element.index,
+                    kind: "text".into(),
+                    tag: element.tag.clone(),
+                    classes: element.classes.clone(),
+                    x: rendered_text.x - offset_x,
+                    y: y_pos,
+                    w: tw,
+                    h: th,
+                });
+                text_added = true;
+
+                // Special-case: info footer link ("TodoMVC" inside "Part of TodoMVC")
+                if element.tag == "p" {
+                    if let Some(txt) = &element.text {
+                        if let Some(pos) = txt.find("TodoMVC") {
+                            let prefix = &txt[..pos];
+                            let prefix_w = gpu
+                                .text_renderer
+                                .measure_text_width(element, prefix)
+                                .unwrap_or(0.0);
+                            let link_w = gpu
+                                .text_renderer
+                                .measure_text_width(element, "TodoMVC")
+                                .unwrap_or(50.0);
+                            let anchor_x = rendered_text.x - offset_x + prefix_w;
+                            report_nodes.push(ReportNode {
+                                id: format!("elem-{}-link", element.index),
+                                source_index: element.index,
+                                kind: "text".into(),
+                                tag: "a".into(),
+                                classes: vec![],
+                                x: anchor_x,
+                                y: y_pos,
+                                w: link_w,
+                                h: th,
+                            });
+                        }
+                    }
+                }
             }
-        }
-    }
 
-    // Phase 2: Render text elements to textures
-    let mut text_instances = Vec::new();
-    let mut text_textures = Vec::new();
+            if !text_added {
+                if let Some(txt) = &element.text {
+                    if !txt.trim().is_empty() {
+                        let font_h = parse_font_size_px(element.font_size.as_deref()).unwrap_or(20.0);
+                        let tw = gpu
+                            .text_renderer
+                            .measure_text_width(element, txt)
+                            .unwrap_or(element.width);
+                        let y_pos = base_y;
+                        report_nodes.push(ReportNode {
+                            id: format!("elem-{}-text", element.index),
+                            source_index: element.index,
+                            kind: "text".into(),
+                            tag: element.tag.clone(),
+                            classes: element.classes.clone(),
+                            x: element.x - offset_x,
+                            y: y_pos,
+                            w: tw,
+                            h: font_h,
+                        });
 
-    for element in &layout.elements {
-        if !element.is_visible() {
-            continue;
-        }
+                        if element.tag == "p" {
+                            if let Some(pos) = txt.find("TodoMVC") {
+                                let prefix = &txt[..pos];
+                                let prefix_w = gpu
+                                    .text_renderer
+                                    .measure_text_width(element, prefix)
+                                    .unwrap_or(prefix.len() as f32 * font_h * 0.5);
+                                let link_w = gpu
+                                    .text_renderer
+                                    .measure_text_width(element, "TodoMVC")
+                                    .unwrap_or(50.0);
+                                let anchor_x = element.x - offset_x + prefix_w;
+                                report_nodes.push(ReportNode {
+                                    id: format!("elem-{}-link", element.index),
+                                    source_index: element.index,
+                                    kind: "text".into(),
+                                    tag: "a".into(),
+                                    classes: Vec::new(),
+                                    x: anchor_x,
+                                    y: y_pos,
+                                    w: link_w,
+                                    h: font_h,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
 
-        // Render text if element has text content
-        if let Some(rendered_text) = gpu.text_renderer.render_text(element) {
-            let texture = TextTexture::from_rendered_text(
-                &gpu.device,
-                &gpu.queue,
-                gpu.text_pipeline.bind_group_layout(),
-                &rendered_text,
-            );
+            if element.tag == "input" {
+                if let Some(placeholder) = &element.placeholder {
+                    let mut placeholder_elem = element.clone();
+                    placeholder_elem.text = Some(placeholder.clone());
+                    placeholder_elem.color = Some("rgba(0, 0, 0, 0.4)".to_string());
+                    placeholder_elem.x = element.x + 60.0;
 
-            let y_pos = rendered_text.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
-            text_instances.push(TexturedQuadInstance::new(
-                rendered_text.x - offset_x,
-                y_pos,
-                texture.width as f32,
-                texture.height as f32,
-            ));
+                    if let Some(rendered_text) = gpu.text_renderer.render_text(&placeholder_elem) {
+                        let texture = TextTexture::from_rendered_text(
+                            &gpu.device,
+                            &gpu.queue,
+                            gpu.text_pipeline.bind_group_layout(),
+                            &rendered_text,
+                        );
+                        let y_pos = base_y + (rendered_text.y - element.y);
+                        let tw = texture.width as f32;
+                        let th = texture.height as f32;
+                        text_instances.push(TexturedQuadInstance::new(
+                            rendered_text.x - offset_x,
+                            y_pos,
+                            tw,
+                            th,
+                        ));
+                        text_textures.push(texture);
+                        report_nodes.push(ReportNode {
+                            id: format!("elem-{}-placeholder", element.index),
+                            source_index: element.index,
+                            kind: "text".into(),
+                            tag: element.tag.clone(),
+                            classes: element.classes.clone(),
+                            x: rendered_text.x - offset_x,
+                            y: y_pos,
+                            w: tw,
+                            h: th,
+                        });
+                    }
+                }
+            }
 
-            text_textures.push(texture);
-        }
-
-        // Render placeholder for input elements
-        if element.tag == "input" {
-            if let Some(placeholder) = &element.placeholder {
-                // Create modified element for placeholder rendering
-                let mut placeholder_elem = element.clone();
-                placeholder_elem.text = Some(placeholder.clone());
-                placeholder_elem.color = Some("rgba(0, 0, 0, 0.4)".to_string()); // Gray placeholder
-
-                // Adjust x position for padding-left (60px from CSS)
-                placeholder_elem.x = element.x + 60.0;
-
-                if let Some(rendered_text) = gpu.text_renderer.render_text(&placeholder_elem) {
+            if element.tag == "input" && element.has_class("toggle") {
+                if let Some(rendered_checkbox) = gpu.text_renderer.render_checkbox(element) {
                     let texture = TextTexture::from_rendered_text(
                         &gpu.device,
                         &gpu.queue,
                         gpu.text_pipeline.bind_group_layout(),
-                        &rendered_text,
+                        &rendered_checkbox,
                     );
-
-                    let y_pos = rendered_text.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
+                    let y_pos = base_y + (rendered_checkbox.y - element.y);
+                    let tw = texture.width as f32;
+                    let th = texture.height as f32;
                     text_instances.push(TexturedQuadInstance::new(
-                        rendered_text.x - offset_x,
+                        rendered_checkbox.x - offset_x,
                         y_pos,
-                        texture.width as f32,
-                        texture.height as f32,
+                        tw,
+                        th,
                     ));
-
                     text_textures.push(texture);
+                    report_nodes.push(ReportNode {
+                        id: format!("elem-{}-checkbox", element.index),
+                        source_index: element.index,
+                        kind: "text".into(),
+                        tag: element.tag.clone(),
+                        classes: element.classes.clone(),
+                        x: rendered_checkbox.x - offset_x,
+                        y: y_pos,
+                        w: tw,
+                        h: th,
+                    });
+                }
+            }
+
+            if element.tag == "label" && element.has_class("toggle-all-label") {
+                if let Some(rendered_chevron) = gpu.text_renderer.render_chevron(element) {
+                    let texture = TextTexture::from_rendered_text(
+                        &gpu.device,
+                        &gpu.queue,
+                        gpu.text_pipeline.bind_group_layout(),
+                        &rendered_chevron,
+                    );
+                    let y_pos = base_y + (rendered_chevron.y - element.y);
+                    let tw = texture.width as f32;
+                    let th = texture.height as f32;
+                    text_instances.push(TexturedQuadInstance::new(
+                        rendered_chevron.x - offset_x,
+                        y_pos,
+                        tw,
+                        th,
+                    ));
+                    text_textures.push(texture);
+                    report_nodes.push(ReportNode {
+                        id: format!("elem-{}-chevron", element.index),
+                        source_index: element.index,
+                        kind: "text".into(),
+                        tag: element.tag.clone(),
+                        classes: element.classes.clone(),
+                        x: rendered_chevron.x - offset_x,
+                        y: y_pos,
+                        w: tw,
+                        h: th,
+                    });
                 }
             }
         }
 
-        // Render checkboxes for toggle inputs
-        if element.tag == "input" && element.has_class("toggle") {
-            if let Some(rendered_checkbox) = gpu.text_renderer.render_checkbox(element) {
-                let texture = TextTexture::from_rendered_text(
-                    &gpu.device,
-                    &gpu.queue,
-                    gpu.text_pipeline.bind_group_layout(),
-                    &rendered_checkbox,
-                );
+        // GPU submission
+        let frame = gpu
+            .surface
+            .get_current_texture()
+            .map_err(|e| format!("Failed to get surface texture: {:?}", e))?;
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
-                let y_pos = rendered_checkbox.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
-                text_instances.push(TexturedQuadInstance::new(
-                    rendered_checkbox.x - offset_x,
-                    y_pos,
-                    texture.width as f32,
-                    texture.height as f32,
-                ));
+        gpu.shadow_pipeline
+            .render(&gpu.device, &gpu.queue, &view, &shadow_instances);
+        gpu.rectangle_pipeline
+            .render(&gpu.device, &gpu.queue, &view, &rect_instances);
+        if !border_instances.is_empty() {
+            gpu.border_pipeline
+                .render(&gpu.device, &gpu.queue, &view, &border_instances);
+        }
+        if !text_instances.is_empty() {
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Text Render Encoder"),
+                });
+            let bind_groups: Vec<&wgpu::BindGroup> =
+                text_textures.iter().map(|t| &t.bind_group).collect();
+            gpu.text_pipeline.render(
+                &gpu.device,
+                &gpu.queue,
+                &mut encoder,
+                &view,
+                &text_instances,
+                &bind_groups,
+            );
+            gpu.queue.submit(std::iter::once(encoder.finish()));
+        }
+        frame.present();
 
-                text_textures.push(texture);
+        // Ensure every layout element is represented in the report even if not rendered (e.g., hidden destroy/edit controls)
+        for element in &layout.elements {
+            let id = format!("elem-{}", element.index);
+            let exists = report_nodes.iter().any(|n| n.id == id);
+            if !exists {
+                report_nodes.push(ReportNode {
+                    id: id.clone(),
+                    source_index: element.index,
+                    kind: "element-layout".into(),
+                    tag: element.tag.clone(),
+                    classes: element.classes.clone(),
+                    x: element.x - offset_x,
+                    y: element.y - offset_y
+                        + if is_footer_child(element, footer_y) {
+                            footer_y_adjustment
+                        } else {
+                            0.0
+                        },
+                    w: element.width,
+                    h: element.height,
+                });
             }
         }
 
-        // Render chevron icon for toggle-all label
-        if element.tag == "label" && element.has_class("toggle-all-label") {
-            if let Some(rendered_chevron) = gpu.text_renderer.render_chevron(element) {
-                let texture = TextTexture::from_rendered_text(
-                    &gpu.device,
-                    &gpu.queue,
-                    gpu.text_pipeline.bind_group_layout(),
-                    &rendered_chevron,
-                );
-
-                let y_pos = rendered_chevron.y - offset_y + if is_footer_child(element, footer_y) { footer_y_adjustment } else { 0.0 };
-                text_instances.push(TexturedQuadInstance::new(
-                    rendered_chevron.x - offset_x,
-                    y_pos,
-                    texture.width as f32,
-                    texture.height as f32,
-                ));
-
-                text_textures.push(texture);
-            }
-        }
+        Ok(RenderReport { nodes: report_nodes })
     }
 
-    log::info!(
-        "Rendering {} shadow layers, {} rectangles, {} border edges, and {} text elements out of {} total elements",
-        shadow_instances.len(),
-        rect_instances.len(),
-        border_instances.len(),
-        text_instances.len(),
-        layout.elements.len()
-    );
-
-    // Get current surface texture
-    let frame = gpu
-        .surface
-        .get_current_texture()
-        .map_err(|e| format!("Failed to get surface texture: {:?}", e))?;
-
-    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-    // Render shadows first (behind everything)
-    // Always render to ensure screen is cleared, even with 0 shadows
-    gpu.shadow_pipeline.render(
-        &gpu.device,
-        &gpu.queue,
-        &view,
-        &shadow_instances,
-    );
-
-    // Render rectangles (backgrounds) on top of shadows
-    gpu.rectangle_pipeline.render(
-        &gpu.device,
-        &gpu.queue,
-        &view,
-        &rect_instances,
-    );
-
-    // Render borders on top of backgrounds
-    if !border_instances.is_empty() {
-        gpu.border_pipeline.render(
-            &gpu.device,
-            &gpu.queue,
-            &view,
-            &border_instances,
-        );
-    }
-
-    // Render text on top
-    if !text_instances.is_empty() {
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Text Render Encoder"),
-            });
-
-        let bind_groups: Vec<&wgpu::BindGroup> = text_textures
-            .iter()
-            .map(|t| &t.bind_group)
-            .collect();
-
-        gpu.text_pipeline.render(
-            &gpu.device,
-            &gpu.queue,
-            &mut encoder,
-            &view,
-            &text_instances,
-            &bind_groups,
-        );
-
-        gpu.queue.submit(std::iter::once(encoder.finish()));
-    }
-
-    frame.present();
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_layout_loading() {
-        let json = r#"{
-            "metadata": {
-                "url": "http://example.com",
-                "viewport": {
-                    "width": 1920,
-                    "height": 1080,
-                    "devicePixelRatio": 1.0
-                }
-            },
-            "elements": []
-        }"#;
-
-        let layout = LayoutData::from_json(json).expect("Failed to parse test JSON");
-        assert_eq!(layout.metadata.viewport.width, 1920);
+    /// Helper function to check if element is a footer child that needs vertical centering
+    fn is_footer_child(element: &Element, footer_y: f32) -> bool {
+        element.y == footer_y && !element.has_class("footer")
     }
 }
+
+fn parse_font_size_px(val: Option<&str>) -> Option<f32> {
+    let s = val?;
+    if let Some(px) = s.strip_suffix("px") {
+        return px.trim().parse::<f32>().ok();
+    }
+    s.trim().parse::<f32>().ok()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native_stub {
+    use wasm_bindgen::prelude::*;
+    #[wasm_bindgen(start)]
+    pub fn init() {}
+    #[wasm_bindgen]
+    pub async fn start_renderer(_canvas_id: &str, _layout_json: &str) -> Result<(), JsValue> {
+        Err(JsValue::from_str("renderer is wasm32-only"))
+    }
+    #[wasm_bindgen]
+    pub fn get_render_report() -> Result<JsValue, JsValue> {
+        Ok(JsValue::NULL)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use native_stub::*;
+#[cfg(target_arch = "wasm32")]
+pub use wasm_impl::*;

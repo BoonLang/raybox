@@ -48,7 +48,7 @@ impl ConsoleMonitor {
                     "--enable-vulkan",
                     "--use-angle=vulkan",
                     "--disable-software-rasterizer",
-                    "--ozone-platform=x11",  // Linux only, but harmless on other platforms
+                    "--ozone-platform=x11", // Linux only, but harmless on other platforms
                 ];
 
                 Browser::launch(
@@ -56,7 +56,7 @@ impl ConsoleMonitor {
                         .with_head() // Show browser window
                         .args(webgpu_flags)
                         .build()
-                        .map_err(|e| anyhow::anyhow!("Failed to build browser config: {}", e))?
+                        .map_err(|e| anyhow::anyhow!("Failed to build browser config: {}", e))?,
                 )
                 .await
                 .context("Failed to launch Chrome")?
@@ -210,7 +210,7 @@ impl ConsoleMonitor {
     /// Profile CPU usage while interacting with the page
     pub async fn profile_cpu(&self, url: &str, duration_secs: u64) -> Result<CpuProfile> {
         use chromiumoxide::cdp::js_protocol::profiler::{
-            EnableParams, StartParams, StopParams, SetSamplingIntervalParams,
+            EnableParams, SetSamplingIntervalParams, StartParams, StopParams,
         };
 
         let page = self.browser.new_page(url).await?;

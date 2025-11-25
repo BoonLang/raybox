@@ -7,11 +7,11 @@ pub fn run(reference: &str, current: &str, output: Option<&str>, threshold: f64)
     println!("✓ Loading images...");
 
     // Load images
-    let ref_img = image::open(reference)
-        .context(format!("Failed to load reference image: {}", reference))?;
+    let ref_img =
+        image::open(reference).context(format!("Failed to load reference image: {}", reference))?;
 
-    let cur_img = image::open(current)
-        .context(format!("Failed to load current image: {}", current))?;
+    let cur_img =
+        image::open(current).context(format!("Failed to load current image: {}", current))?;
 
     // Check dimensions match
     if ref_img.dimensions() != cur_img.dimensions() {
@@ -24,7 +24,11 @@ pub fn run(reference: &str, current: &str, output: Option<&str>, threshold: f64)
         );
     }
 
-    println!("  Reference: {}x{} pixels", ref_img.width(), ref_img.height());
+    println!(
+        "  Reference: {}x{} pixels",
+        ref_img.width(),
+        ref_img.height()
+    );
     println!("  Current: {}x{} pixels", cur_img.width(), cur_img.height());
     println!();
 
@@ -60,7 +64,8 @@ pub fn run(reference: &str, current: &str, output: Option<&str>, threshold: f64)
         // Create a diff image showing differences
         let diff_img = create_diff_image(&ref_img, &cur_img)?;
 
-        diff_img.save(output_path)
+        diff_img
+            .save(output_path)
             .context(format!("Failed to save diff image to {}", output_path))?;
 
         println!("  Diff image saved: {}", output_path);
@@ -73,7 +78,11 @@ pub fn run(reference: &str, current: &str, output: Option<&str>, threshold: f64)
     println!();
 
     if !matches {
-        anyhow::bail!("Images do not match (score {:.4} < threshold {:.4})", score, threshold);
+        anyhow::bail!(
+            "Images do not match (score {:.4} < threshold {:.4})",
+            score,
+            threshold
+        );
     }
 
     Ok(())

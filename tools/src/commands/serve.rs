@@ -1,8 +1,5 @@
 use anyhow::Result;
-use axum::{
-    routing::get_service,
-    Router,
-};
+use axum::{routing::get_service, Router};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tower_http::services::ServeDir;
@@ -35,21 +32,17 @@ pub fn run(directory: &str, port: u16) -> Result<()> {
 
     // Use tokio runtime
     let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(async {
-        serve_directory(serve_path, port).await
-    })?;
+    runtime.block_on(async { serve_directory(serve_path, port).await })?;
 
     Ok(())
 }
 
 async fn serve_directory(path: PathBuf, port: u16) -> Result<()> {
     // Create service for serving files
-    let serve_dir = ServeDir::new(path)
-        .append_index_html_on_directories(true);
+    let serve_dir = ServeDir::new(path).append_index_html_on_directories(true);
 
     // Create router
-    let app = Router::new()
-        .nest_service("/", get_service(serve_dir));
+    let app = Router::new().nest_service("/", get_service(serve_dir));
 
     // Bind to address
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
