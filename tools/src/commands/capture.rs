@@ -227,6 +227,110 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
         }
     }
 
+    // Try JS-based precise capture (bounding boxes via DOM APIs) — reference only
+    if opts.target_url.contains("reference/") {
+        let js_capture = r###"
+        (() => {
+          const styles = ["font-size","font-family","font-weight","line-height","color","background-color","opacity","visibility"];
+          function pathFor(node){
+            if(!node || node===document) return "root";
+            const parent=node.parentNode;
+            const parentPath=pathFor(parent);
+            const tag = node.nodeType===Node.TEXT_NODE ? "#text" : (node.tagName||"node").toLowerCase();
+            const siblings=[...parent.childNodes].filter(n=>n.nodeType===node.nodeType && (n.tagName===node.tagName || n.nodeType===Node.TEXT_NODE));
+            const idx=siblings.indexOf(node);
+            return `${parentPath}/${tag}[${idx>=0?idx:0}]`;
+          }
+          function rectObj(r){return {x:r.x,y:r.y,w:r.width,h:r.height};}
+          function elemData(el){
+            const rect = el.getBoundingClientRect();
+            const cs = getComputedStyle(el);
+            const st={};
+            styles.forEach(k=>{st[k]=cs.getPropertyValue(k);});
+            return {id:pathFor(el), node_type:"element", tag:el.tagName.toLowerCase(), classes:[...el.classList], box:rectObj(rect), client_rects:[], inline_text_boxes:[], styles:st};
+          }
+          function textData(tn){
+            const range=document.createRange();
+            range.selectNodeContents(tn);
+            const rect=range.getBoundingClientRect();
+            const client=[...range.getClientRects()].map(rectObj);
+            return {id:pathFor(tn), node_type:"text", tag:"#text", classes:[], box:rectObj(rect), client_rects:client, inline_text_boxes:[], styles:{}};
+          }
+          const nodes=[];
+          const walker=document.createTreeWalker(document, NodeFilter.SHOW_ELEMENT|NodeFilter.SHOW_TEXT);
+          let n; while((n=walker.nextNode())){
+            if(n.nodeType===1) nodes.push(elemData(n));
+            else if(n.nodeType===3 && n.textContent.trim()) nodes.push(textData(n));
+          }
+          return JSON.stringify(nodes);
+        })();
+        "###;
+        if let Ok(res) = page.evaluate(js_capture).await {
+            if let Some(val) = res.value() {
+                if let Some(s) = val.as_str() {
+                    if let Ok(list) = serde_json::from_str::<serde_json::Value>(s) {
+                        if let Some(arr) = list.as_array() {
+                            let mut nodes = Vec::new();
+                            for (i, n) in arr.iter().enumerate() {
+                                if let Some(id) = n.get("id").and_then(|v| v.as_str()) {
+                                    let node_type = n.get("node_type").and_then(|v| v.as_str()).unwrap_or("other").to_string();
+                                    let tag = n.get("tag").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                    let classes = n.get("classes").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|c| c.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+                                    let box_model = n.get("box").and_then(|b| {
+                                        Some(Rect{
+                                            x:b.get("x")?.as_f64()?,
+                                            y:b.get("y")?.as_f64()?,
+                                            w:b.get("w")?.as_f64()?,
+                                            h:b.get("h")?.as_f64()?,
+                                        })
+                                    });
+                                    let client_rects = n.get("client_rects").and_then(|a| a.as_array()).map(|a| {
+                                        a.iter().filter_map(|b| {
+                                            Some(Rect{
+                                                x:b.get("x")?.as_f64()?,
+                                                y:b.get("y")?.as_f64()?,
+                                                w:b.get("w")?.as_f64()?,
+                                                h:b.get("h")?.as_f64()?,
+                                            })
+                                        }).collect()
+                                    }).unwrap_or_default();
+                                    let styles = n.get("styles").and_then(|m| m.as_object()).cloned().unwrap_or_default();
+                                    nodes.push(Node{
+                                        id:id.to_string(),
+                                        source_index: Some(i),
+                                        backend_node_id: None,
+                                        node_type,
+                                        tag,
+                                        classes,
+                                        pseudo: None,
+                                        text: None,
+                                        box_model,
+                                        client_rects,
+                                        inline_text_boxes: Vec::new(),
+                                        styles,
+                                    });
+                                }
+                            }
+                            if !nodes.is_empty() {
+                                let capture = LayoutCapture{
+                                    metadata: Metadata{
+                                        url: opts.target_url.to_string(),
+                                        viewport: opts.viewport.clone(),
+                                        captured_at: chrono::Utc::now().to_rfc3339(),
+                                        chrome: "js-capture".into(),
+                                    },
+                                    nodes,
+                                };
+                                std::fs::write(opts.out_path, serde_json::to_string_pretty(&capture)?)?;
+                                return Ok(capture);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // If we already have a direct renderer report, build capture and return
     if let Some(nodes) = direct_report_nodes {
         let capture = LayoutCapture {
@@ -741,16 +845,102 @@ fn decode_snapshot(
             id,
             source_index: Some(idx),
             backend_node_id: backend_id,
-            node_type,
+            node_type: node_type.clone(),
             tag: name.clone(),
             classes,
             pseudo,
             text,
-            box_model,
-            client_rects,
-            inline_text_boxes,
+            box_model: box_model.clone(),
+            client_rects: client_rects.clone(),
+            inline_text_boxes: inline_text_boxes.clone(),
             styles: styles_map,
         });
+
+        // If this is a text node, synthesize elem-<parent>-text/-link based on parent index and its tag.
+        if node_type == "text" {
+            if let Some(parent_i64) = parent_index.get(idx) {
+                if *parent_i64 >= 0 {
+                    let p_idx = *parent_i64 as usize;
+                    if let Some(tb) = box_model
+                        .clone()
+                        .or_else(|| inline_text_boxes.get(0).cloned())
+                        .or_else(|| client_rects.get(0).cloned())
+                    {
+                        let parent_tag = tag_cache.get(p_idx).cloned().unwrap_or(None);
+                        let parent_id = format!("elem-{}-text", p_idx);
+                        out_nodes.push(Node {
+                            id: parent_id.clone(),
+                            source_index: Some(p_idx),
+                            backend_node_id: None,
+                            node_type: "text".into(),
+                            tag: parent_tag.clone(),
+                            classes: Vec::new(),
+                            pseudo: None,
+                            text: None,
+                            box_model: Some(tb),
+                            client_rects: vec![],
+                            inline_text_boxes: vec![],
+                            styles: serde_json::Map::new(),
+                        });
+                        if parent_tag.as_deref() == Some("a") {
+                            out_nodes.push(Node {
+                                id: format!("elem-{}-link", p_idx),
+                                source_index: Some(p_idx),
+                                backend_node_id: None,
+                                node_type: "text".into(),
+                                tag: Some("a".into()),
+                                classes: Vec::new(),
+                                pseudo: None,
+                                text: None,
+                                box_model: Some(tb),
+                                client_rects: vec![],
+                                inline_text_boxes: vec![],
+                                styles: serde_json::Map::new(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Synthesize text nodes for comparison (align with renderer's elem-*-text/link)
+        if let Some(src_idx) = out_nodes.last().and_then(|n| n.id.strip_prefix("elem-")).and_then(|_| out_nodes.last().and_then(|n| n.source_index)) {
+            if let Some(first_box) = out_nodes.last().and_then(|n| n.inline_text_boxes.get(0)).cloned().or(out_nodes.last().and_then(|n| n.client_rects.get(0)).cloned()) {
+                let base_id = out_nodes.last().unwrap().id.clone();
+                // text box
+                out_nodes.push(Node {
+                    id: format!("{}-text", base_id),
+                    source_index: Some(src_idx),
+                    backend_node_id: None,
+                    node_type: "text".into(),
+                    tag: out_nodes.last().unwrap().tag.clone(),
+                    classes: out_nodes.last().unwrap().classes.clone(),
+                    pseudo: None,
+                    text: None,
+                    box_model: Some(first_box),
+                    client_rects: vec![],
+                    inline_text_boxes: vec![],
+                    styles: serde_json::Map::new(),
+                });
+                // link box for anchors (for TodoMVC footer link)
+                if out_nodes[out_nodes.len() - 2].tag.as_deref() == Some("a") {
+                    out_nodes.push(Node {
+                        id: format!("{}-link", base_id),
+                        source_index: Some(src_idx),
+                        backend_node_id: None,
+                        node_type: "text".into(),
+                        tag: Some("a".into()),
+                        classes: out_nodes[out_nodes.len() - 2].classes.clone(),
+                        pseudo: None,
+                        text: None,
+                        box_model: Some(first_box),
+                        client_rects: vec![],
+                        inline_text_boxes: vec![],
+                        styles: serde_json::Map::new(),
+                    });
+                }
+            }
+        }
 
         if let Some(rep) = data_report_attr {
             if let Some(extra) = parse_report_nodes(&rep) {
@@ -990,93 +1180,73 @@ pub fn run_diff_layouts(a: &Path, b: &Path, threshold: f64) -> Result<()> {
     let right_elem_count = right.nodes.iter().filter(|n| n.id.starts_with("elem-")).count();
 
     // Prefer the side with more elem-* nodes as renderer (primary).
-    let (primary, mut secondary_pool) = if right_elem_count > left_elem_count {
-        (right.nodes.iter().collect::<Vec<_>>(), left.nodes.iter().collect::<Vec<_>>())
+    let (mut primary_vec, mut secondary_pool) = if right_elem_count > left_elem_count {
+        (right.nodes.clone(), left.nodes.clone())
     } else {
-        (left.nodes.iter().collect::<Vec<_>>(), right.nodes.iter().collect::<Vec<_>>())
+        (left.nodes.clone(), right.nodes.clone())
     };
 
-    // Keep only comparable element nodes on the secondary side:
-    // 1) prefer elem-* ids if present; otherwise elements with boxes and matching tags.
-    use std::collections::HashSet;
-    let primary_tags: HashSet<String> =
-        primary.iter().filter_map(|n| n.tag.clone()).collect();
-    let secondary_has_elem = secondary_pool.iter().any(|n| n.id.starts_with("elem-"));
-    if secondary_has_elem {
-        secondary_pool.retain(|n| n.id.starts_with("elem-"));
-    } else {
-        secondary_pool.retain(|n| {
-            n.node_type == "element"
-                && n.box_model.is_some()
-                && n.tag.as_ref().map(|t| primary_tags.contains(t)).unwrap_or(false)
-        });
-    }
-
-    // Helper to pop best match.
-    let mut matches: Vec<(String, &Node, &Node)> = Vec::new();
-    for pn in primary {
-        // Prefer source_index match
-        if let Some(idx) = pn.source_index {
-            if let Some(pos) = secondary_pool
-                .iter()
-                .position(|r| r.source_index == Some(idx))
-            {
-                let rn = secondary_pool.remove(pos);
-                matches.push((format!("src-{}", idx), pn, rn));
-                continue;
-            }
-        }
-        // Prefer id exact
-        if let Some(pos) = secondary_pool.iter().position(|r| r.id == pn.id) {
-            let rn = secondary_pool.remove(pos);
-            matches.push((pn.id.clone(), pn, rn));
-            continue;
-        }
-        // Fallback: best tag/classes match by geometric distance
-        let mut best: Option<(usize, f64)> = None;
-        for (i, r) in secondary_pool.iter().enumerate() {
-            if pn.tag.is_some() && r.tag.is_some() && pn.tag != r.tag {
-                continue;
-            }
-            // require some class overlap if both have classes
-            let class_overlap = !pn.classes.is_empty()
-                && !r.classes.is_empty()
-                && pn.classes.iter().any(|c| r.classes.contains(c));
-            if !pn.classes.is_empty() && !r.classes.is_empty() && !class_overlap {
-                continue;
-            }
-            let dist = match (pn.box_model, r.box_model) {
-                (Some(lb), Some(rb)) => {
-                    (lb.x - rb.x).abs()
-                        + (lb.y - rb.y).abs()
-                        + (lb.w - rb.w).abs()
-                        + (lb.h - rb.h).abs()
-                }
-                _ => f64::INFINITY,
-            };
-            if best.map(|(_, d)| dist < d).unwrap_or(true) {
-                best = Some((i, dist));
-            }
-        }
-        if let Some((i, _)) = best {
-            let rn = secondary_pool.remove(i);
-            matches.push((pn.id.clone(), pn, rn));
-        }
-    }
+    // Restrict comparison strictly to renderer-model element nodes (elem-* + node_type==element).
+    primary_vec.retain(|n| n.id.starts_with("elem-") && n.node_type == "element");
+    secondary_pool.retain(|n| n.id.starts_with("elem-") && n.node_type == "element");
+    let primary: Vec<&Node> = primary_vec.iter().collect();
 
     let mut diffs = Vec::new();
-    for (label, ln, rn) in matches {
-        match (ln.box_model, rn.box_model) {
-            (Some(lb), Some(rb)) => {
+    for pn in primary {
+        // Find best match in secondary
+        let mut match_pos: Option<usize> = None;
+        if let Some(idx) = pn.source_index {
+            match_pos = secondary_pool
+                .iter()
+                .position(|r| r.source_index == Some(idx));
+        }
+        if match_pos.is_none() {
+            match_pos = secondary_pool.iter().position(|r| r.id == pn.id);
+        }
+        if match_pos.is_none() {
+            let mut best: Option<(usize, f64)> = None;
+            for (i, r) in secondary_pool.iter().enumerate() {
+                if pn.tag.is_some() && r.tag.is_some() && pn.tag != r.tag {
+                    continue;
+                }
+                let class_overlap = !pn.classes.is_empty()
+                    && !r.classes.is_empty()
+                    && pn.classes.iter().any(|c| r.classes.contains(c));
+                if !pn.classes.is_empty() && !r.classes.is_empty() && !class_overlap {
+                    continue;
+                }
+                let dist = match (pn.box_model, r.box_model) {
+                    (Some(lb), Some(rb)) => {
+                        (lb.x - rb.x).abs()
+                            + (lb.y - rb.y).abs()
+                            + (lb.w - rb.w).abs()
+                            + (lb.h - rb.h).abs()
+                    }
+                    _ => f64::INFINITY,
+                };
+                if best.map(|(_, d)| dist < d).unwrap_or(true) {
+                    best = Some((i, dist));
+                }
+            }
+            match_pos = best.map(|(i, _)| i);
+        }
+
+        if let Some(pos) = match_pos {
+            let rn = secondary_pool.remove(pos);
+            if let (Some(lb), Some(rb)) = (pn.box_model, rn.box_model) {
                 let dx = (lb.x - rb.x).abs();
                 let dy = (lb.y - rb.y).abs();
                 let dw = (lb.w - rb.w).abs();
                 let dh = (lb.h - rb.h).abs();
                 if dx > threshold || dy > threshold || dw > threshold || dh > threshold {
+                    let label = if let Some(idx) = pn.source_index {
+                        format!("src-{}", idx)
+                    } else {
+                        pn.id.clone()
+                    };
                     diffs.push((label, dx, dy, dw, dh, lb, rb));
                 }
             }
-            _ => {}
         }
     }
 

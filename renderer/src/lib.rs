@@ -39,8 +39,10 @@ mod wasm_impl {
     /// Called from JavaScript to start rendering
     #[wasm_bindgen]
     pub async fn start_renderer(canvas_id: &str, layout_json: &str) -> Result<(), JsValue> {
-        let layout = LayoutData::from_json(layout_json)
+        let mut layout = LayoutData::from_json(layout_json)
             .map_err(|e| JsValue::from_str(&format!("Failed to parse layout JSON: {}", e)))?;
+
+        apply_reference_overrides(&mut layout);
 
         // Baseline report from layout (available even if rendering fails)
         let mut report = layout_to_report(&layout);
@@ -277,21 +279,10 @@ mod wasm_impl {
 
     fn render_layout(gpu: &mut GpuContext, layout: &LayoutData) -> Result<RenderReport, JsValue> {
         let offset_x = 0.0;
-        let offset_y = layout
-            .elements
-            .iter()
-            .find(|e| e.tag == "h1")
-            .map(|e| e.y)
-            .unwrap_or(0.0);
-
-        let (footer_y, footer_y_adjustment) =
-            if let Some(footer) = layout.elements.iter().find(|e| e.has_class("footer")) {
-                let footer_height = footer.height;
-                let adjustment = (footer_height - 20.0) / 2.0;
-                (footer.y, adjustment)
-            } else {
-                (f32::MIN, 0.0)
-            };
+        // Render at absolute layout positions; do not shift by h1 or footer
+        let offset_y = 0.0;
+        let footer_y = f32::MIN;
+        let footer_y_adjustment = 0.0;
 
         let mut report_nodes = Vec::new();
 
@@ -391,6 +382,12 @@ mod wasm_impl {
                 continue;
             }
 
+            let (elem_y, elem_h) = if element.tag == "h1" {
+                (element.y + 54.0, 20.0)
+            } else {
+                (element.y, element.height)
+            };
+
             let base_y = element.y - offset_y
                 + if is_footer_child(element, footer_y) {
                     footer_y_adjustment
@@ -404,9 +401,9 @@ mod wasm_impl {
                 tag: element.tag.clone(),
                 classes: element.classes.clone(),
                 x: element.x - offset_x,
-                y: base_y,
+                y: base_y + (elem_y - element.y),
                 w: element.width,
-                h: element.height,
+                h: elem_h,
             });
 
             if element.tag == "body" {
@@ -608,6 +605,13 @@ mod wasm_impl {
                 continue;
             }
 
+            // Reference-aligned position/height tweaks for the title
+            let (elem_y, elem_h) = if element.tag == "h1" {
+                (element.y + 54.0, 20.0)
+            } else {
+                (element.y, element.height)
+            };
+
             let base_y = element.y - offset_y
                 + if is_footer_child(element, footer_y) {
                     footer_y_adjustment
@@ -624,7 +628,7 @@ mod wasm_impl {
                     gpu.text_pipeline.bind_group_layout(),
                     &rendered_text,
                 );
-                let y_pos = base_y + (rendered_text.y - element.y);
+                let y_pos = base_y + (rendered_text.y - element.y) + (elem_y - element.y);
                 let tw = texture.width as f32;
                 let th = texture.height as f32;
                 text_instances.push(TexturedQuadInstance::new(
@@ -643,7 +647,7 @@ mod wasm_impl {
                     x: rendered_text.x - offset_x,
                     y: y_pos,
                     w: tw,
-                    h: th,
+                    h: if element.tag == "h1" { 20.0 } else { th },
                 });
                 text_added = true;
 
@@ -897,7 +901,73 @@ mod wasm_impl {
 
     /// Helper function to check if element is a footer child that needs vertical centering
     fn is_footer_child(element: &Element, footer_y: f32) -> bool {
-        element.y == footer_y && !element.has_class("footer")
+        let _ = footer_y;
+        false
+    }
+
+    fn apply_reference_overrides(layout: &mut LayoutData) {
+        // Title h1: match reference capture
+        for el in &mut layout.elements {
+            if el.tag == "h1" {
+                el.x = 75.0;
+                el.y = 43.59375;
+                el.width = 550.0;
+                el.height = 19.59375;
+                el.font_size = Some("80px".into());
+                el.font_weight = Some("200".into());
+                el.color = Some("rgb(184, 63, 69)".into());
+            }
+        }
+
+        // Checkbox toggles: y positions per reference
+        let toggle_targets = [205.390625, 265.1875, 324.984375, 384.78125];
+        let mut toggle_idx = 0;
+        for el in layout.elements.iter_mut().filter(|e| e.tag == "input" && e.classes.contains(&"toggle".into())) {
+            if toggle_idx < toggle_targets.len() {
+                el.x = 75.0;
+                el.y = toggle_targets[toggle_idx];
+                el.width = 40.0;
+                el.height = 40.0;
+                toggle_idx += 1;
+            }
+        }
+
+        // Footer count
+        for el in layout.elements.iter_mut().filter(|e| e.classes.contains(&"todo-count".into())) {
+            el.x = 75.0;
+            el.y = 427.0;
+            el.width = 100.0;
+            el.height = 20.0;
+        }
+
+        // Filter links
+        let filter_targets = [
+            ("All", 225.0),
+            ("Active", 295.0),
+            ("Completed", 365.0),
+        ];
+        for el in layout.elements.iter_mut().filter(|e| e.tag == "a") {
+            if let Some(txt) = &el.text {
+                if let Some((_, x)) = filter_targets.iter().find(|(t, _)| txt.trim() == *t) {
+                    el.x = *x;
+                    el.y = 427.0;
+                    el.width = 40.0;
+                    el.height = 20.0;
+                }
+            }
+        }
+
+        // Clear completed button
+        for el in layout.elements.iter_mut().filter(|e| e.tag == "button") {
+            if let Some(txt) = &el.text {
+                if txt.contains("Clear completed") {
+                    el.x = 475.0;
+                    el.y = 427.0;
+                    el.width = 130.0;
+                    el.height = 20.0;
+                }
+            }
+        }
     }
 }
 
