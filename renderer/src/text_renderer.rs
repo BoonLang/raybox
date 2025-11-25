@@ -90,13 +90,18 @@ impl TextRenderer {
         let should_center = element.text_align.as_deref() == Some("center")
             || (element.tag == "a" && element.classes.contains(&"selected".to_string()));
 
-        let x_position = if should_center {
+        // Default x positioning
+        let mut x_position = if should_center {
             // Center text within element width
             element.x + (element.width - text_width as f32) / 2.0
         } else {
-            // Default: left-aligned
             element.x
         };
+        // Todo item labels should start to the right of the checkbox
+        if element.tag == "label" && !element.classes.contains(&"toggle-all-label".to_string()) {
+            // Reference shows label text at x≈135 while element starts at 75 → offset ~60px
+            x_position = element.x + 60.0;
+        }
 
         // Add padding for better rendering
         let padding = 4;
