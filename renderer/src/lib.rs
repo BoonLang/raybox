@@ -822,12 +822,8 @@ mod wasm_impl {
                 continue;
             }
 
-            // Reference-aligned position/height tweaks for the title
-            let (elem_y, elem_h) = if element.tag == "h1" {
-                (element.y + 54.0, 20.0)
-            } else {
-                (element.y, element.height)
-            };
+            // Use layout-provided positions; avoid ad-hoc offsets that caused title drift
+            let (elem_y, elem_h) = (element.y, element.height);
 
             let base_y = element.y - offset_y
                 + if is_footer_child(element, footer_y) {
@@ -845,11 +841,7 @@ mod wasm_impl {
                     gpu.text_pipeline.bind_group_layout(),
                     &rendered_text,
                 );
-                let y_pos = if element.tag == "h1" {
-                    -3.0
-                } else {
-                    base_y + (rendered_text.y - element.y) + (elem_y - element.y)
-                };
+                let y_pos = base_y + (rendered_text.y - element.y) + (elem_y - element.y);
                 let tw = texture.width as f32;
                 let th = texture.height as f32;
                 text_instances.push(TexturedQuadInstance::new(
@@ -868,7 +860,7 @@ mod wasm_impl {
                     x: rendered_text.x - offset_x,
                     y: y_pos,
                     w: tw,
-                    h: if element.tag == "h1" { 20.0 } else { th },
+                    h: th,
                 });
                 text_added = true;
 
@@ -1203,18 +1195,8 @@ mod wasm_impl {
         }
 
         // List items and their view/label blocks
-        let li_targets = [
-            196.0_f32,
-            255.796875,
-            315.59375,
-            375.390625,
-        ];
-        let li_heights = [
-            59.796875_f32,
-            59.796875_f32,
-            59.796875_f32,
-            58.796875_f32,
-        ];
+        let li_targets = [196.0_f32, 255.796875, 315.59375, 375.390625];
+        let li_heights = [59.796875_f32, 59.796875_f32, 59.796875_f32, 58.796875_f32];
         let mut li_idx = 0;
         for el in layout.elements.iter_mut().filter(|e| e.tag == "li") {
             if li_idx < li_targets.len() {
@@ -1242,7 +1224,6 @@ mod wasm_impl {
         let mut label_idx = 0;
         for el in layout.elements.iter_mut().filter(|e| e.tag == "label") {
             if label_idx == 0 {
-                // skip toggle-all label, keep its small size
                 label_idx += 1;
                 continue;
             }
@@ -1256,7 +1237,7 @@ mod wasm_impl {
             label_idx += 1;
         }
 
-        // Checkbox toggles: y positions per reference
+        // Checkbox toggles
         let toggle_targets = [205.390625, 265.1875, 324.984375, 384.78125];
         let mut toggle_idx = 0;
         for el in layout
@@ -1293,8 +1274,7 @@ mod wasm_impl {
         ];
         for el in layout.elements.iter_mut().filter(|e| e.tag == "a") {
             if let Some(txt) = &el.text {
-                if let Some((_, x, w)) = filter_targets.iter().find(|(t, _, _)| txt.trim() == *t)
-                {
+                if let Some((_, x, w)) = filter_targets.iter().find(|(t, _, _)| txt.trim() == *t) {
                     el.x = *x as f32;
                     el.y = 442.1875;
                     el.width = *w as f32;

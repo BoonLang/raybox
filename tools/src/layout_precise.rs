@@ -37,6 +37,8 @@ pub struct Node {
     pub client_rects: Vec<Rect>,
     pub inline_text_boxes: Vec<Rect>,
     pub styles: serde_json::Map<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_metrics: Option<FontMetrics>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -56,4 +58,10 @@ impl Rect {
             h: r.3,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct FontMetrics {
+    pub ascent: f32,
+    pub descent: f32,
 }

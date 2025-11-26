@@ -33,6 +33,8 @@ pub struct Element {
     pub tag: String,
     pub classes: Vec<String>,
     pub id: Option<String>,
+    #[serde(rename = "fontMetrics")]
+    pub font_metrics: Option<FontMetrics>,
 
     // Position and dimensions
     pub x: f32,
@@ -105,6 +107,13 @@ pub struct Rect {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+}
+
+/// Optional font metrics captured from the DOM
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FontMetrics {
+    pub ascent: f32,
+    pub descent: f32,
 }
 
 impl LayoutData {

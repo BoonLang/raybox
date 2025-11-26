@@ -6,8 +6,8 @@
       "h": 700,
       "dpr": 1.0
     },
-    "captured_at": "2025-11-25T05:52:11.291193193+00:00",
-    "chrome": "Chrome/142.0.7444.59"
+    "captured_at": "2025-11-26T03:44:34.776554593+00:00",
+    "chrome": "Chrome/142.0.7444.175"
   },
   "nodes": [
     {
@@ -36,6 +36,10 @@
         "line-height": "normal",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 12.0,
+        "descent": 4.0
       }
     },
     {
@@ -64,6 +68,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -94,6 +102,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -124,6 +136,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 2.8
       }
     },
     {
@@ -152,6 +168,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 58.0,
+        "descent": 1.0
       }
     },
     {
@@ -208,6 +228,10 @@
         "line-height": "33.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 5.0
       }
     },
     {
@@ -238,6 +262,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -268,6 +296,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -298,6 +330,10 @@
         "line-height": "normal",
         "opacity": "0",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 9.0,
+        "descent": 3.0
       }
     },
     {
@@ -328,6 +364,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 0.0,
+        "descent": 0.0
       }
     },
     {
@@ -358,6 +398,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -386,6 +430,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 5.0
       }
     },
     {
@@ -416,6 +464,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 5.0
       }
     },
     {
@@ -446,6 +498,10 @@
         "line-height": "normal",
         "opacity": "0",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 9.0,
+        "descent": 3.0
       }
     },
     {
@@ -474,6 +530,10 @@
         "line-height": "28.8px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 5.0
       }
     },
     {
@@ -528,6 +588,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 5.0
       }
     },
     {
@@ -558,6 +622,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 5.0
       }
     },
     {
@@ -588,6 +656,10 @@
         "line-height": "normal",
         "opacity": "0",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 9.0,
+        "descent": 3.0
       }
     },
     {
@@ -616,6 +688,10 @@
         "line-height": "28.8px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 5.0
       }
     },
     {
@@ -672,6 +748,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 4.8
       }
     },
     {
@@ -702,6 +782,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 4.8
       }
     },
     {
@@ -732,6 +816,10 @@
         "line-height": "normal",
         "opacity": "0",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 9.0,
+        "descent": 3.0
       }
     },
     {
@@ -760,6 +848,10 @@
         "line-height": "28.8px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 4.8
       }
     },
     {
@@ -814,6 +906,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 4.8
       }
     },
     {
@@ -844,6 +940,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 4.8
       }
     },
     {
@@ -874,6 +974,10 @@
         "line-height": "normal",
         "opacity": "0",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 9.0,
+        "descent": 3.0
       }
     },
     {
@@ -902,6 +1006,10 @@
         "line-height": "28.8px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 17.0,
+        "descent": 4.8
       }
     },
     {
@@ -958,6 +1066,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -988,6 +1100,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -1016,6 +1132,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 10.0,
+        "descent": 3.0
       }
     },
     {
@@ -1098,6 +1218,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -1126,6 +1250,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -1156,6 +1284,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -1210,6 +1342,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -1238,6 +1374,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -1292,6 +1432,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -1320,6 +1464,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -1376,6 +1524,10 @@
         "line-height": "19px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 11.0,
+        "descent": 3.0
       }
     },
     {
@@ -1432,6 +1584,10 @@
         "line-height": "19.6px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 8.0,
+        "descent": 2.0
       }
     },
     {
@@ -1460,6 +1616,10 @@
         "line-height": "11px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 8.0,
+        "descent": 2.2
       }
     },
     {
@@ -1514,6 +1674,10 @@
         "line-height": "11px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 8.0,
+        "descent": 2.0
       }
     },
     {
@@ -1568,6 +1732,10 @@
         "line-height": "11px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 8.0,
+        "descent": 2.2
       }
     },
     {
@@ -1622,6 +1790,10 @@
         "line-height": "11px",
         "opacity": "1",
         "visibility": "visible"
+      },
+      "font_metrics": {
+        "ascent": 8.0,
+        "descent": 2.2
       }
     },
     {

@@ -82,9 +82,34 @@ impl TextRenderer {
         // Set font for measurement
         self.context.set_font(&font_str);
 
-        // Measure text dimensions
+        // Measure text dimensions, prefer provided font metrics when available
         let metrics = self.context.measure_text(text).ok()?;
         let text_width = metrics.width() as u32;
+        let ascent = element
+            .font_metrics
+            .as_ref()
+            .map(|m| m.ascent)
+            .unwrap_or_else(|| {
+                let raw = metrics.actual_bounding_box_ascent();
+                if raw.is_nan() {
+                    font_size * 0.8
+                } else {
+                    raw as f32
+                }
+            });
+        let descent = element
+            .font_metrics
+            .as_ref()
+            .map(|m| m.descent)
+            .unwrap_or_else(|| {
+                let raw = metrics.actual_bounding_box_descent();
+                if raw.is_nan() {
+                    font_size * 0.2
+                } else {
+                    raw as f32
+                }
+            });
+        let text_height = ascent + descent;
 
         // Calculate x position based on text alignment
         let should_center = element.text_align.as_deref() == Some("center")
@@ -106,7 +131,7 @@ impl TextRenderer {
         // Add padding for better rendering
         let padding = 4;
         let canvas_width = text_width + padding * 2;
-        let canvas_height = (font_size * 1.5) as u32 + padding * 2; // 1.5x for line height
+        let canvas_height = (text_height.ceil() as u32) + padding * 2;
 
         // Resize canvas
         self.canvas.set_width(canvas_width);
@@ -126,8 +151,8 @@ impl TextRenderer {
         self.context
             .clear_rect(0.0, 0.0, canvas_width as f64, canvas_height as f64);
 
-        // Render text at baseline (text goes up from baseline)
-        let baseline_y = font_size + padding as f32;
+        // Render text at baseline using measured ascent
+        let baseline_y = padding as f32 + ascent;
         self.context
             .fill_text(text, padding as f64, baseline_y as f64)
             .ok()?;

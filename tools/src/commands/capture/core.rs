@@ -217,6 +217,16 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
               styles.forEach((k) => {
                 st[k] = cs.getPropertyValue(k);
               });
+              // font metrics via canvas
+              const canvas = document.createElement('canvas');
+              const ctx = canvas.getContext('2d');
+              const font = `${cs.getPropertyValue('font-weight')} ${cs.getPropertyValue('font-size')} ${cs.getPropertyValue('font-family')}`;
+              ctx.font = font;
+              const fmText = el.textContent && el.textContent.trim() ? el.textContent : 'Hg';
+              const m = ctx.measureText(fmText);
+              const ascent = m.actualBoundingBoxAscent || (parseFloat(cs.getPropertyValue('font-size')) * 0.8);
+              const descent = m.actualBoundingBoxDescent || (parseFloat(cs.getPropertyValue('font-size')) * 0.2);
+
               nodes.push({
                 id,
                 node_type: "element",
@@ -226,6 +236,7 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
                 client_rects: [],
                 inline_text_boxes: [],
                 styles: st,
+                font_metrics: { ascent, descent }
               });
             }
 
@@ -350,6 +361,14 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
                     client_rects,
                     inline_text_boxes: Vec::new(),
                     styles,
+                    font_metrics: n
+                        .get("font_metrics")
+                        .and_then(|m| {
+                            Some(crate::layout_precise::FontMetrics {
+                                ascent: m.get("ascent")?.as_f64()? as f32,
+                                descent: m.get("descent")?.as_f64()? as f32,
+                            })
+                        }),
                 });
             }
         }
@@ -447,6 +466,7 @@ fn parse_report_nodes(report_json: &str) -> Option<Vec<Node>> {
                 client_rects: vec![],
                 inline_text_boxes: vec![],
                 styles: serde_json::Map::new(),
+                font_metrics: None,
             });
         }
     }
