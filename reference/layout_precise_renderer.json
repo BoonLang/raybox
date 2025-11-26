@@ -1,12 +1,12 @@
 {
   "metadata": {
-    "url": "http://localhost:8000",
+    "url": "http://localhost:8020",
     "viewport": {
       "w": 700,
       "h": 700,
       "dpr": 1.0
     },
-    "captured_at": "2025-11-26T06:44:43.443519402+00:00",
+    "captured_at": "2025-11-26T16:38:13.927564974+00:00",
     "chrome": "Chrome/142.0.7444.175"
   },
   "nodes": [

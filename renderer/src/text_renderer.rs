@@ -124,8 +124,12 @@ impl TextRenderer {
         };
         // Todo item labels should start to the right of the checkbox
         if element.tag == "label" && !element.classes.contains(&"toggle-all-label".to_string()) {
-            // Position labels to match reference spacing
-            x_position = element.x + 60.0;
+            // Prefer explicit padding-left from captured layout; fallback to proportional offset
+            if let Some(pad) = Self::parse_px(element.padding_left.as_deref()) {
+                x_position = element.x + pad;
+            } else {
+                x_position = element.x + element.width * 0.109;
+            }
         }
 
         // Add padding for better rendering
@@ -181,8 +185,12 @@ impl TextRenderer {
 
         let rgba_data = image_data.data().0;
 
-        // Calculate y position to vertically center text within element
-        let y_position = element.y + (element.height - canvas_height as f32) / 2.0;
+        // Center text within the element's box. If text is taller than the element
+        // (e.g., h1 inherits a tiny line-height), allow it to overflow symmetrically.
+        // Subtract padding so the drawn glyphs, not the padded canvas, align to the target box.
+        let text_top = element.y + (element.height - text_height) / 2.0;
+        let mut y_position = text_top - padding as f32;
+        // No additional nudge for h1; use measured metrics only.
 
         Some(RenderedText {
             x: x_position - padding as f32, // Subtract padding because text is drawn at offset `padding` inside canvas
@@ -200,6 +208,16 @@ impl TextRenderer {
             size_str[..size_str.len() - 2].parse::<f32>().ok()
         } else {
             None
+        }
+    }
+
+    /// Parse a CSS px string into a float.
+    fn parse_px(px: Option<&str>) -> Option<f32> {
+        let s = px?;
+        if s.ends_with("px") {
+            s[..s.len() - 2].parse::<f32>().ok()
+        } else {
+            s.parse::<f32>().ok()
         }
     }
 

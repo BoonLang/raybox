@@ -863,23 +863,19 @@ mod wasm_impl {
 
             let mut text_added = false;
 
-            if let Some(rendered_text) = gpu.text_renderer.render_text(element) {
-                let texture = TextTexture::from_rendered_text(
-                    &gpu.device,
-                    &gpu.queue,
-                    gpu.text_pipeline.bind_group_layout(),
-                    &rendered_text,
-                );
-                let y_pos = if element.tag == "h1" {
-                    element.y - 22.0
-                } else {
-                    base_y + (rendered_text.y - element.y) + (elem_y - element.y)
-                };
-                let tw = texture.width as f32;
-                let th = texture.height as f32;
-                text_instances.push(TexturedQuadInstance::new(
-                    rendered_text.x - offset_x,
-                    y_pos,
+                if let Some(rendered_text) = gpu.text_renderer.render_text(element) {
+                    let texture = TextTexture::from_rendered_text(
+                        &gpu.device,
+                        &gpu.queue,
+                        gpu.text_pipeline.bind_group_layout(),
+                        &rendered_text,
+                    );
+                    let y_pos = base_y + (rendered_text.y - element.y) + (elem_y - element.y);
+                    let tw = texture.width as f32;
+                    let th = texture.height as f32;
+                    text_instances.push(TexturedQuadInstance::new(
+                        rendered_text.x - offset_x,
+                        y_pos,
                     tw,
                     th,
                 ));
@@ -983,7 +979,8 @@ mod wasm_impl {
                     let mut placeholder_elem = element.clone();
                     placeholder_elem.text = Some(placeholder.clone());
                     placeholder_elem.color = Some("rgba(0, 0, 0, 0.4)".to_string());
-                    placeholder_elem.x = element.x + 60.0;
+                    let pad_left = parse_font_size_px(element.padding_left.as_deref()).unwrap_or(60.0);
+                    placeholder_elem.x = element.x + pad_left;
 
                     if let Some(rendered_text) = gpu.text_renderer.render_text(&placeholder_elem) {
                         let texture = TextTexture::from_rendered_text(

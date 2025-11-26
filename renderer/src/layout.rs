@@ -71,6 +71,17 @@ pub struct Element {
     pub background_color: Option<String>,
     pub color: Option<String>,
 
+    // Padding (full shorthand and specific sides we rely on for text positioning)
+    pub padding: Option<String>,
+    #[serde(rename = "paddingLeft")]
+    pub padding_left: Option<String>,
+    #[serde(rename = "paddingRight")]
+    pub padding_right: Option<String>,
+    #[serde(rename = "paddingTop")]
+    pub padding_top: Option<String>,
+    #[serde(rename = "paddingBottom")]
+    pub padding_bottom: Option<String>,
+
     // Borders
     #[serde(rename = "borderWidth")]
     pub border_width: Option<String>,
