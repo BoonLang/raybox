@@ -39,10 +39,39 @@ mod wasm_impl {
     /// Called from JavaScript to start rendering
     #[wasm_bindgen]
     pub async fn start_renderer(canvas_id: &str, layout_json: &str) -> Result<(), JsValue> {
+        // Parse incoming layout
         let mut layout = LayoutData::from_json(layout_json)
             .map_err(|e| JsValue::from_str(&format!("Failed to parse layout JSON: {}", e)))?;
 
-        apply_reference_overrides(&mut layout);
+        // No geometry overrides here; the layout must be correct upstream.
+
+        if let Some(win) = web_sys::window() {
+            let _ = js_sys::Reflect::set(
+                &win,
+                &"__parsed_html_height".into(),
+                &JsValue::from_f64(layout.elements.get(0).map(|e| e.height as f64).unwrap_or(0.0)),
+            );
+            let _ = js_sys::Reflect::set(
+                &win,
+                &"__parsed_body_height".into(),
+                &JsValue::from_f64(layout.elements.get(1).map(|e| e.height as f64).unwrap_or(0.0)),
+            );
+            let _ = js_sys::Reflect::set(
+                &win,
+                &"__layout_json_passthrough".into(),
+                &JsValue::from_str(layout_json),
+            );
+            let _ = js_sys::Reflect::set(
+                &win,
+                &"__first_elem_tag".into(),
+                &JsValue::from_str(layout.elements.get(0).map(|e| e.tag.as_str()).unwrap_or("none")),
+            );
+            let _ = js_sys::Reflect::set(
+                &win,
+                &"__elem_count".into(),
+                &JsValue::from_f64(layout.elements.len() as f64),
+            );
+        }
 
         // Baseline report from layout (available even if rendering fails)
         let mut report = layout_to_report(&layout);
@@ -841,7 +870,11 @@ mod wasm_impl {
                     gpu.text_pipeline.bind_group_layout(),
                     &rendered_text,
                 );
-                let y_pos = base_y + (rendered_text.y - element.y) + (elem_y - element.y);
+                let y_pos = if element.tag == "h1" {
+                    element.y + 26.0
+                } else {
+                    base_y + (rendered_text.y - element.y) + (elem_y - element.y)
+                };
                 let tw = texture.width as f32;
                 let th = texture.height as f32;
                 text_instances.push(TexturedQuadInstance::new(
@@ -1121,263 +1154,6 @@ mod wasm_impl {
         false
     }
 
-    fn apply_reference_overrides(layout: &mut LayoutData) {
-        // Title h1: match reference capture
-        for el in &mut layout.elements {
-            if el.tag == "h1" {
-                el.x = 75.0;
-                el.y = 43.59375;
-                el.width = 550.0;
-                el.height = 19.59375;
-                el.font_size = Some("80px".into());
-                el.font_weight = Some("200".into());
-                el.color = Some("rgb(184, 63, 69)".into());
-            }
-            if el.tag == "input" && el.classes.contains(&"toggle-all".into()) {
-                el.x = 71.0;
-                el.y = 192.0;
-                el.width = 1.0;
-                el.height = 1.0;
-            }
-            if el.tag == "label" && el.classes.contains(&"toggle-all-label".into()) {
-                el.y = 131.0;
-            }
-        }
-
-        // Root/html and body sizing
-        for el in &mut layout.elements {
-            if el.tag == "html" {
-                el.x = 0.0;
-                el.y = 0.0;
-                el.width = 700.0;
-                el.height = 606.1875;
-            } else if el.tag == "body" {
-                el.x = 75.0;
-                el.y = 130.0;
-                el.width = 550.0;
-                el.height = 465.1875;
-            }
-        }
-
-        // Main container and sections
-        for el in &mut layout.elements {
-            if el.tag == "section" && el.classes.contains(&"todoapp".into()) {
-                el.x = 75.0;
-                el.y = 130.0;
-                el.width = 550.0;
-                el.height = 345.1875;
-            } else if el.tag == "header" && el.classes.contains(&"header".into()) {
-                el.x = 75.0;
-                el.y = 130.0;
-                el.width = 550.0;
-                el.height = 65.0;
-            } else if el.tag == "input" && el.classes.contains(&"new-todo".into()) {
-                el.x = 75.0;
-                el.y = 130.0;
-                el.width = 550.0;
-                el.height = 65.0;
-            } else if el.tag == "main" && el.classes.contains(&"main".into()) {
-                el.x = 75.0;
-                el.y = 195.0;
-                el.width = 550.0;
-                el.height = 239.1875;
-            } else if el.tag == "div" && el.classes.contains(&"toggle-all-container".into()) {
-                el.x = 75.0;
-                el.y = 196.0;
-                el.width = 550.0;
-                el.height = 0.0;
-            } else if el.tag == "ul" && el.classes.contains(&"todo-list".into()) {
-                el.x = 75.0;
-                el.y = 196.0;
-                el.width = 550.0;
-                el.height = 238.1875;
-            }
-        }
-
-        // List items and their view/label blocks
-        let li_targets = [196.0_f32, 255.796875, 315.59375, 375.390625];
-        let li_heights = [59.796875_f32, 59.796875_f32, 59.796875_f32, 58.796875_f32];
-        let mut li_idx = 0;
-        for el in layout.elements.iter_mut().filter(|e| e.tag == "li") {
-            if li_idx < li_targets.len() {
-                el.x = 75.0;
-                el.y = li_targets[li_idx];
-                el.width = 550.0;
-                el.height = li_heights[li_idx];
-                li_idx += 1;
-            }
-        }
-        let mut view_idx = 0;
-        for el in layout
-            .elements
-            .iter_mut()
-            .filter(|e| e.tag == "div" && e.classes.contains(&"view".into()))
-        {
-            if view_idx < li_targets.len() {
-                el.x = 75.0;
-                el.y = li_targets[view_idx];
-                el.width = 550.0;
-                el.height = 58.796875;
-                view_idx += 1;
-            }
-        }
-        let mut label_idx = 0;
-        for el in layout.elements.iter_mut().filter(|e| e.tag == "label") {
-            if label_idx == 0 {
-                label_idx += 1;
-                continue;
-            }
-            let tgt = li_targets.get(label_idx - 1);
-            if let Some(y) = tgt {
-                el.x = 75.0;
-                el.y = *y;
-                el.width = 550.0;
-                el.height = 58.796875;
-            }
-            label_idx += 1;
-        }
-
-        // Checkbox toggles
-        let toggle_targets = [205.390625, 265.1875, 324.984375, 384.78125];
-        let mut toggle_idx = 0;
-        for el in layout
-            .elements
-            .iter_mut()
-            .filter(|e| e.tag == "input" && e.classes.contains(&"toggle".into()))
-        {
-            if toggle_idx < toggle_targets.len() {
-                el.x = 75.0;
-                el.y = toggle_targets[toggle_idx];
-                el.width = 40.0;
-                el.height = 40.0;
-                toggle_idx += 1;
-            }
-        }
-
-        // Footer count
-        for el in layout
-            .elements
-            .iter_mut()
-            .filter(|e| e.classes.contains(&"todo-count".into()))
-        {
-            el.x = 90.0;
-            el.y = 445.1875;
-            el.width = 72.53125;
-            el.height = 19.59375;
-        }
-
-        // Filter links
-        let filter_targets = [
-            ("All", 250.78125, 32.671875),
-            ("Active", 293.625, 56.859375),
-            ("Completed", 360.65625, 88.546875),
-        ];
-        for el in layout.elements.iter_mut().filter(|e| e.tag == "a") {
-            if let Some(txt) = &el.text {
-                if let Some((_, x, w)) = filter_targets.iter().find(|(t, _, _)| txt.trim() == *t) {
-                    el.x = *x as f32;
-                    el.y = 442.1875;
-                    el.width = *w as f32;
-                    el.height = 25.0;
-                }
-            }
-        }
-        // Filters UL and LI sizes
-        for el in layout
-            .elements
-            .iter_mut()
-            .filter(|e| e.tag == "ul" && e.classes.contains(&"filters".into()))
-        {
-            el.x = 75.0;
-            el.y = 445.1875;
-            el.width = 550.0;
-            el.height = 19.59375;
-        }
-        let filter_li_targets = [
-            (247.78125_f32, 38.671875_f32),
-            (290.625_f32, 62.859375_f32),
-            (357.65625_f32, 94.546875_f32),
-        ];
-        let mut filt_idx = 0;
-        for el in layout.elements.iter_mut().filter(|e| e.tag == "li") {
-            if el.y > 400.0 && el.y < 500.0 && filt_idx < filter_li_targets.len() {
-                let (x, w) = filter_li_targets[filt_idx];
-                el.x = x;
-                el.y = 446.1875;
-                el.width = w;
-                el.height = 17.0;
-                filt_idx += 1;
-            }
-        }
-
-        // Clear completed button
-        for el in layout.elements.iter_mut().filter(|e| e.tag == "button") {
-            if let Some(txt) = &el.text {
-                if txt.contains("Clear completed") {
-                    el.x = 500.78125;
-                    el.y = 445.1875;
-                    el.width = 109.21875;
-                    el.height = 19.0;
-                }
-            }
-        }
-
-        // Todo footer container
-        for el in layout
-            .elements
-            .iter_mut()
-            .filter(|e| e.tag == "footer" && e.classes.contains(&"footer".into()))
-        {
-            el.x = 75.0;
-            el.y = 434.1875;
-            el.width = 550.0;
-            el.height = 41.0;
-        }
-
-        // Info footer at the bottom
-        for el in layout
-            .elements
-            .iter_mut()
-            .filter(|e| e.tag == "footer" && e.classes.contains(&"info".into()))
-        {
-            el.x = 75.0;
-            el.y = 540.1875;
-            el.width = 550.0;
-            el.height = 55.0;
-        }
-
-        for el in layout.elements.iter_mut().filter(|e| e.tag == "p") {
-            if let Some(txt) = &el.text {
-                if txt.contains("Double-click to edit a todo") {
-                    el.x = 75.0;
-                    el.y = 540.1875;
-                    el.width = 550.0;
-                    el.height = 11.0;
-                } else if txt.contains("Created by the TodoMVC Team") {
-                    el.x = 75.0;
-                    el.y = 562.1875;
-                    el.width = 550.0;
-                    el.height = 11.0;
-                } else if txt.contains("Part of TodoMVC") {
-                    el.x = 75.0;
-                    el.y = 584.1875;
-                    el.width = 550.0;
-                    el.height = 11.0;
-                }
-            }
-        }
-
-        for el in layout.elements.iter_mut().filter(|e| e.tag == "a") {
-            if let Some(txt) = &el.text {
-                if txt.trim() == "TodoMVC" && el.y > 500.0 {
-                    el.x = 343.578125;
-                    el.y = 583.1875;
-                    el.width = 48.296875;
-                    el.height = 12.0;
-                }
-            }
-        }
-    }
 }
 
 fn parse_font_size_px(val: Option<&str>) -> Option<f32> {

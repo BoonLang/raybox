@@ -123,20 +123,28 @@ pub fn run_diff_layouts(a: &Path, b: &Path, threshold: f64) -> Result<()> {
 
 /// Capture layout snapshot of a page (reference: JS boxes; renderer: report), fail-fast.
 pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
+    let user_data_dir = format!(
+        "/tmp/raybox-cdp-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+
     let mut args = vec![
-        "--enable-unsafe-webgpu",
-        "--enable-webgpu-developer-features",
-        "--enable-features=Vulkan,VulkanFromANGLE",
-        "--enable-vulkan",
-        "--use-angle=vulkan",
-        "--disable-software-rasterizer",
-        "--ozone-platform=x11",
-        "--headless=new",
-        "--remote-debugging-port=0",
-        "--user-data-dir=/tmp/raybox-cdp",
+        "--enable-unsafe-webgpu".to_string(),
+        "--enable-webgpu-developer-features".to_string(),
+        "--enable-features=Vulkan,VulkanFromANGLE".to_string(),
+        "--enable-vulkan".to_string(),
+        "--use-angle=vulkan".to_string(),
+        "--disable-software-rasterizer".to_string(),
+        "--ozone-platform=x11".to_string(),
+        "--headless=new".to_string(),
+        "--remote-debugging-port=0".to_string(),
+        format!("--user-data-dir={}", user_data_dir),
     ];
     if opts.headed {
-        args.retain(|a| *a != "--headless=new");
+        args.retain(|a| a != "--headless=new");
     }
 
     let mut config_builder = BrowserConfig::builder().args(args);
@@ -169,9 +177,11 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
         .map_err(|e| anyhow::anyhow!("Failed to build device metrics: {e}"))?;
     page.execute(metrics).await?;
 
-    // Navigate
+    // Navigate (add cache-busting query param to avoid stale JS/layout)
+    let bust = format!("{}{}v={}", if opts.target_url.contains('?') { "&" } else { "?" }, "", chrono::Utc::now().timestamp_millis());
+    let url = format!("{}{}", opts.target_url, bust);
     let nav = NavigateParams::builder()
-        .url(opts.target_url)
+        .url(&url)
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build navigate params: {e}"))?;
     page.execute(nav).await?;
@@ -386,6 +396,56 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
     }
 
     // Renderer capture via raybox_report_json
+    // Wait (up to 5s) for the page to expose __layout_json, otherwise log debug info
+    let fetch_probe = EvaluateParams::builder()
+        .expression("fetch('/reference/todomvc_dom_layout_700.json?v=20251126').then(r=>r.json()).then(j=>j.elements[0].height).catch(e=>`err:${e}`)")
+        .await_promise(true)
+        .return_by_value(true)
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to build fetch probe eval: {e}"))?;
+    if let Ok(res) = page.execute(fetch_probe).await {
+        println!("[capture] probe html height fetched {:?}", res.result.result.value);
+    }
+
+    let layout_passthrough = wait_for_global_string(&page, "__sanitized_layout", Duration::from_millis(5000)).await?;
+    if layout_passthrough.is_none() {
+        anyhow::bail!("__sanitized_layout not available (page init failed)");
+    }
+    if let Some(lp) = layout_passthrough.as_deref() {
+        println!("[capture] __layout_json_passthrough prefix: {}", &lp[..lp.len().min(80)]);
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(lp) {
+            let h = val.get("elements").and_then(|e| e.get(0)).and_then(|e| e.get("height")).and_then(|v| v.as_f64());
+            let bh = val.get("elements").and_then(|e| e.get(1)).and_then(|e| e.get("height")).and_then(|v| v.as_f64());
+            println!("[capture] passthrough html height {:?}, body height {:?}", h, bh);
+        }
+        // Dump for inspection
+        let _ = std::fs::write("/tmp/raybox_layout_passthrough.json", lp);
+    }
+    let first_tag = wait_for_global_string(&page, "__first_elem_tag", Duration::from_millis(500)).await?;
+    let elem_count = wait_for_global_number(&page, "__elem_count", Duration::from_millis(500)).await?;
+    println!("[capture] parsed first tag {:?}, elem_count {:?}", first_tag, elem_count);
+    if let Some(s) = wait_for_global_string(&page, "__layout_json", Duration::from_millis(5000)).await? {
+        println!("[capture] layout_json length {}", s.len());
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&s) {
+            if let Some(h) = val
+                .get("elements")
+                .and_then(|e| e.get(0))
+                .and_then(|e| e.get("height"))
+                .and_then(|h| h.as_f64())
+            {
+                println!("[capture] layout first element height {}", h);
+            }
+        }
+    } else {
+        let err = wait_for_global_string(&page, "__layout_error", Duration::from_millis(500)).await?;
+        let parsed_html = wait_for_global_number(&page, "__parsed_html_height", Duration::from_millis(500)).await?;
+        let parsed_body = wait_for_global_number(&page, "__parsed_body_height", Duration::from_millis(500)).await?;
+        println!(
+            "[capture] __layout_json not found; __layout_error={:?}; __parsed_html_height={:?}; __parsed_body_height={:?}",
+            err, parsed_html, parsed_body
+        );
+    }
+
     let report_script = r#"
     (function () {
       if (typeof raybox_report_json === 'function') return raybox_report_json();
@@ -425,6 +485,68 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
     };
     std::fs::write(opts.out_path, serde_json::to_string_pretty(&capture)?)?;
     Ok(capture)
+}
+
+/// Poll for a global string variable (e.g., __layout_json) with timeout.
+async fn wait_for_global_string(page: &Page, name: &str, timeout: Duration) -> Result<Option<String>> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let expr = format!(
+            "(function(){{return typeof {} === 'string' ? {} : null;}})();",
+            name, name
+        );
+        let eval = EvaluateParams::builder()
+            .expression(expr)
+            .await_promise(true)
+            .return_by_value(true)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build eval params: {e}"))?;
+        if let Ok(res) = page.execute(eval).await {
+            if let Some(s) = res
+                .result
+                .result
+                .value
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+            {
+                return Ok(Some(s));
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Poll for a global number variable with timeout.
+async fn wait_for_global_number(page: &Page, name: &str, timeout: Duration) -> Result<Option<f64>> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let expr = format!(
+            "(function(){{return (typeof {0} === 'number') ? {0} : null;}})();",
+            name
+        );
+        let eval = EvaluateParams::builder()
+            .expression(expr)
+            .await_promise(true)
+            .return_by_value(true)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build eval params: {e}"))?;
+        if let Ok(res) = page.execute(eval).await {
+            if let Some(n) = res
+                .result
+                .result
+                .value
+                .and_then(|v| v.as_f64())
+            {
+                return Ok(Some(n));
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 fn parse_report_nodes(report_json: &str) -> Option<Vec<Node>> {
