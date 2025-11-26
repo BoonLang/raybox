@@ -181,7 +181,7 @@ impl TextRenderer {
     /// Render a checkbox (circle with optional checkmark) to a bitmap
     pub fn render_checkbox(&mut self, element: &Element) -> Option<RenderedText> {
         let checked = element.checked.unwrap_or(false);
-        let size = 40; // 40x40 px from layout
+        let size = 40; // keep layout size; draw circle near reference size
 
         // Set canvas size
         self.canvas.set_width(size);
@@ -190,8 +190,8 @@ impl TextRenderer {
         // Clear canvas
         self.context.clear_rect(0.0, 0.0, size as f64, size as f64);
 
-        let center = size as f64 / 2.0;
-        let radius = 18.0;
+        let center = size as f64 / 2.0 + 2.0; // move circle right
+        let radius = 15.0; // smaller radius for tighter look
 
         // Draw circle border
         self.context.begin_path();
@@ -205,11 +205,12 @@ impl TextRenderer {
         if checked {
             // Draw checkmark
             self.context.set_stroke_style_str("#5dc2af");
-            self.context.set_line_width(2.0);
+            self.context.set_line_width(1.5);
             self.context.begin_path();
-            self.context.move_to(10.0, 20.0);
-            self.context.line_to(18.0, 28.0);
-            self.context.line_to(30.0, 12.0);
+            // Sharper V with shorter left arm
+            self.context.move_to(14.0, 24.0);
+            self.context.line_to(19.0, 28.0);
+            self.context.line_to(28.0, 14.0);
             self.context.stroke();
         }
 
@@ -222,8 +223,8 @@ impl TextRenderer {
         let rgba_data = image_data.data().0;
 
         Some(RenderedText {
-            x: element.x,
-            y: element.y,
+            x: element.x + 1.0, // subtle nudge right without changing layout box
+            y: element.y - 4.0, // fine-tune vertical centering
             width: size,
             height: size,
             image_data: rgba_data,
