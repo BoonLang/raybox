@@ -40,7 +40,7 @@ mod wasm_impl {
     #[wasm_bindgen]
     pub async fn start_renderer(canvas_id: &str, layout_json: &str) -> Result<(), JsValue> {
         // Parse incoming layout
-        let mut layout = LayoutData::from_json(layout_json)
+        let layout = LayoutData::from_json(layout_json)
             .map_err(|e| JsValue::from_str(&format!("Failed to parse layout JSON: {}", e)))?;
 
         // No geometry overrides here; the layout must be correct upstream.
@@ -852,7 +852,7 @@ mod wasm_impl {
             }
 
             // Use layout-provided positions; avoid ad-hoc offsets that caused title drift
-            let (elem_y, elem_h) = (element.y, element.height);
+            let (elem_y, _elem_h) = (element.y, element.height);
 
             let base_y = element.y - offset_y
                 + if is_footer_child(element, footer_y) {
@@ -1146,7 +1146,7 @@ mod wasm_impl {
     }
 
     /// Helper function to check if element is a footer child that needs vertical centering
-    fn is_footer_child(element: &Element, footer_y: f32) -> bool {
+    fn is_footer_child(_element: &Element, footer_y: f32) -> bool {
         let _ = footer_y;
         false
     }

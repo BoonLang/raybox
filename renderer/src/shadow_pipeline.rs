@@ -128,8 +128,6 @@ impl ShadowInstance {
 pub struct ShadowPipeline {
     render_pipeline: wgpu::RenderPipeline,
     instance_buffer: wgpu::Buffer,
-    viewport_width: f32,
-    viewport_height: f32,
     capacity: usize,
 }
 
@@ -138,8 +136,8 @@ impl ShadowPipeline {
     pub fn new(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
-        viewport_width: u32,
-        viewport_height: u32,
+        _viewport_width: u32,
+        _viewport_height: u32,
         initial_capacity: usize,
     ) -> Self {
         // Create shader module
@@ -205,8 +203,6 @@ impl ShadowPipeline {
         Self {
             render_pipeline,
             instance_buffer,
-            viewport_width: viewport_width as f32,
-            viewport_height: viewport_height as f32,
             capacity: initial_capacity,
         }
     }

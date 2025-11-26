@@ -185,12 +185,13 @@ impl TextRenderer {
 
         let rgba_data = image_data.data().0;
 
-        // Center text within the element's box. If text is taller than the element
-        // (e.g., h1 inherits a tiny line-height), allow it to overflow symmetrically.
-        // Subtract padding so the drawn glyphs, not the padded canvas, align to the target box.
-        let text_top = element.y + (element.height - text_height) / 2.0;
-        let mut y_position = text_top - padding as f32;
-        // No additional nudge for h1; use measured metrics only.
+        // Center text within the element's content box (accounting for padding if present).
+        // If text is taller than the content, allow symmetric overflow.
+        let pad_top = Self::parse_px(element.padding_top.as_deref()).unwrap_or(0.0);
+        let pad_bottom = Self::parse_px(element.padding_bottom.as_deref()).unwrap_or(0.0);
+        let content_height = (element.height - pad_top - pad_bottom).max(0.0);
+        let text_top = element.y + pad_top + (content_height - text_height) / 2.0;
+        let y_position = text_top - padding as f32;
 
         Some(RenderedText {
             x: x_position - padding as f32, // Subtract padding because text is drawn at offset `padding` inside canvas
@@ -224,7 +225,16 @@ impl TextRenderer {
     /// Render a checkbox (circle with optional checkmark) to a bitmap
     pub fn render_checkbox(&mut self, element: &Element) -> Option<RenderedText> {
         let checked = element.checked.unwrap_or(false);
-        let size = 40; // keep layout size; draw circle near reference size
+        // Render parameters kept together for easy tuning
+        let spec = CheckboxSpec {
+            size: 40,
+            center_offset: 2.0,
+            radius: 15.0,
+            stroke_width: 1.0,
+            check_stroke_width: 1.5,
+            check_points: [(14.0, 24.0), (19.0, 28.0), (28.0, 14.0)],
+        };
+        let size = spec.size;
 
         // Set canvas size
         self.canvas.set_width(size);
@@ -233,8 +243,8 @@ impl TextRenderer {
         // Clear canvas
         self.context.clear_rect(0.0, 0.0, size as f64, size as f64);
 
-        let center = size as f64 / 2.0 + 2.0; // move circle right
-        let radius = 15.0; // smaller radius for tighter look
+        let center = size as f64 / 2.0 + spec.center_offset as f64;
+        let radius = spec.radius as f64; // matches reference visual
 
         // Draw circle border
         self.context.begin_path();
@@ -242,18 +252,18 @@ impl TextRenderer {
             .arc(center, center, radius, 0.0, 2.0 * std::f64::consts::PI)
             .ok()?;
         self.context.set_stroke_style_str("#dddddd");
-        self.context.set_line_width(1.0);
+        self.context.set_line_width(spec.stroke_width);
         self.context.stroke();
 
         if checked {
             // Draw checkmark
             self.context.set_stroke_style_str("#5dc2af");
-            self.context.set_line_width(1.5);
+            self.context.set_line_width(spec.check_stroke_width);
             self.context.begin_path();
             // Sharper V with shorter left arm
-            self.context.move_to(14.0, 24.0);
-            self.context.line_to(19.0, 28.0);
-            self.context.line_to(28.0, 14.0);
+            self.context.move_to(spec.check_points[0].0, spec.check_points[0].1);
+            self.context.line_to(spec.check_points[1].0, spec.check_points[1].1);
+            self.context.line_to(spec.check_points[2].0, spec.check_points[2].1);
             self.context.stroke();
         }
 
@@ -346,6 +356,16 @@ pub struct TextTexture {
     pub bind_group: wgpu::BindGroup,
     pub width: u32,
     pub height: u32,
+}
+
+/// Tunable checkbox drawing parameters derived from the 40x40 reference asset.
+struct CheckboxSpec {
+    size: u32,
+    center_offset: f32,
+    radius: f32,
+    stroke_width: f64,
+    check_stroke_width: f64,
+    check_points: [(f64, f64); 3],
 }
 
 impl TextTexture {

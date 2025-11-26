@@ -146,8 +146,6 @@ pub struct RectanglePipeline {
     render_pipeline: wgpu::RenderPipeline,
     instance_buffer: wgpu::Buffer,
     instance_capacity: usize,
-    viewport_width: f32,
-    viewport_height: f32,
 }
 
 impl RectanglePipeline {
@@ -158,9 +156,6 @@ impl RectanglePipeline {
         viewport_height: u32,
         initial_capacity: usize,
     ) -> Self {
-        let viewport_width = viewport_width as f32;
-        let viewport_height = viewport_height as f32;
-
         // WGSL shader for rectangle rendering with rounded corners (SDF)
         let shader_source = format!(
             r#"
@@ -387,8 +382,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
             render_pipeline,
             instance_buffer,
             instance_capacity: initial_capacity,
-            viewport_width,
-            viewport_height,
         }
     }
 
