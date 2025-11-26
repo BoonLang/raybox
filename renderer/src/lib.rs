@@ -871,7 +871,7 @@ mod wasm_impl {
                     &rendered_text,
                 );
                 let y_pos = if element.tag == "h1" {
-                    element.y + 26.0
+                    element.y - 22.0
                 } else {
                     base_y + (rendered_text.y - element.y) + (elem_y - element.y)
                 };

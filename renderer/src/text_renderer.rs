@@ -124,7 +124,7 @@ impl TextRenderer {
         };
         // Todo item labels should start to the right of the checkbox
         if element.tag == "label" && !element.classes.contains(&"toggle-all-label".to_string()) {
-            // Reference shows label text at x≈135 while element starts at 75 → offset ~60px
+            // Position labels to match reference spacing
             x_position = element.x + 60.0;
         }
 
