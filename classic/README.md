@@ -2,10 +2,10 @@
 
 This folder groups everything related to the current (classic) 2D WebGPU renderer:
 
-- `docs/` – snapshots of the existing renderer docs (V1 report, specs, profiling, workflow, capture notes).
-- `captures/` – renderer screenshots (add new captures here when you run `tools screenshot`).
+- `docs/` – minimal summary (`classic_summary.md`).
+- `screenshots/` – canonical classic screenshot (`screenshot.png`, captured via dev server).
 - `layouts/` – renderer-produced layout JSONs or diffs (keep reference comparisons here).
-- Code lives at `renderer/` (still at repo root to keep the workspace working); tools live in `tools/`.
+- Code lives at `renderer/` (still at repo root); tools live in `tools/`.
 
 Suggested workflow for new captures/layouts:
 1. Serve the app: `cargo run -p tools -- serve web --port 8000`.
