@@ -49,17 +49,6 @@ pub struct Rect {
     pub h: f64,
 }
 
-impl Rect {
-    pub fn from_tuple(r: (f64, f64, f64, f64)) -> Self {
-        Rect {
-            x: r.0,
-            y: r.1,
-            w: r.2,
-            h: r.3,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct FontMetrics {
     pub ascent: f32,

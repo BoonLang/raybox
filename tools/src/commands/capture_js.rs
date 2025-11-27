@@ -1,3 +1,5 @@
+// Unused helper (kept for potential future DOM rect scraping). Suppress warnings.
+#[allow(dead_code)]
 pub const JS_COLLECT_RECTS: &str = r##"
 (() => {
   function pathFor(node) {
