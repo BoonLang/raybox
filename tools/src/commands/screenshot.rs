@@ -124,6 +124,25 @@ pub fn run(url: &str, output: &str, width: u32, height: u32, _headed: bool) -> R
             }
         }
 
+        if let Ok(val) = page
+            .evaluate("() => window.__footer_text_count ?? null")
+            .await
+        {
+            if let Ok(Some(cnt)) = val.into_value::<Option<f64>>() {
+                println!("  Footer text count: {}", cnt);
+            }
+        }
+        if let Ok(val) = page
+            .evaluate("() => window.__footer_debug ?? null")
+            .await
+        {
+            if let Ok(Some(dbg)) = val.into_value::<Option<String>>() {
+                if !dbg.is_empty() {
+                    println!("  Footer debug: {}", dbg);
+                }
+            }
+        }
+
         // Debug: report emergent counts if present
         if let Ok(val) = page
             .evaluate("() => typeof window.__emergent_counts === 'string' ? window.__emergent_counts : null")

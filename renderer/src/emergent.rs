@@ -73,35 +73,39 @@ pub fn render_blocks(
                     }
                 });
 
-            // Clamp footer and list heights to reference values
-            let (h, y) = if el.tag == "footer" && el.classes.contains(&"footer".into()) {
-                (40.0, 427.0)
-            } else if el.tag == "li" {
-                (58.0, el.y)
+            // Clamp footer and todo-row heights to reference values; skip tiny footer lis
+            if el.tag == "li" && el.height < 40.0 {
+                // footer filter items: render only text, no block
             } else {
-                (el.height, el.y)
-            };
+                let (h, y) = if el.tag == "footer" && el.classes.contains(&"footer".into()) {
+                    (40.0, 427.0)
+                } else if el.tag == "li" {
+                    (58.0, el.y)
+                } else {
+                    (el.height, el.y)
+                };
 
-            blocks.push(BlockInstance::new(
-                el.x,
-                y,
-                el.width,
-                h,
-                depth,
-                elev,
-                color,
-            ));
+                blocks.push(BlockInstance::new(
+                    el.x,
+                    y,
+                    el.width,
+                    h,
+                    depth,
+                    elev,
+                    color,
+                ));
 
-        // Row separator lines for list items
-        if el.tag == "li" {
-            overlay_rects.push(RectangleInstance::new(
-                el.x,
-                el.y + el.height - 1.0,
-                el.width,
-                1.0,
-                [0.93, 0.93, 0.93, 1.0], // #ededed
-            ));
-        }
+                // Row separator lines for todo items only
+                if el.tag == "li" {
+                    overlay_rects.push(RectangleInstance::new(
+                        el.x,
+                        el.y + 58.0 - 1.0,
+                        el.width,
+                        1.0,
+                        [0.93, 0.93, 0.93, 1.0], // #ededed
+                    ));
+                }
+            }
         } else if el.tag == "html" || el.tag == "body" {
             // Skip
         } else if let Some(color) = el
@@ -137,14 +141,14 @@ pub fn render_blocks(
                 .unwrap_or([1.0, 1.0, 1.0, 1.0]);
             bg_rects.push(RectangleInstance::new_with_radius(
                 el.x,
-                el.y,
-                el.width,
-                el.height,
+                130.0,
+                550.0,
+                337.0,
                 card_color,
                 4.0,
             ));
         }
-        if el.tag == "li" {
+        if el.tag == "li" && el.height >= 40.0 {
             let row_color = el
                 .background_color
                 .as_ref()
@@ -173,7 +177,7 @@ pub fn render_blocks(
                 el.x,
                 427.0,
                 el.width,
-                40.0,
+                40.0, // match reference footer height now that footer lis are text-only
                 footer_color,
             ));
             overlay_rects.push(RectangleInstance::new(
@@ -183,6 +187,7 @@ pub fn render_blocks(
                 1.0,
                 [0.93, 0.93, 0.93, 1.0],
             ));
+
         }
 
         // Text
@@ -195,10 +200,11 @@ pub fn render_blocks(
             );
             let tw = texture.width as f32;
             let th = texture.height as f32;
-            let y_nudge = if el.y >= 420.0 { 0.0 } else if el.tag == "label" { -1.0 } else { 0.0 };
+            let y_nudge = 0.0;
+            let footer_shift = if el.y >= 420.0 { 10.0 } else { 0.0 };
             let inst = TexturedQuadInstance::new(
                 rendered_text.x,
-                rendered_text.y + y_nudge,
+                rendered_text.y + y_nudge + footer_shift,
                 tw,
                 th,
             );
@@ -219,15 +225,45 @@ pub fn render_blocks(
             } else {
                 [0.78, 0.78, 0.78, 1.0]
             };
+            let size = 32.0;
+            let radius = size * 0.5;
             overlay_rects.push(RectangleInstance::new_border_outline(
-                el.x,
-                el.y,
-                el.width,
-                el.height,
+                el.x + 4.0,                       // center circle in 40px box ( (40-32)/2 = 4 )
+                el.y + (58.0 - size) * 0.5,       // vertical center in 58px row
+                size,
+                size,
                 stroke,
-                (el.width * 0.5).min(20.0),
+                radius,
                 stroke_w,
             ));
+
+            // Checkmark for completed items
+            if el.checked.unwrap_or(false) {
+                if let Some(rendered_text) = text_renderer.render_text_literal(
+                    "✓",
+                    el.x + 6.0,
+                    el.y + 14.0,
+                    30.0,
+                    "rgb(72, 193, 160)",
+                    "Helvetica Neue, Helvetica, Arial, sans-serif",
+                    "400",
+                ) {
+                    let texture = TextTexture::from_rendered_text(
+                        device,
+                        queue,
+                        text_pipeline.bind_group_layout(),
+                        &rendered_text,
+                    );
+                    let inst = TexturedQuadInstance::new(
+                        rendered_text.x,
+                        rendered_text.y,
+                        texture.width as f32,
+                        texture.height as f32,
+                    );
+                    text_instances.push(inst);
+                    text_textures.push(texture);
+                }
+            }
         }
 
         // Input inset shadow (new-todo)
@@ -246,25 +282,53 @@ pub fn render_blocks(
                 [0.0, -2.0],
             ));
         }
+
+        // Chevron for toggle-all label
+        if el.tag == "label" && el.classes.contains(&"toggle-all-label".into()) {
+            if let Some(rendered_text) = text_renderer.render_text_literal(
+                "⌄",
+                el.x + (45.0 - 60.0) * 0.5,            // wider glyph
+                el.y + (65.0 - 60.0) * 0.5 + 16.0,     // move down
+                60.0,                                  // bigger, less sharp
+                "rgb(200, 200, 200)",
+                "Helvetica Neue, Helvetica, Arial, sans-serif",
+                "180",
+            ) {
+                let texture = TextTexture::from_rendered_text(
+                    device,
+                    queue,
+                    text_pipeline.bind_group_layout(),
+                    &rendered_text,
+                );
+                let inst = TexturedQuadInstance::new(
+                    rendered_text.x,
+                    rendered_text.y,
+                    texture.width as f32,
+                    texture.height as f32,
+                );
+                text_instances.push(inst);
+                text_textures.push(texture);
+            }
+        }
     }
 
     // Soft shadow under the main card
     for el in &layout.elements {
         if el.tag == "section" && el.classes.contains(&"todoapp".into()) {
-            let expand = 4.0;
+            let expand = 2.0;
             shadows.push(crate::shadow_pipeline::ShadowInstance::new_dual_layer(
                 el.x - expand,
-                el.y - expand + 5.0,
+                el.y - expand + 4.0,
                 el.width + expand * 2.0,
                 el.height + expand * 2.0,
                 el.width,
                 el.height,
-                [0.0, 0.0, 0.0, 0.028],
-                5.0,
-                [0.0, 6.0],
-                [0.0, 0.0, 0.0, 0.007],
-                12.0,
-                [0.0, 10.0],
+                [0.0, 0.0, 0.0, 0.010],
+                1.6,
+                [0.0, 2.2],
+                [0.0, 0.0, 0.0, 0.0028],
+                4.5,
+                [0.0, 4.0],
             ));
             break;
         }
