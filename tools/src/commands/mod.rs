@@ -5,6 +5,7 @@ pub mod extract_dom;
 pub mod integration_test;
 pub mod pixel_diff;
 pub mod screenshot;
+pub mod screenshot_helpers;
 pub mod serve;
 pub mod visualize_layout;
 pub mod wasm_build;

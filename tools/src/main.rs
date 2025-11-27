@@ -79,6 +79,7 @@ enum Commands {
         /// Viewport height
         #[arg(long, default_value = "1080")]
         height: u32,
+
     },
 
     /// Watch files and auto-rebuild
@@ -167,6 +168,19 @@ enum Commands {
         url: String,
     },
 
+    /// Pixel diff images (exact match ratio)
+    PixelDiffSimple {
+        /// Reference image path
+        #[arg(short, long)]
+        reference: String,
+        /// Candidate image path
+        #[arg(short, long)]
+        candidate: String,
+        /// Minimum similarity (0.0-1.0). Default 0.97
+        #[arg(long, default_value = "0.97")]
+        threshold: f64,
+    },
+
     /// Capture precise layout from reference HTML
     CaptureReference {
         /// HTML file to open (inside reference/)
@@ -178,7 +192,11 @@ enum Commands {
         layout_json: Option<String>,
 
         /// Output JSON path
-        #[arg(short, long, default_value = "reference/layouts/layout_precise_reference.json")]
+        #[arg(
+            short,
+            long,
+            default_value = "reference/layouts/layout_precise_reference.json"
+        )]
         out: String,
 
         /// Launch headed Chrome (default headless)
@@ -197,7 +215,11 @@ enum Commands {
         url: String,
 
         /// Output JSON path
-        #[arg(short, long, default_value = "reference/layouts/layout_precise_renderer.json")]
+        #[arg(
+            short,
+            long,
+            default_value = "reference/layouts/layout_precise_renderer.json"
+        )]
         out: String,
 
         /// Launch headed Chrome (default headless)
@@ -263,7 +285,7 @@ fn main() -> Result<()> {
             width,
             height,
         } => {
-            commands::screenshot::run(&url, &output, width, height)?;
+            commands::screenshot::run(&url, &output, width, height, true)?;
         }
 
         Commands::Watch { directory, command } => {
@@ -277,6 +299,14 @@ fn main() -> Result<()> {
             threshold,
         } => {
             commands::pixel_diff::run(&reference, &current, output.as_deref(), threshold)?;
+        }
+
+        Commands::PixelDiffSimple {
+            reference,
+            candidate,
+            threshold,
+        } => {
+            commands::pixel_diff::run_simple(&reference, &candidate, threshold)?;
         }
 
         Commands::CheckConsole {

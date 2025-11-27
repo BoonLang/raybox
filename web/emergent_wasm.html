@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=700,height=700">
+    <title>TodoMVC Emergent (placeholder)</title>
+    <style>
+        body { margin: 0; padding: 0; background: #f4f3f1; }
+        #canvas { width: 700px; height: 700px; display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas" width="700" height="700"></canvas>
+    <script type="module">
+        async function init() {
+            const resp = await fetch('/reference/layouts/layout.json');
+            const layoutJson = await resp.text();
+            const layout = JSON.parse(layoutJson);
+
+            try {
+                const wasm = await import('./pkg/renderer.js');
+                await wasm.default();
+                // hint the browser to allow fallback adapters (headless)
+                if (navigator.gpu && navigator.gpu.requestAdapter) {
+                    try {
+                        await navigator.gpu.requestAdapter({ powerPreference: 'low-power', forceFallbackAdapter: true });
+                    } catch (_) {}
+                }
+                await wasm.start_emergent_renderer('canvas', layoutJson);
+            } catch (err) {
+                console.error('Emergent WebGPU failed:', err);
+            }
+        }
+        init();
+    </script>
+</body>
+</html>

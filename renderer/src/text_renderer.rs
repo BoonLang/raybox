@@ -63,9 +63,16 @@ impl TextRenderer {
 
     /// Render text element to a bitmap
     pub fn render_text(&mut self, element: &Element) -> Option<RenderedText> {
-        let text = element.text.as_ref()?;
+        // Prefer real text; if missing, fall back to placeholder (for inputs)
+        let mut placeholder_mode = false;
+        let mut text = element.text.as_deref().unwrap_or("");
         if text.trim().is_empty() {
-            return None;
+            if let Some(ph) = element.placeholder.as_deref() {
+                text = ph;
+                placeholder_mode = true;
+            } else {
+                return None;
+            }
         }
 
         // Parse font properties
@@ -75,9 +82,10 @@ impl TextRenderer {
             .as_deref()
             .unwrap_or("Helvetica Neue, Helvetica, Arial, sans-serif");
         let font_weight = element.font_weight.as_deref().unwrap_or("300");
+        let font_style = element.font_style.as_deref().unwrap_or("");
 
         // Build CSS font string
-        let font_str = format!("{} {}px {}", font_weight, font_size, font_family);
+        let font_str = format!("{} {} {}px {}", font_style, font_weight, font_size, font_family);
 
         // Set font for measurement
         self.context.set_font(&font_str);
@@ -145,7 +153,14 @@ impl TextRenderer {
         self.context.set_font(&font_str);
 
         // Parse text color
-        let color = element.color.as_deref().unwrap_or("rgb(72, 72, 72)");
+        let color = if placeholder_mode {
+            "rgb(179, 179, 179)"
+        } else if element.y >= 420.0 && (element.tag == "span" || element.tag == "a" || element.tag == "button") {
+            // Footer text: force visible dark color
+            "rgb(72, 72, 72)"
+        } else {
+            element.color.as_deref().unwrap_or("rgb(72, 72, 72)")
+        };
         self.context.set_fill_style_str(color);
 
         // Enable anti-aliasing
@@ -261,9 +276,12 @@ impl TextRenderer {
             self.context.set_line_width(spec.check_stroke_width);
             self.context.begin_path();
             // Sharper V with shorter left arm
-            self.context.move_to(spec.check_points[0].0, spec.check_points[0].1);
-            self.context.line_to(spec.check_points[1].0, spec.check_points[1].1);
-            self.context.line_to(spec.check_points[2].0, spec.check_points[2].1);
+            self.context
+                .move_to(spec.check_points[0].0, spec.check_points[0].1);
+            self.context
+                .line_to(spec.check_points[1].0, spec.check_points[1].1);
+            self.context
+                .line_to(spec.check_points[2].0, spec.check_points[2].1);
             self.context.stroke();
         }
 

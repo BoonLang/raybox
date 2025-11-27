@@ -40,6 +40,7 @@ notify = { workspace = true }
 # Logging
 env_logger = { workspace = true }
 log = { workspace = true }
+base64 = "0.21"
 
 # Utilities
 walkdir = "2.5"

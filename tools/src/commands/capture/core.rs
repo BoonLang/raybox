@@ -178,7 +178,16 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
     page.execute(metrics).await?;
 
     // Navigate (add cache-busting query param to avoid stale JS/layout)
-    let bust = format!("{}{}v={}", if opts.target_url.contains('?') { "&" } else { "?" }, "", chrono::Utc::now().timestamp_millis());
+    let bust = format!(
+        "{}{}v={}",
+        if opts.target_url.contains('?') {
+            "&"
+        } else {
+            "?"
+        },
+        "",
+        chrono::Utc::now().timestamp_millis()
+    );
     let url = format!("{}{}", opts.target_url, bust);
     let nav = NavigateParams::builder()
         .url(&url)
@@ -371,14 +380,12 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
                     client_rects,
                     inline_text_boxes: Vec::new(),
                     styles,
-                    font_metrics: n
-                        .get("font_metrics")
-                        .and_then(|m| {
-                            Some(crate::layout_precise::FontMetrics {
-                                ascent: m.get("ascent")?.as_f64()? as f32,
-                                descent: m.get("descent")?.as_f64()? as f32,
-                            })
-                        }),
+                    font_metrics: n.get("font_metrics").and_then(|m| {
+                        Some(crate::layout_precise::FontMetrics {
+                            ascent: m.get("ascent")?.as_f64()? as f32,
+                            descent: m.get("descent")?.as_f64()? as f32,
+                        })
+                    }),
                 });
             }
         }
@@ -404,27 +411,52 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build fetch probe eval: {e}"))?;
     if let Ok(res) = page.execute(fetch_probe).await {
-        println!("[capture] probe html height fetched {:?}", res.result.result.value);
+        println!(
+            "[capture] probe html height fetched {:?}",
+            res.result.result.value
+        );
     }
 
-    let layout_passthrough = wait_for_global_string(&page, "__sanitized_layout", Duration::from_millis(5000)).await?;
+    let layout_passthrough =
+        wait_for_global_string(&page, "__sanitized_layout", Duration::from_millis(5000)).await?;
     if layout_passthrough.is_none() {
         anyhow::bail!("__sanitized_layout not available (page init failed)");
     }
     if let Some(lp) = layout_passthrough.as_deref() {
-        println!("[capture] __layout_json_passthrough prefix: {}", &lp[..lp.len().min(80)]);
+        println!(
+            "[capture] __layout_json_passthrough prefix: {}",
+            &lp[..lp.len().min(80)]
+        );
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(lp) {
-            let h = val.get("elements").and_then(|e| e.get(0)).and_then(|e| e.get("height")).and_then(|v| v.as_f64());
-            let bh = val.get("elements").and_then(|e| e.get(1)).and_then(|e| e.get("height")).and_then(|v| v.as_f64());
-            println!("[capture] passthrough html height {:?}, body height {:?}", h, bh);
+            let h = val
+                .get("elements")
+                .and_then(|e| e.get(0))
+                .and_then(|e| e.get("height"))
+                .and_then(|v| v.as_f64());
+            let bh = val
+                .get("elements")
+                .and_then(|e| e.get(1))
+                .and_then(|e| e.get("height"))
+                .and_then(|v| v.as_f64());
+            println!(
+                "[capture] passthrough html height {:?}, body height {:?}",
+                h, bh
+            );
         }
         // Dump for inspection
         let _ = std::fs::write("/tmp/raybox_layout_passthrough.json", lp);
     }
-    let first_tag = wait_for_global_string(&page, "__first_elem_tag", Duration::from_millis(500)).await?;
-    let elem_count = wait_for_global_number(&page, "__elem_count", Duration::from_millis(500)).await?;
-    println!("[capture] parsed first tag {:?}, elem_count {:?}", first_tag, elem_count);
-    if let Some(s) = wait_for_global_string(&page, "__layout_json", Duration::from_millis(5000)).await? {
+    let first_tag =
+        wait_for_global_string(&page, "__first_elem_tag", Duration::from_millis(500)).await?;
+    let elem_count =
+        wait_for_global_number(&page, "__elem_count", Duration::from_millis(500)).await?;
+    println!(
+        "[capture] parsed first tag {:?}, elem_count {:?}",
+        first_tag, elem_count
+    );
+    if let Some(s) =
+        wait_for_global_string(&page, "__layout_json", Duration::from_millis(5000)).await?
+    {
         println!("[capture] layout_json length {}", s.len());
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&s) {
             if let Some(h) = val
@@ -437,9 +469,14 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
             }
         }
     } else {
-        let err = wait_for_global_string(&page, "__layout_error", Duration::from_millis(500)).await?;
-        let parsed_html = wait_for_global_number(&page, "__parsed_html_height", Duration::from_millis(500)).await?;
-        let parsed_body = wait_for_global_number(&page, "__parsed_body_height", Duration::from_millis(500)).await?;
+        let err =
+            wait_for_global_string(&page, "__layout_error", Duration::from_millis(500)).await?;
+        let parsed_html =
+            wait_for_global_number(&page, "__parsed_html_height", Duration::from_millis(500))
+                .await?;
+        let parsed_body =
+            wait_for_global_number(&page, "__parsed_body_height", Duration::from_millis(500))
+                .await?;
         println!(
             "[capture] __layout_json not found; __layout_error={:?}; __parsed_html_height={:?}; __parsed_body_height={:?}",
             err, parsed_html, parsed_body
@@ -488,7 +525,11 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
 }
 
 /// Poll for a global string variable (e.g., __layout_json) with timeout.
-async fn wait_for_global_string(page: &Page, name: &str, timeout: Duration) -> Result<Option<String>> {
+async fn wait_for_global_string(
+    page: &Page,
+    name: &str,
+    timeout: Duration,
+) -> Result<Option<String>> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
         let expr = format!(
@@ -533,12 +574,7 @@ async fn wait_for_global_number(page: &Page, name: &str, timeout: Duration) -> R
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build eval params: {e}"))?;
         if let Ok(res) = page.execute(eval).await {
-            if let Some(n) = res
-                .result
-                .result
-                .value
-                .and_then(|v| v.as_f64())
-            {
+            if let Some(n) = res.result.result.value.and_then(|v| v.as_f64()) {
                 return Ok(Some(n));
             }
         }
