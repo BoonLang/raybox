@@ -165,13 +165,13 @@ serve-tools:
 screenshot:
     cargo run -p tools -- screenshot \
         --url http://localhost:8080 \
-        --output dist/screenshot.png
+        --output classic/screenshots/screenshot.png
 
 # Compare screenshots
 compare:
     cargo run -p tools -- compare \
-        --reference reference/todomvc_chrome_reference.png \
-        --actual dist/screenshot.png
+        --reference reference/screenshots/todomvc_chrome_reference.png \
+        --actual classic/screenshots/screenshot.png
 ```
 
 ### Development Loop

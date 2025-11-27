@@ -49,19 +49,19 @@ watch-test:
     cargo watch -x test
 
 # Extract DOM layout from CSS analysis
-extract-dom OUTPUT="reference/todomvc_dom_layout.json":
+extract-dom OUTPUT="reference/layouts/layout.json":
     cargo run --release -p tools -- extract-dom --output {{OUTPUT}}
 
 # Compare two layout JSON files
-compare REF="reference/todomvc_dom_layout.json" ACTUAL="output/renderer_layout.json":
+compare REF="reference/layouts/layout.json" ACTUAL="output/renderer_layout.json":
     cargo run --release -p tools -- compare-layouts --reference {{REF}} --actual {{ACTUAL}}
 
 # Compare with diff export
-compare-diff REF="reference/todomvc_dom_layout.json" ACTUAL="output/renderer_layout.json" DIFF="output/diff.json":
+compare-diff REF="reference/layouts/layout.json" ACTUAL="output/renderer_layout.json" DIFF="output/diff.json":
     cargo run --release -p tools -- compare-layouts --reference {{REF}} --actual {{ACTUAL}} --diff-output {{DIFF}}
 
 # Visualize layout as HTML (TODO: implement)
-visualize INPUT="reference/todomvc_dom_layout.json" OUTPUT="output/viz.html":
+visualize INPUT="reference/layouts/layout.json" OUTPUT="output/viz.html":
     cargo run --release -p tools -- visualize-layout --input {{INPUT}} --output {{OUTPUT}}
 
 # Start HTTP server (TODO: implement)

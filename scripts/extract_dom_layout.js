@@ -9,7 +9,7 @@
  *   2. Open DevTools console (F12)
  *   3. Copy-paste this entire script
  *   4. Run: copy(extractDOMLayout())
- *   5. Paste into reference/todomvc_dom_layout.json
+ *   5. Paste into reference/layouts/layout.json
  */
 
 function extractDOMLayout() {

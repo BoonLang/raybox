@@ -180,8 +180,8 @@ pub fn extract_dom_data(url: &str, output: &Path) -> Result<()> {
 **Command**:
 ```bash
 cargo run -p tools -- extract-dom \
-  --url http://localhost:8080/reference/todomvc_populated.html \
-  --output reference/todomvc_dom_data.json
+  --url http://localhost:8080/reference/html/todomvc_populated.html \
+  --output reference/layouts/layout.json
 ```
 
 #### Approach 3: Browser MCP (If Available)
@@ -239,7 +239,7 @@ enum Command {
     /// Compare layout: our engine vs reference DOM
     CompareLayout {
         #[arg(long)]
-        reference_dom: PathBuf,  // reference/todomvc_dom_data.json
+        reference_dom: PathBuf,  // reference/layouts/layout.json
         #[arg(long)]
         our_layout: PathBuf,     // dist/our_layout.json
         #[arg(long)]
@@ -278,7 +278,7 @@ enum Command {
 
 ```bash
 $ cargo run -p tools -- compare-layout \
-    --reference-dom reference/todomvc_dom_data.json \
+    --reference-dom reference/layouts/layout.json \
     --our-layout dist/our_layout.json \
     --tolerance 5.0
 ```
@@ -341,7 +341,7 @@ serde_json = "1.0"
 cargo run -p tools -- serve reference --port 8765 &
 cargo run -p tools -- extract-dom \
   --url http://localhost:8765/todomvc_populated.html \
-  --output reference/todomvc_dom_layout.json
+  --output reference/layouts/layout.json
 ```
 
 ### Daily Development Loop
@@ -356,7 +356,7 @@ just serve
 # Terminal 3: Compare & iterate
 # After each change:
 cargo run -p tools -- compare-layout \
-  --reference-dom reference/todomvc_dom_layout.json \
+  --reference-dom reference/layouts/layout.json \
   --our-layout dist/layout_debug.json \
   --tolerance 5.0
 
@@ -366,7 +366,7 @@ cargo run -p tools -- screenshot \
   --output dist/latest.png
 
 cargo run -p tools -- visual-diff \
-  reference/todomvc_chrome_reference.png \
+  reference/screenshots/todomvc_chrome_reference.png \
   dist/latest.png \
   --diff-output dist/diff.png
 ```
@@ -395,7 +395,7 @@ cargo run -p tools -- visual-diff \
 2. Write JS extraction script
 3. Run in Chrome console OR
 4. Implement `tools extract-dom` command
-5. Save `reference/todomvc_dom_layout.json`
+5. Save `reference/layouts/layout.json`
 
 ### Milestone 0.7: Build Tools Crate
 
@@ -420,7 +420,7 @@ cargo run -p tools -- visual-diff \
 ```
 raybox/
 ├── reference/
-│   ├── todomvc_dom_layout.json     # 🆕 Extracted DOM positions
+│   ├── layout.json     # 🆕 Extracted DOM positions
 │   ├── todomvc_chrome_reference.png # ✅ Already have
 │   └── ...
 │
@@ -476,7 +476,7 @@ raybox/
 2. **Extract Reference DOM** (1 hour)
    - Manually via console first (quick)
    - Then automate with tools crate (optional)
-   - Save as `reference/todomvc_dom_layout.json`
+   - Save as `reference/layouts/layout.json`
 
 3. **Build Minimal Tools Crate** (2-3 hours)
    - `serve` command

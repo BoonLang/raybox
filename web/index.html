@@ -76,7 +76,7 @@
             try {
                 window.__boot = 'yes';
                 // Load layout JSON first (needed for headless capture even if GPU is missing)
-                const response = await fetch('/reference/todomvc_dom_layout_700.json?v=20251126_2');
+                const response = await fetch('/reference/layouts/layout.json?v=20251126_2');
                 if (!response.ok) {
                     throw new Error(`Failed to load layout JSON: ${response.statusText}`);
                 }

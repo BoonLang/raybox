@@ -21,7 +21,7 @@ Build a WebGPU-based renderer that can perfectly render the TodoMVC UI in Chrome
 - ❌ Responsive layout (V5)
 
 **Why this scope?**
-- Using Chrome's layout data (`reference/todomvc_dom_layout.json`) - no layout engine needed
+- Using Chrome's layout data (`reference/layouts/layout.json`) - no layout engine needed
 - Layer-by-layer implementation for easier debugging
 - Text rendering proves our hybrid approach works
 - Visual validation in Chrome gives immediate feedback
@@ -34,7 +34,7 @@ Build a WebGPU-based renderer that can perfectly render the TodoMVC UI in Chrome
 ### TodoMVC Source
 - **HTML/CSS/JS**: `./reference/` (copied from tastejs/todomvc javascript-es6 example)
 - **Live reference**: https://todomvc.com/examples/vanilla-es6/ (for comparison)
-- **Reference screenshot**: `./reference/todomvc_chrome_reference.png`
+- **Reference screenshot**: `./reference/screenshots/todomvc_chrome_reference.png`
   - Captured from Chrome 141.0.7390.122
   - Resolution: 1920×1080, DPR=1
   - Populated state: 4 todos (3 active, 1 completed)
@@ -445,7 +445,7 @@ just start-wasm-open
 
 ### ~~Milestone 1: Layout Engine~~ (SKIPPED - Using Chrome's positions)
 <!--
-We're using pre-computed layout positions from `reference/todomvc_dom_layout.json` instead of building a layout engine.
+We're using pre-computed layout positions from `reference/layouts/layout.json` instead of building a layout engine.
 This saves significant development time and guarantees pixel-perfect accuracy.
 For future projects, a separate layout library may be developed.
 
@@ -462,7 +462,7 @@ Original plan (no longer needed):
 -->
 
 ### Milestone 1: Load Layout Data
-- [ ] Load `reference/todomvc_dom_layout.json` via fetch
+- [ ] Load `reference/layouts/layout.json` via fetch
 - [ ] Parse into LayoutData struct (already implemented in renderer/src/layout.rs)
 - [ ] Log element count to console (should be 45 elements)
 - [ ] Verify all positions, colors, fonts loaded correctly
@@ -680,7 +680,7 @@ cargo run -p tools -- screenshot \
 
 # Compare screenshots
 cargo run -p tools -- compare \
-  --reference reference/todomvc_chrome_reference.png \
+  --reference reference/screenshots/todomvc_chrome_reference.png \
   --actual screenshot.png \
   --diff-output diff.png \
   --tolerance 5
@@ -714,7 +714,7 @@ anyhow = "1.0"
 2. **Success tolerance**: ✅ <5px positioning error acceptable
 3. **HTTP server**: ✅ Python3 http.server (built-in)
 4. **Reference screenshot**: ✅ Fresh Chrome 141 capture at 1920×1080, DPR=1
-   - See `./reference/todomvc_chrome_reference.png`
+   - See `./reference/screenshots/todomvc_chrome_reference.png`
    - Full metadata in `./reference/REFERENCE_METADATA.md`
 
 ---

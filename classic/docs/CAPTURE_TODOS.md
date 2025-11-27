@@ -17,10 +17,10 @@
 
 ## Verification loop
 1) `cargo run -p tools -- wasm-build --release`
-2) `cargo run -p tools -- capture-reference --file reference/todomvc_populated.html`
+2) `cargo run -p tools -- capture-reference --file reference/html/todomvc_populated.html`
 3) `cargo run -p tools -- capture-renderer --url http://localhost:8000`
-4) `cargo run -p tools -- diff-layouts --left reference/layout_precise_reference.json --right reference/layout_precise_renderer.json --threshold 0.05`
-5) Check screenshot: `cargo run -p tools -- screenshot --url http://localhost:8000 --output screenshot.png --width 700 --height 700`
+4) `cargo run -p tools -- diff-layouts --left reference/layouts/layout_precise_reference.json --right reference/layouts/layout_precise_renderer.json --threshold 0.05`
+5) Check screenshot: `cargo run -p tools -- screenshot --url http://localhost:8000 --output classic/screenshots/screenshot.png --width 700 --height 700`
 
 ## Success criteria
 - Diff reports zero element geometry differences.

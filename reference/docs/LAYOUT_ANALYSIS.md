@@ -6,7 +6,7 @@ Extracted comprehensive layout data for TodoMVC reference implementation from HT
 
 **Generated:** 2025-11-01T14:30:00Z
 **Source:** Python CSS/HTML analyzer (`tools/extract_layout.py`)
-**Output:** `todomvc_dom_layout.json` (724 lines, 45 elements)
+**Output:** `layout.json` (724 lines, 45 elements)
 
 ## Viewport & Centering
 
@@ -168,7 +168,7 @@ When implementing the WebGPU renderer:
 
 ```rust
 // Load reference data
-let reference = load_json("reference/todomvc_dom_layout.json");
+let reference = load_json("reference/layouts/layout.json");
 
 // After rendering, check positions
 let h1_ref = reference.find_element(tag="h1");
@@ -191,7 +191,7 @@ assert_eq!(input_ref.height, 65);
 
 ## Files
 
-- **Data:** `reference/todomvc_dom_layout.json`
+- **Data:** `reference/layouts/layout.json`
 - **Generator:** `tools/extract_layout.py`
-- **Screenshot:** `reference/todomvc_chrome_reference.png`
+- **Screenshot:** `reference/screenshots/todomvc_chrome_reference.png`
 - **This analysis:** `reference/LAYOUT_ANALYSIS.md`

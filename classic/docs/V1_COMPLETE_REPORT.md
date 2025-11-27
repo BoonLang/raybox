@@ -5,7 +5,7 @@
 ### Reference vs Renderer
 
 **Comparing screenshots:**
-- Reference: `reference/todomvc_reference_700.png`
+- Reference: `reference/screenshots/todomvc_reference_700.png`
 - Renderer: `/tmp/renderer_with_checkboxes.png`
 
 ### ✅ Implemented and Matching

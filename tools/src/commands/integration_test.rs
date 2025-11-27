@@ -62,7 +62,7 @@ pub fn run(url: &str) -> Result<()> {
     // Test 4: Layout JSON is accessible
     println!("Test 4: Layout JSON...");
     let json_response = client
-        .get(format!("{}/reference/todomvc_dom_layout.json", url))
+        .get(format!("{}/reference/layouts/layout.json", url))
         .send()?;
 
     if json_response.status().is_success() {
@@ -147,10 +147,10 @@ pub fn run(url: &str) -> Result<()> {
 
     match screenshot_output {
         Ok(output) if output.status.success() => {
-            if std::path::Path::new("screenshot.png").exists() {
+            if std::path::Path::new("classic/screenshots/screenshot.png").exists() {
                 println!("  ✅ PASS: Screenshot captured successfully");
                 // Clean up
-                let _ = std::fs::remove_file("screenshot.png");
+                let _ = std::fs::remove_file("classic/screenshots/screenshot.png");
             } else {
                 println!("  ⚠️  WARN: Screenshot command ran but no file created");
             }

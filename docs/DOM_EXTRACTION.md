@@ -35,7 +35,7 @@ Navigate to: `http://localhost:8080/todomvc_populated.html`
 
 ```bash
 # Paste clipboard into file
-cat > reference/todomvc_dom_layout.json
+cat > reference/layouts/layout.json
 # Paste (Ctrl+Shift+V)
 # Press Ctrl+D to save
 ```
@@ -43,7 +43,7 @@ cat > reference/todomvc_dom_layout.json
 Or use an editor:
 ```bash
 # Open in editor, paste, save
-code reference/todomvc_dom_layout.json
+code reference/layouts/layout.json
 ```
 
 ---
@@ -82,7 +82,7 @@ When `tools` crate is built:
 ```bash
 cargo run -p tools -- extract-dom \
   --url http://localhost:8080/todomvc_populated.html \
-  --output reference/todomvc_dom_layout.json
+  --output reference/layouts/layout.json
 ```
 
 This will:
@@ -97,19 +97,19 @@ This will:
 
 ```bash
 # Pretty-print JSON
-jq . reference/todomvc_dom_layout.json | less
+jq . reference/layouts/layout.json | less
 
 # Count elements
-jq '.summary.totalElements' reference/todomvc_dom_layout.json
+jq '.summary.totalElements' reference/layouts/layout.json
 
 # Find specific element
-jq '.elements[] | select(.id == "new-todo")' reference/todomvc_dom_layout.json
+jq '.elements[] | select(.id == "new-todo")' reference/layouts/layout.json
 
 # List all classes
-jq '.summary.byClass | keys' reference/todomvc_dom_layout.json
+jq '.summary.byClass | keys' reference/layouts/layout.json
 
 # Get header element
-jq '.elements[] | select(.classes[] == "header")' reference/todomvc_dom_layout.json
+jq '.elements[] | select(.classes[] == "header")' reference/layouts/layout.json
 ```
 
 ---
@@ -120,7 +120,7 @@ jq '.elements[] | select(.classes[] == "header")' reference/todomvc_dom_layout.j
 
 ```bash
 # Get "todos" header position
-jq '.elements[] | select(.tag == "h1")' reference/todomvc_dom_layout.json
+jq '.elements[] | select(.tag == "h1")' reference/layouts/layout.json
 
 # Output:
 {
@@ -138,7 +138,7 @@ jq '.elements[] | select(.tag == "h1")' reference/todomvc_dom_layout.json
 
 ```javascript
 // In our layout engine tests
-const reference = require('./reference/todomvc_dom_layout.json');
+const reference = require('./reference/layouts/layout.json');
 const ourLayout = computeLayout(todoMVCTree);
 
 // Find corresponding elements
@@ -167,28 +167,28 @@ assert(deltaY < 5, `Y position off by ${deltaY}px`);
 
 ```bash
 jq '.elements[] | select(.classes[] == "todo-list") | .children' \
-  reference/todomvc_dom_layout.json
+  reference/layouts/layout.json
 ```
 
 ### Get Input Box
 
 ```bash
 jq '.elements[] | select(.classes[] == "new-todo")' \
-  reference/todomvc_dom_layout.json
+  reference/layouts/layout.json
 ```
 
 ### Get Footer Elements
 
 ```bash
 jq '.elements[] | select(.classes[] == "footer")' \
-  reference/todomvc_dom_layout.json
+  reference/layouts/layout.json
 ```
 
 ### Get All Text Nodes
 
 ```bash
 jq '.elements[] | select(.textContent != "")' \
-  reference/todomvc_dom_layout.json
+  reference/layouts/layout.json
 ```
 
 ---
@@ -199,20 +199,20 @@ After extraction, verify:
 
 ```bash
 # Check file exists and is valid JSON
-jq . reference/todomvc_dom_layout.json > /dev/null && echo "✅ Valid JSON"
+jq . reference/layouts/layout.json > /dev/null && echo "✅ Valid JSON"
 
 # Check has elements
-count=$(jq '.elements | length' reference/todomvc_dom_layout.json)
+count=$(jq '.elements | length' reference/layouts/layout.json)
 echo "Element count: $count"
 [ "$count" -gt 10 ] && echo "✅ Has elements" || echo "❌ Too few elements"
 
 # Check has key elements
 jq -e '.elements[] | select(.tag == "h1" and .textContent == "todos")' \
-  reference/todomvc_dom_layout.json > /dev/null \
+  reference/layouts/layout.json > /dev/null \
   && echo "✅ Has header" || echo "❌ Missing header"
 
 jq -e '.elements[] | select(.classes[] == "new-todo")' \
-  reference/todomvc_dom_layout.json > /dev/null \
+  reference/layouts/layout.json > /dev/null \
   && echo "✅ Has input" || echo "❌ Missing input"
 ```
 
@@ -238,7 +238,7 @@ const blob = new Blob([extractDOMLayout()], {type: 'application/json'});
 const url = URL.createObjectURL(blob);
 const a = document.createElement('a');
 a.href = url;
-a.download = 'todomvc_dom_layout.json';
+a.download = 'layout.json';
 a.click();
 ```
 
@@ -347,7 +347,7 @@ copy(extractDOMLayout());
 1. Serve reference page
 2. Open in Chrome
 3. Run script in console
-4. Copy JSON to `reference/todomvc_dom_layout.json`
+4. Copy JSON to `reference/layouts/layout.json`
 
 **Automated extraction** (future):
 1. Build `tools` crate

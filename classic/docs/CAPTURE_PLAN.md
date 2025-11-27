@@ -30,11 +30,11 @@ Goal: add two Rust CLI commands to capture precise layout metadata from (a) the 
 ```
 
 ## CLI commands (tools crate)
-- `capture-reference [--url | --file reference/todomvc_populated.html] [--out reference/layout_precise_reference.json] [--port auto] [--headed] [--chrome-path PATH]`
+- `capture-reference [--url | --file reference/html/todomvc_populated.html] [--out reference/layouts/layout_precise_reference.json] [--port auto] [--headed] [--chrome-path PATH]`
   - Serve `reference/` on a free port; viewport 700×700, DPR=1; Chrome with WebGPU flags.
-- `capture-renderer [--url http://localhost:8000] [--out reference/layout_precise_renderer.json] [--port override] [--headed] [--chrome-path PATH]`
+- `capture-renderer [--url http://localhost:8000] [--out reference/layouts/layout_precise_renderer.json] [--port override] [--headed] [--chrome-path PATH]`
   - Assume `wasm-start` running; optionally serve `web/` if needed.
-- `diff-layouts --a reference/layout_precise_reference.json --b reference/layout_precise_renderer.json [--threshold 0.1]`
+- `diff-layouts --a reference/layouts/layout_precise_reference.json --b reference/layouts/layout_precise_renderer.json [--threshold 0.1]`
   - Git-like diff per node for x/y/w/h (and any other overlapping fields).
 
 ## Chrome flags

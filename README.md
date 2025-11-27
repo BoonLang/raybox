@@ -24,7 +24,7 @@ Chrome-first WebGPU renderer for TodoMVC using a hybrid Canvas2D + WebGPU approa
 
 | Reference (Chrome) | Our Renderer |
 |-------------------|-------------|
-| ![Reference](reference/todomvc_reference_700.png) | 97.74% similarity |
+| ![Reference](reference/screenshots/todomvc_reference_700.png) | 97.74% similarity |
 
 ### 🛠️ Complete Tooling
 
@@ -50,17 +50,17 @@ cargo run -p tools -- wasm-start --open
 
 # Test layout comparison
 cargo run -p tools -- compare-layouts \
-  --reference reference/todomvc_dom_layout_700.json \
-  --actual reference/todomvc_dom_layout_700.json
+  --reference reference/layouts/layout.json \
+  --actual reference/layouts/layout.json
 
 # Generate visual layout
 cargo run -p tools -- visualize-layout \
-  --input reference/todomvc_dom_layout_700.json \
+  --input reference/layouts/layout.json \
   --output /tmp/layout.html
 
 # Check visual similarity
 cargo run -p tools -- pixel-diff \
-  --reference reference/todomvc_reference_700.png \
+  --reference reference/screenshots/todomvc_reference_700.png \
   --current /tmp/renderer.png \
   --threshold 0.8
 ```
@@ -71,13 +71,7 @@ cargo run -p tools -- pixel-diff \
 raybox/
 ├── CLAUDE.md                      # AI agent guide
 ├── README.md                      # This file
-├── specs.md                       # Technical specification
 ├── CLEANUP_PLAN.md               # Cleanup and next steps
-├── PROFILING_STRATEGY.md         # CPU melting prevention
-├── WORKFLOW_ANALYSIS.md          # Lessons from previous attempts
-├── RUST_ONLY_ARCHITECTURE.md     # Why 100% Rust
-├── V1_COMPLETE_REPORT.md         # V1 completion report
-│
 ├── Cargo.toml                     # Workspace root
 ├── renderer/                      # WASM WebGPU renderer
 │   ├── src/
@@ -101,15 +95,30 @@ raybox/
 │   ├── index.html                # Main HTML
 │   └── pkg/                      # WASM output (generated)
 │
-├── reference/                     # Reference materials
-│   ├── todomvc_dom_layout_700.json # 45 elements at 700×700
-│   ├── todomvc_reference_700.png   # Reference screenshot
-│   ├── todomvc_populated.html      # Static HTML for testing
-│   └── LAYOUT_ANALYSIS.md          # Layout breakdown
+├── reference/                     # Reference HTML + ground-truth layouts/screenshots (no symlinks)
+│   ├── html/                      # Frozen TodoMVC assets (index, CSS, JS, populated fixture)
+│   ├── layouts/                   # Layout JSONs (700px/full/precise)
+│   ├── screenshots/               # Reference captures (700px, 1920px)
+│   ├── docs/                      # LAYOUT_ANALYSIS, REFERENCE_METADATA
+│   └── visuals/                   # Layout visualization
 │
-└── docs/                          # Documentation
-    ├── CHROME_SETUP.md            # WebGPU flags and setup
-    └── DOM_EXTRACTION.md          # Layout extraction guide
+├── classic/                       # Current 2D renderer artifacts
+│   ├── README.md
+│   ├── captures/                  # renderer screenshots (screenshot.png target)
+│   ├── docs/                      # V1 reports, specs, profiling, capture notes (incl. moved root docs)
+│   └── layouts/                   # renderer-generated layout/diff outputs
+│
+├── emergent/                      # Upcoming physical/emergent version staging
+│   ├── README.md
+│   ├── docs/PHYSICAL_NOTES.md     # seed notes for physical UI
+│   ├── design/                    # placeholders for themes/scene configs
+│   └── assets/                    # future physical captures
+│
+├── docs/                          # Documentation
+│   ├── CHROME_SETUP.md            # WebGPU flags and setup
+│   └── DOM_EXTRACTION.md          # Layout extraction guide
+│
+└── classic/docs/                  # Classic renderer docs (specs, reports, profiling, capture notes)
 ```
 
 ## Development Workflow
@@ -155,7 +164,7 @@ cargo run -p tools -- screenshot \
 
 # Compare with reference
 cargo run -p tools -- pixel-diff \
-  --reference reference/todomvc_reference_700.png \
+  --reference reference/screenshots/todomvc_reference_700.png \
   --current /tmp/test.png \
   --threshold 0.95
 ```
@@ -229,7 +238,7 @@ Next phase focuses on visual completeness:
 
 ### Essential Reading
 - **CLAUDE.md** - AI agent guide with critical rules
-- **specs.md** - Complete technical specification
+- **classic/docs/specs.md** - Complete technical specification for the classic renderer
 - **CLEANUP_PLAN.md** - Current status and next steps
 - **V1_COMPLETE_REPORT.md** - V1 completion details
 

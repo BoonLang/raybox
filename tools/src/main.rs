@@ -170,7 +170,7 @@ enum Commands {
     /// Capture precise layout from reference HTML
     CaptureReference {
         /// HTML file to open (inside reference/)
-        #[arg(short, long, default_value = "reference/todomvc_populated.html")]
+        #[arg(short, long, default_value = "reference/html/todomvc_populated.html")]
         file: String,
 
         /// Optional layout JSON to use instead of DOM snapshot
@@ -178,7 +178,7 @@ enum Commands {
         layout_json: Option<String>,
 
         /// Output JSON path
-        #[arg(short, long, default_value = "reference/layout_precise_reference.json")]
+        #[arg(short, long, default_value = "reference/layouts/layout_precise_reference.json")]
         out: String,
 
         /// Launch headed Chrome (default headless)
@@ -197,7 +197,7 @@ enum Commands {
         url: String,
 
         /// Output JSON path
-        #[arg(short, long, default_value = "reference/layout_precise_renderer.json")]
+        #[arg(short, long, default_value = "reference/layouts/layout_precise_renderer.json")]
         out: String,
 
         /// Launch headed Chrome (default headless)
@@ -306,7 +306,7 @@ fn main() -> Result<()> {
                     println!("\n📸 Taking screenshot...");
                     match monitor.screenshot(&url).await {
                         Ok(data) => {
-                            let path = "screenshot.png";
+                            let path = "classic/screenshots/screenshot.png";
                             std::fs::write(path, data)?;
                             println!("   ✅ Screenshot saved: {}", path);
                         }

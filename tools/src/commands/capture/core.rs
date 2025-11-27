@@ -398,7 +398,7 @@ pub async fn capture_layout(opts: CaptureOptions<'_>) -> Result<LayoutCapture> {
     // Renderer capture via raybox_report_json
     // Wait (up to 5s) for the page to expose __layout_json, otherwise log debug info
     let fetch_probe = EvaluateParams::builder()
-        .expression("fetch('/reference/todomvc_dom_layout_700.json?v=20251126').then(r=>r.json()).then(j=>j.elements[0].height).catch(e=>`err:${e}`)")
+        .expression("fetch('/reference/layouts/layout.json?v=20251126').then(r=>r.json()).then(j=>j.elements[0].height).catch(e=>`err:${e}`)")
         .await_promise(true)
         .return_by_value(true)
         .build()

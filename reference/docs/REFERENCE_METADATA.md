@@ -117,15 +117,15 @@ google-chrome --headless --disable-gpu \
 ```bash
 # Serve and capture in one command
 cargo run -p tools -- screenshot \
-  --file reference/todomvc_populated.html \
-  --output reference/todomvc_chrome_reference.png \
+  --file reference/html/todomvc_populated.html \
+  --output reference/screenshots/todomvc_chrome_reference.png \
   --width 1920 --height 1080
 
 # Or separate steps
 just serve &
 cargo run -p tools -- screenshot \
   --url http://localhost:8080/todomvc_populated.html \
-  --output reference/todomvc_chrome_reference.png
+  --output reference/screenshots/todomvc_chrome_reference.png
 ```
 
 ## Notes

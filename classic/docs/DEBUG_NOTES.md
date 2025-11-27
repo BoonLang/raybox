@@ -68,13 +68,13 @@
 
 ```bash
 # Check filter button data
-cat reference/todomvc_dom_layout_700.json | jq '.elements[35]'
+cat reference/layouts/layout.json | jq '.elements[35]'
 
 # Look for backgroundColor on All button
-cat reference/todomvc_dom_layout_700.json | jq '.elements[35].backgroundColor'
+cat reference/layouts/layout.json | jq '.elements[35].backgroundColor'
 
 # Check all filter buttons
-cat reference/todomvc_dom_layout_700.json | jq '.elements[] | select(.classes[] == "selected")'
+cat reference/layouts/layout.json | jq '.elements[] | select(.classes[] == "selected")'
 ```
 
 ## Likely Root Cause
@@ -101,4 +101,4 @@ cat reference/todomvc_dom_layout_700.json | jq '.elements[] | select(.classes[] 
 **Rectangle with border-radius:** `renderer/src/lib.rs:290-310`
 **Text positioning:** `renderer/src/text_renderer.rs:render_text()`
 **Border rendering:** `renderer/src/lib.rs:315-368`
-**Reference JSON:** `reference/todomvc_dom_layout_700.json` element 35
+**Reference JSON:** `reference/layouts/layout.json` element 35

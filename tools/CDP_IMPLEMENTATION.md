@@ -339,7 +339,7 @@ The current implementation (tools/src/cdp/mod.rs) provides:
 - **Domain**: `Page.captureScreenshot`
 - **Format**: PNG
 - **Usage**: `cargo run -p tools -- check-console -s`
-- **Output**: `screenshot.png` in current directory
+- **Output**: `classic/screenshots/screenshot.png`
 - **Use Cases**: Visual regression testing, debugging
 
 #### 4. **CPU Profiling** ✅ WORKING (chromiumoxide 0.7)

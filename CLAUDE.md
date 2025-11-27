@@ -51,12 +51,13 @@ When the user asks me to commit, I should:
 **Current permanent docs (do not add to this list without permission):**
 1. CLAUDE.md - AI agent guide
 2. README.md - Project overview
-3. specs.md - Technical specification
-4. PROFILING_STRATEGY.md - CPU prevention
-5. WORKFLOW_ANALYSIS.md - Lessons learned
-6. RUST_ONLY_ARCHITECTURE.md - Architecture rationale
-7. V1_COMPLETE_REPORT.md - Historical record
+3. classic/docs/specs.md - Technical specification (classic)
+4. PROFILING_STRATEGY.md - CPU prevention (in classic/docs)
+5. WORKFLOW_ANALYSIS.md - Lessons learned (in classic/docs)
+6. RUST_ONLY_ARCHITECTURE.md - Architecture rationale (in classic/docs)
+7. V1_COMPLETE_REPORT.md - Historical record (in classic/docs)
 8. docs/ - Topic-specific documentation (CHROME_SETUP.md, DOM_EXTRACTION.md)
+9. AGENTS.md - Quick commands for agents (serve, screenshot, reference layout paths)
 
 ### 2. Rust-Only Architecture
 **NO PYTHON. NO NODE.JS. RUST ONLY.**
@@ -108,7 +109,7 @@ See: [`PROFILING_STRATEGY.md`](./PROFILING_STRATEGY.md)
 
 ### 5. DOM Layout Reference is Ground Truth
 
-The file `reference/todomvc_dom_layout.json` contains the EXACT positions of all TodoMVC elements.
+The file `reference/layouts/layout.json` contains the EXACT positions of all TodoMVC elements.
 
 See: [`reference/LAYOUT_ANALYSIS.md`](./reference/LAYOUT_ANALYSIS.md)
 
@@ -131,7 +132,7 @@ Before claiming a feature is "done":
 
 **Standard Testing Sizes:**
 - **Quick verification:** 700×700px (use this for rapid manual/automated testing)
-- **Full reference:** 1920×1080px (matches `reference/todomvc_dom_layout.json`)
+- **Full reference:** 1920×1080px (matches `reference/layouts/layout.json`)
 
 **Screenshot commands:**
 ```bash
@@ -277,7 +278,7 @@ raybox/
 │   └── DOM_EXTRACTION.md         # How to extract layout data
 │
 ├── reference/
-│   ├── todomvc_dom_layout.json   # GROUND TRUTH - all element positions
+│   ├── layout.json   # GROUND TRUTH - all element positions
 │   ├── LAYOUT_ANALYSIS.md        # Human-readable layout breakdown
 │   ├── todomvc_chrome_reference.png  # Visual ground truth
 │   ├── REFERENCE_METADATA.md     # Screenshot metadata
@@ -427,7 +428,7 @@ cargo build --release -p tools
 cargo run -p tools -- wasm-build
 
 # Run extract-dom command
-cargo run -p tools -- extract-dom --output reference/todomvc_dom_layout.json
+cargo run -p tools -- extract-dom --output reference/layouts/layout.json
 
 # Take screenshot for verification
 cargo run -p tools -- screenshot --url http://localhost:8000 --output /tmp/screenshot.png --width 1920
@@ -446,12 +447,12 @@ Create a `Justfile` in the project root:
 ```makefile
 # Extract DOM layout
 extract-dom:
-    cargo run --release -p tools -- extract-dom --output reference/todomvc_dom_layout.json
+    cargo run --release -p tools -- extract-dom --output reference/layouts/layout.json
 
 # Compare layouts
 compare:
     cargo run --release -p tools -- compare-layouts \
-        --reference reference/todomvc_dom_layout.json \
+        --reference reference/layouts/layout.json \
         --actual output/renderer_layout.json
 
 # Run tests
@@ -540,7 +541,7 @@ cargo watch -x test
 
 **Symptom:** Layout positions are "close but not exact"
 
-**Fix:** Use `reference/todomvc_dom_layout.json` as ground truth. Don't guess positions.
+**Fix:** Use `reference/layouts/layout.json` as ground truth. Don't guess positions.
 
 ### 5. No Tests
 
@@ -606,7 +607,7 @@ cargo build --release
 
 # 3. Compare with reference (once compare-layouts is implemented)
 ./target/release/raybox-tools compare-layouts \
-  --reference reference/todomvc_dom_layout.json \
+  --reference reference/layouts/layout.json \
   --actual /tmp/actual.json
 
 # 4. Run tests
@@ -682,7 +683,7 @@ sudo apt install google-chrome # For WebGPU testing
 
 ### 1. Measure, Don't Guess
 
-- Use `reference/todomvc_dom_layout.json` for positions
+- Use `reference/layouts/layout.json` for positions
 - Use `compare-layouts` tool to measure accuracy
 - Use Chrome DevTools Performance tab to profile CPU
 - Use `cargo test` to verify correctness
@@ -807,8 +808,8 @@ Before declaring infrastructure "ready":
 ## 📝 Quick Reference
 
 ### File Paths
-- Layout reference: `reference/todomvc_dom_layout.json`
-- Screenshot reference: `reference/todomvc_chrome_reference.png`
+- Layout reference: `reference/layouts/layout.json`
+- Screenshot reference: `reference/screenshots/todomvc_chrome_reference.png`
 - Tools binary: `target/release/raybox-tools`
 - Main spec: `specs.md`
 
@@ -823,10 +824,10 @@ Before declaring infrastructure "ready":
 ### Commands
 ```bash
 # Extract layout
-cargo run -p tools -- extract-dom -o reference/todomvc_dom_layout.json
+cargo run -p tools -- extract-dom -o reference/layouts/layout.json
 
 # Compare (once implemented)
-cargo run -p tools -- compare-layouts -r reference/todomvc_dom_layout.json -a output/actual.json
+cargo run -p tools -- compare-layouts -r reference/layouts/layout.json -a output/actual.json
 
 # Test
 cargo test --all
@@ -858,7 +859,7 @@ When you start working on this project:
 1. **Check existing docs** - Answer might be in specs.md or other docs
 2. **Read error messages carefully** - Rust errors are helpful
 3. **Run tests** - `cargo test` might reveal the issue
-4. **Check reference data** - Are you using todomvc_dom_layout.json?
+4. **Check reference data** - Are you using layout.json?
 5. **Verify Chrome flags** - WebGPU issues? Check CHROME_SETUP.md
 6. **Ask the user** - If truly stuck, ask for clarification
 

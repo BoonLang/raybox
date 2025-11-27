@@ -32,7 +32,7 @@ cargo run -p tools -- screenshot \
 
 **Standard Testing Sizes:**
 - **700×700px** - Quick verification, recommended for rapid testing
-- **1920×1080px** - Full reference size (matches `reference/todomvc_dom_layout.json`)
+- **1920×1080px** - Full reference size (matches `reference/layouts/layout.json`)
 
 **Implementation:**
 - Uses `chromiumoxide` browser automation
@@ -174,7 +174,7 @@ Extract DOM layout data from CSS analysis (generates reference JSON).
 
 ```bash
 cargo run -p tools -- extract-dom \
-  --output reference/todomvc_dom_layout.json
+  --output reference/layouts/layout.json
 ```
 
 **Generates:** JSON file with element positions, sizes, and styles.
@@ -185,7 +185,7 @@ Compare two layout JSON files and report differences.
 
 ```bash
 cargo run -p tools -- compare-layouts \
-  --reference reference/todomvc_dom_layout.json \
+  --reference reference/layouts/layout.json \
   --actual output/renderer_layout.json \
   --diff-output /tmp/diff.json
 ```
@@ -202,7 +202,7 @@ Generate HTML visualization of layout data.
 
 ```bash
 cargo run -p tools -- visualize-layout \
-  --input reference/todomvc_dom_layout.json \
+  --input reference/layouts/layout.json \
   --output /tmp/layout_viz.html
 ```
 
@@ -214,8 +214,8 @@ Compare two images pixel-by-pixel using SSIM.
 
 ```bash
 cargo run -p tools -- pixel-diff \
-  --reference reference/todomvc_chrome_reference.png \
-  --current /tmp/screenshot.png \
+  --reference reference/screenshots/todomvc_chrome_reference.png \
+  --current classic/screenshots/screenshot.png \
   --threshold 0.95 \
   --output /tmp/diff.png
 ```
@@ -296,7 +296,7 @@ xdg-open /tmp/test.png
 
 # Or compare with reference
 cargo run -p tools -- pixel-diff \
-  --reference reference/todomvc_chrome_reference.png \
+  --reference reference/screenshots/todomvc_chrome_reference.png \
   --current /tmp/test.png \
   --threshold 0.95
 ```
