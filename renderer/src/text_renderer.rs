@@ -63,16 +63,9 @@ impl TextRenderer {
 
     /// Render text element to a bitmap
     pub fn render_text(&mut self, element: &Element) -> Option<RenderedText> {
-        // Prefer real text; if missing, fall back to placeholder (for inputs)
-        let mut placeholder_mode = false;
-        let mut text = element.text.as_deref().unwrap_or("");
+        let text = element.text.as_ref()?;
         if text.trim().is_empty() {
-            if let Some(ph) = element.placeholder.as_deref() {
-                text = ph;
-                placeholder_mode = true;
-            } else {
-                return None;
-            }
+            return None;
         }
 
         // Parse font properties
@@ -82,10 +75,9 @@ impl TextRenderer {
             .as_deref()
             .unwrap_or("Helvetica Neue, Helvetica, Arial, sans-serif");
         let font_weight = element.font_weight.as_deref().unwrap_or("300");
-        let font_style = element.font_style.as_deref().unwrap_or("");
 
         // Build CSS font string
-        let font_str = format!("{} {} {}px {}", font_style, font_weight, font_size, font_family);
+        let font_str = format!("{} {}px {}", font_weight, font_size, font_family);
 
         // Set font for measurement
         self.context.set_font(&font_str);
@@ -119,18 +111,24 @@ impl TextRenderer {
             });
         let text_height = ascent + descent;
 
-        // Horizontal positioning
-        let mut x_position = element.x;
-        let center_text = element.text_align.as_deref() == Some("center")
-            || element.tag == "h1"
-            || element.tag == "p";
-        if center_text && text_width > 0 {
-            x_position = element.x + (element.width - text_width as f32) / 2.0;
-        }
-        // Placeholder padding
-        if placeholder_mode {
+        // Calculate x position based on text alignment
+        let should_center = element.text_align.as_deref() == Some("center")
+            || (element.tag == "a" && element.classes.contains(&"selected".to_string()));
+
+        // Default x positioning
+        let mut x_position = if should_center {
+            // Center text within element width
+            element.x + (element.width - text_width as f32) / 2.0
+        } else {
+            element.x
+        };
+        // Todo item labels should start to the right of the checkbox
+        if element.tag == "label" && !element.classes.contains(&"toggle-all-label".to_string()) {
+            // Prefer explicit padding-left from captured layout; fallback to proportional offset
             if let Some(pad) = Self::parse_px(element.padding_left.as_deref()) {
                 x_position = element.x + pad;
+            } else {
+                x_position = element.x + element.width * 0.109;
             }
         }
 
@@ -147,14 +145,7 @@ impl TextRenderer {
         self.context.set_font(&font_str);
 
         // Parse text color
-        let color = if placeholder_mode {
-            "rgb(179, 179, 179)"
-        } else if element.y >= 420.0 && (element.tag == "span" || element.tag == "a" || element.tag == "button") {
-            // Footer text: force visible dark color
-            "rgb(72, 72, 72)"
-        } else {
-            element.color.as_deref().unwrap_or("rgb(72, 72, 72)")
-        };
+        let color = element.color.as_deref().unwrap_or("rgb(72, 72, 72)");
         self.context.set_fill_style_str(color);
 
         // Enable anti-aliasing
@@ -199,69 +190,12 @@ impl TextRenderer {
         let pad_top = Self::parse_px(element.padding_top.as_deref()).unwrap_or(0.0);
         let pad_bottom = Self::parse_px(element.padding_bottom.as_deref()).unwrap_or(0.0);
         let content_height = (element.height - pad_top - pad_bottom).max(0.0);
-        let mut text_top = element.y + pad_top + (content_height - text_height) / 2.0;
-        if element.tag == "h1" {
-            text_top += 28.0; // nudge title down to clear top margin
-        }
+        let text_top = element.y + pad_top + (content_height - text_height) / 2.0;
         let y_position = text_top - padding as f32;
 
         Some(RenderedText {
             x: x_position - padding as f32, // Subtract padding because text is drawn at offset `padding` inside canvas
             y: y_position,
-            width: canvas_width,
-            height: canvas_height,
-            image_data: rgba_data,
-        })
-    }
-
-    /// Render arbitrary text with provided font settings (used for footer fallback).
-    pub fn render_text_literal(
-        &mut self,
-        text: &str,
-        x: f32,
-        y: f32,
-        font_size: f32,
-        color: &str,
-        font_family: &str,
-        font_weight: &str,
-    ) -> Option<RenderedText> {
-        if text.trim().is_empty() {
-            return None;
-        }
-
-        let font_str = format!("{} {}px {}", font_weight, font_size, font_family);
-        self.context.set_font(&font_str);
-
-        let metrics = self.context.measure_text(text).ok()?;
-        let text_width = metrics.width() as u32;
-        let ascent = metrics.actual_bounding_box_ascent();
-        let descent = metrics.actual_bounding_box_descent();
-        let text_height = ascent + descent;
-
-        let padding = 2;
-        let canvas_width = text_width + padding * 2;
-        let canvas_height = (text_height.ceil() as u32) + padding * 2;
-
-        self.canvas.set_width(canvas_width);
-        self.canvas.set_height(canvas_height);
-        self.context.set_font(&font_str);
-        self.context.set_fill_style_str(color);
-        self.context
-            .clear_rect(0.0, 0.0, canvas_width as f64, canvas_height as f64);
-        let baseline_y = padding as f32 + ascent as f32;
-        self.context
-            .fill_text(text, padding as f64, baseline_y as f64)
-            .ok()?;
-
-        let image_data = self
-            .context
-            .get_image_data(0.0, 0.0, canvas_width as f64, canvas_height as f64)
-            .ok()?;
-        let rgba_data = image_data.data().0;
-
-        Some(RenderedText {
-            x: x - padding as f32,
-            y: y - padding as f32,
             width: canvas_width,
             height: canvas_height,
             image_data: rgba_data,
@@ -327,12 +261,9 @@ impl TextRenderer {
             self.context.set_line_width(spec.check_stroke_width);
             self.context.begin_path();
             // Sharper V with shorter left arm
-            self.context
-                .move_to(spec.check_points[0].0, spec.check_points[0].1);
-            self.context
-                .line_to(spec.check_points[1].0, spec.check_points[1].1);
-            self.context
-                .line_to(spec.check_points[2].0, spec.check_points[2].1);
+            self.context.move_to(spec.check_points[0].0, spec.check_points[0].1);
+            self.context.line_to(spec.check_points[1].0, spec.check_points[1].1);
+            self.context.line_to(spec.check_points[2].0, spec.check_points[2].1);
             self.context.stroke();
         }
 

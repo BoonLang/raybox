@@ -16,12 +16,11 @@ function extractDOMLayout() {
   const elements = [];
   const allElements = document.querySelectorAll('*');
 
-  // Get viewport info
+  // Get viewport info (note: devicePixelRatio kept as number for Rust f32 compatibility)
   const viewport = {
     width: window.innerWidth,
     height: window.innerHeight,
-    devicePixelRatio: window.devicePixelRatio,
-    timestamp: new Date().toISOString(),
+    devicePixelRatio: parseFloat(window.devicePixelRatio) || 1.0,
   };
 
   allElements.forEach((el, index) => {
@@ -61,11 +60,9 @@ function extractDOMLayout() {
       width: Math.round(rect.width * 100) / 100,
       height: Math.round(rect.height * 100) / 100,
 
-      // Position properties
-      left: Math.round(rect.left * 100) / 100,
-      top: Math.round(rect.top * 100) / 100,
-      right: Math.round(rect.right * 100) / 100,
-      bottom: Math.round(rect.bottom * 100) / 100,
+      // Note: left/top/right/bottom from getBoundingClientRect are NOT included
+      // because they conflict with CSS positioning properties (which are strings like "10px")
+      // Use x/y/width/height instead for element positioning
 
       // Typography
       fontSize: computed.fontSize,
@@ -123,9 +120,9 @@ function extractDOMLayout() {
       value: el.value || null,
       placeholder: el.placeholder || null,
 
-      // State
-      checked: el.checked || null,
-      disabled: el.disabled || null,
+      // State (use explicit boolean check to preserve false vs null distinction)
+      checked: el.type === 'checkbox' ? el.checked : null,
+      disabled: el.disabled === true ? true : null,
 
       // Visibility
       visibility: computed.visibility,
@@ -142,7 +139,7 @@ function extractDOMLayout() {
       url: window.location.href,
       title: document.title,
       userAgent: navigator.userAgent,
-      timestamp: viewport.timestamp,
+      timestamp: new Date().toISOString(),
       viewport: viewport,
     },
     elements: elements,

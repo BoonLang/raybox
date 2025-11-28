@@ -2,6 +2,7 @@ pub mod capture;
 pub mod capture_js;
 pub mod compare_layouts;
 pub mod extract_dom;
+pub mod extract_dom_cdp;
 pub mod integration_test;
 pub mod pixel_diff;
 pub mod screenshot;

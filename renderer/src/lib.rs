@@ -1,8 +1,6 @@
 #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 
-mod block_pipeline;
 mod border_pipeline;
-mod emergent;
 mod layout;
 mod pipeline;
 mod rectangle_pipeline;
@@ -16,9 +14,9 @@ mod wasm_impl {
 
     use serde::Serialize;
     use serde_wasm_bindgen;
+    use wasm_bindgen::prelude::*;
 
     use super::{
-        block_pipeline::BlockPipeline,
         border_pipeline::{create_border_edges, BorderPipeline},
         layout::{parse_box_shadow, parse_color, Element, LayoutData, Shadow},
         parse_font_size_px,
@@ -27,7 +25,6 @@ mod wasm_impl {
         text_renderer::{TextRenderer, TextTexture},
         textured_quad_pipeline::{TexturedQuadInstance, TexturedQuadPipeline},
     };
-    use crate::emergent;
 
     pub use wasm_bindgen::prelude::*;
 
@@ -52,24 +49,12 @@ mod wasm_impl {
             let _ = js_sys::Reflect::set(
                 &win,
                 &"__parsed_html_height".into(),
-                &JsValue::from_f64(
-                    layout
-                        .elements
-                        .get(0)
-                        .map(|e| e.height as f64)
-                        .unwrap_or(0.0),
-                ),
+                &JsValue::from_f64(layout.elements.get(0).map(|e| e.height as f64).unwrap_or(0.0)),
             );
             let _ = js_sys::Reflect::set(
                 &win,
                 &"__parsed_body_height".into(),
-                &JsValue::from_f64(
-                    layout
-                        .elements
-                        .get(1)
-                        .map(|e| e.height as f64)
-                        .unwrap_or(0.0),
-                ),
+                &JsValue::from_f64(layout.elements.get(1).map(|e| e.height as f64).unwrap_or(0.0)),
             );
             let _ = js_sys::Reflect::set(
                 &win,
@@ -79,13 +64,7 @@ mod wasm_impl {
             let _ = js_sys::Reflect::set(
                 &win,
                 &"__first_elem_tag".into(),
-                &JsValue::from_str(
-                    layout
-                        .elements
-                        .get(0)
-                        .map(|e| e.tag.as_str())
-                        .unwrap_or("none"),
-                ),
+                &JsValue::from_str(layout.elements.get(0).map(|e| e.tag.as_str()).unwrap_or("none")),
             );
             let _ = js_sys::Reflect::set(
                 &win,
@@ -101,9 +80,6 @@ mod wasm_impl {
         if let Ok(mut gpu) = initialize_webgpu(canvas_id).await {
             if let Ok(r) = render_layout(&mut gpu, &layout) {
                 report = r;
-            }
-            if let Some(win) = web_sys::window() {
-                let _ = js_sys::Reflect::set(&win, &"__classic_webgpu_ok".into(), &JsValue::TRUE);
             }
         }
         LAST_REPORT.with(|cell| cell.replace(Some(report.clone())));
@@ -141,116 +117,6 @@ mod wasm_impl {
         Ok(())
     }
 
-    /// Temporary emergent entry: reuse classic render until physical pipeline is ready.
-    #[wasm_bindgen]
-    pub async fn start_emergent_renderer(
-        canvas_id: &str,
-        layout_json: &str,
-    ) -> Result<(), JsValue> {
-        let layout = LayoutData::from_json(layout_json)
-            .map_err(|e| JsValue::from_str(&format!("Failed to parse layout JSON: {}", e)))?;
-        let mut gpu = initialize_webgpu(canvas_id).await?;
-
-        // Clear first (match layout background)
-        let frame = gpu
-            .surface
-            .get_current_texture()
-            .map_err(|e| JsValue::from_str(&format!("Surface error: {:?}", e)))?;
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Color clear to body background
-        {
-            let mut encoder = gpu
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("emergent clear pass"),
-                });
-            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("emergent clear pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.96,
-                            g: 0.95,
-                            b: 0.94,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            gpu.queue.submit(std::iter::once(encoder.finish()));
-        }
-
-        // Resize depth buffer if canvas size changed (defensive for future resizes)
-        if frame.texture.width() != gpu.depth_texture.width()
-            || frame.texture.height() != gpu.depth_texture.height()
-        {
-            gpu.depth_texture =
-                create_depth_texture(&gpu.device, frame.texture.width(), frame.texture.height());
-            gpu.depth_view = gpu
-                .depth_texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
-        }
-
-        {
-            let mut encoder = gpu
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("emergent clear"),
-                });
-            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("emergent clear pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.96,
-                            g: 0.95,
-                            b: 0.94,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            gpu.queue.submit(std::iter::once(encoder.finish()));
-        }
-
-        emergent::render_blocks(
-            &mut gpu.block_pipeline,
-            &mut gpu.shadow_pipeline,
-            &mut gpu.rectangle_pipeline,
-            &mut gpu.text_pipeline,
-            &mut gpu.text_renderer,
-            &view,
-            &gpu.depth_view,
-            &layout,
-            &gpu.device,
-            &gpu.queue,
-        )?;
-
-        if let Some(win) = web_sys::window() {
-            let _ = js_sys::Reflect::set(&win, &"__emergent_webgpu_ok".into(), &JsValue::TRUE);
-        }
-
-        frame.present();
-        Ok(())
-    }
-
     #[wasm_bindgen]
     pub fn get_render_report() -> Result<JsValue, JsValue> {
         LAST_REPORT.with(|cell| {
@@ -278,9 +144,6 @@ mod wasm_impl {
         queue: wgpu::Queue,
         surface: wgpu::Surface<'static>,
         surface_config: wgpu::SurfaceConfiguration,
-        depth_texture: wgpu::Texture,
-        depth_view: wgpu::TextureView,
-        block_pipeline: BlockPipeline,
         rectangle_pipeline: RectanglePipeline,
         shadow_pipeline: ShadowPipeline,
         border_pipeline: BorderPipeline,
@@ -621,35 +484,12 @@ mod wasm_impl {
             .map_err(|e| format!("Failed to create device: {:?}", e))?;
 
         let surface_caps = surface.get_capabilities(&adapter);
-        // Force BGRA8UnormSrgb if supported
         let surface_format = surface_caps
             .formats
             .iter()
             .copied()
-            .find(|f| *f == wgpu::TextureFormat::Bgra8UnormSrgb)
-            .or_else(|| surface_caps.formats.iter().copied().find(|f| f.is_srgb()))
+            .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
-
-        log::info!(
-            "Adapter: {:?}, Surface format chosen: {:?}, Supported: {:?}",
-            adapter.get_info(),
-            surface_format,
-            surface_caps.formats
-        );
-        #[cfg(target_arch = "wasm32")]
-        {
-            if let Some(win) = web_sys::window() {
-                let info = adapter.get_info();
-                let s = format!("{:?}", info);
-                let _ = js_sys::Reflect::set(&win, &"__emergent_adapter".into(), &JsValue::from_str(&s));
-                let formats: Vec<String> = surface_caps.formats.iter().map(|f| format!("{:?}", f)).collect();
-                let _ = js_sys::Reflect::set(
-                    &win,
-                    &"__emergent_surface_formats".into(),
-                    &serde_wasm_bindgen::to_value(&formats).unwrap_or(JsValue::NULL),
-                );
-            }
-        }
 
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -663,48 +503,23 @@ mod wasm_impl {
         };
         surface.configure(&device, &surface_config);
 
-        let depth_texture =
-            create_depth_texture(&device, surface_config.width, surface_config.height);
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
         let rectangle_pipeline = RectanglePipeline::new(&device, surface_format, 700, 700, 100);
         let shadow_pipeline = ShadowPipeline::new(&device, surface_format, 700, 700, 50);
         let border_pipeline = BorderPipeline::new(&device, surface_format, 700, 700, 400);
         let text_pipeline = TexturedQuadPipeline::new(&device, surface_format, 700, 700, 100);
         let text_renderer = TextRenderer::new()
             .map_err(|e| JsValue::from_str(&format!("Failed to create text renderer: {}", e)))?;
-        let block_pipeline = BlockPipeline::new(&device, &surface_config);
 
         Ok(GpuContext {
             device,
             queue,
             surface,
             surface_config,
-            depth_texture,
-            depth_view,
-            block_pipeline,
             rectangle_pipeline,
             shadow_pipeline,
             border_pipeline,
             text_pipeline,
             text_renderer,
-        })
-    }
-
-    fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
-        device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("depth-texture"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth24Plus,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
         })
     }
 
@@ -1048,19 +863,19 @@ mod wasm_impl {
 
             let mut text_added = false;
 
-            if let Some(rendered_text) = gpu.text_renderer.render_text(element) {
-                let texture = TextTexture::from_rendered_text(
-                    &gpu.device,
-                    &gpu.queue,
-                    gpu.text_pipeline.bind_group_layout(),
-                    &rendered_text,
-                );
-                let y_pos = base_y + (rendered_text.y - element.y) + (elem_y - element.y);
-                let tw = texture.width as f32;
-                let th = texture.height as f32;
-                text_instances.push(TexturedQuadInstance::new(
-                    rendered_text.x - offset_x,
-                    y_pos,
+                if let Some(rendered_text) = gpu.text_renderer.render_text(element) {
+                    let texture = TextTexture::from_rendered_text(
+                        &gpu.device,
+                        &gpu.queue,
+                        gpu.text_pipeline.bind_group_layout(),
+                        &rendered_text,
+                    );
+                    let y_pos = base_y + (rendered_text.y - element.y) + (elem_y - element.y);
+                    let tw = texture.width as f32;
+                    let th = texture.height as f32;
+                    text_instances.push(TexturedQuadInstance::new(
+                        rendered_text.x - offset_x,
+                        y_pos,
                     tw,
                     th,
                 ));
@@ -1164,8 +979,7 @@ mod wasm_impl {
                     let mut placeholder_elem = element.clone();
                     placeholder_elem.text = Some(placeholder.clone());
                     placeholder_elem.color = Some("rgba(0, 0, 0, 0.4)".to_string());
-                    let pad_left =
-                        parse_font_size_px(element.padding_left.as_deref()).unwrap_or(60.0);
+                    let pad_left = parse_font_size_px(element.padding_left.as_deref()).unwrap_or(60.0);
                     placeholder_elem.x = element.x + pad_left;
 
                     if let Some(rendered_text) = gpu.text_renderer.render_text(&placeholder_elem) {
@@ -1336,6 +1150,7 @@ mod wasm_impl {
         let _ = footer_y;
         false
     }
+
 }
 
 fn parse_font_size_px(val: Option<&str>) -> Option<f32> {

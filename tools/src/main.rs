@@ -25,6 +25,25 @@ enum Commands {
         output: String,
     },
 
+    /// Extract DOM layout via Chrome DevTools Protocol (browser-based, most accurate)
+    ExtractDomCdp {
+        /// URL to extract layout from
+        #[arg(short, long)]
+        url: String,
+
+        /// Output JSON file path
+        #[arg(short, long)]
+        output: String,
+
+        /// Viewport width
+        #[arg(long, default_value = "700")]
+        width: u32,
+
+        /// Viewport height
+        #[arg(long, default_value = "700")]
+        height: u32,
+    },
+
     /// Compare two layout JSON files
     CompareLayouts {
         /// Reference layout JSON file
@@ -261,6 +280,15 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::ExtractDom { output } => {
             commands::extract_dom::run(&output)?;
+        }
+
+        Commands::ExtractDomCdp {
+            url,
+            output,
+            width,
+            height,
+        } => {
+            commands::extract_dom_cdp::run(&url, &output, width, height)?;
         }
 
         Commands::CompareLayouts {

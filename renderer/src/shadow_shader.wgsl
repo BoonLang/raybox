@@ -104,20 +104,23 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let shadow_center1 = content_top_left + input.content_size * 0.5 + input.offset1;
     let relative_pos1 = input.local_pos - shadow_center1;
     let dist1 = sd_box(relative_pos1, input.content_size * 0.5);
-    // Alpha grows outside the content; zero inside
-    let alpha1 = smoothstep(0.0, input.blur_radius1, dist1) * input.color1.a;
+    let alpha1 = (1.0 - smoothstep(0.0, input.blur_radius1, dist1)) * input.color1.a;
 
     // Layer 2: Shadow gradient centered at content + offset
     let shadow_center2 = content_top_left + input.content_size * 0.5 + input.offset2;
     let relative_pos2 = input.local_pos - shadow_center2;
     let dist2 = sd_box(relative_pos2, input.content_size * 0.5);
-    let alpha2 = smoothstep(0.0, input.blur_radius2, dist2) * input.color2.a;
+    let alpha2 = (1.0 - smoothstep(0.0, input.blur_radius2, dist2)) * input.color2.a;
 
-    // Blend the two layers using premultiplied alpha (front-to-back)
-    let c1 = input.color1.rgb * alpha1;
-    let c2 = input.color2.rgb * alpha2;
+    // Blend the two layers using "over" compositing (front-to-back)
+    // Formula: result = src + dst * (1 - src.a)
+    // Layer 1 is the front layer (small sharp shadow)
+    let color1_premult = input.color1.rgb * alpha1;
+    let color2_premult = input.color2.rgb * alpha2;
+
+    // Composite: layer1 over layer2
+    let final_color = color1_premult + color2_premult * (1.0 - alpha1);
     let final_alpha = alpha1 + alpha2 * (1.0 - alpha1);
-    let final_color = c1 + c2 * (1.0 - alpha1);
 
-    return vec4<f32>(final_color, final_alpha);
+    return vec4<f32>(final_color / max(final_alpha, 0.001), final_alpha);
 }

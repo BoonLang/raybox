@@ -246,7 +246,12 @@ impl ShadowPipeline {
                     view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load, // do not clear; background already drawn
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.96, // #f5f5f5 background
+                            g: 0.96,
+                            b: 0.96,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
