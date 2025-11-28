@@ -27,23 +27,80 @@ function extractDOMLayout() {
     const rect = el.getBoundingClientRect();
     const computed = window.getComputedStyle(el);
 
-    // Skip elements with no size (unless they're important containers)
-    const hasSize = rect.width > 0 || rect.height > 0;
-    const isImportant = el.id || el.classList.length > 0 || el.tagName === 'INPUT';
+    // Skip completely invisible elements
+    if (rect.width === 0 && rect.height === 0) return;
+    if (computed.visibility === 'hidden') return;
+    if (computed.display === 'none') return;
 
-    if (!hasSize && !isImportant) {
+    // Checkboxes may have opacity:0 (TodoMVC uses SVG background on label)
+    // but renderer draws them as circles, so keep them
+    const isCheckboxInput = el.tagName === 'INPUT' && el.type === 'checkbox';
+    if (parseFloat(computed.opacity) === 0 && !isCheckboxInput) return;
+
+    // Visual significance filtering - only extract elements that contribute visually
+    const hasBg = computed.backgroundColor !== 'rgba(0, 0, 0, 0)'
+               && computed.backgroundColor !== 'transparent';
+
+    const hasBorder = (
+      parseFloat(computed.borderTopWidth) > 0 ||
+      parseFloat(computed.borderRightWidth) > 0 ||
+      parseFloat(computed.borderBottomWidth) > 0 ||
+      parseFloat(computed.borderLeftWidth) > 0
+    );
+
+    const hasShadow = computed.boxShadow !== 'none';
+
+    // Direct text content (not inherited from children)
+    const hasDirectText = Array.from(el.childNodes)
+      .filter(n => n.nodeType === Node.TEXT_NODE)
+      .some(n => n.textContent.trim().length > 0);
+
+    // Interactive elements always included
+    const isInteractive = ['INPUT', 'BUTTON', 'SELECT', 'TEXTAREA'].includes(el.tagName);
+
+    // Root elements (html, body) always included for structure
+    const isRoot = ['HTML', 'BODY'].includes(el.tagName);
+
+    // Skip inline text styling elements (they duplicate parent text content)
+    // These elements exist only to style portions of text, not as separate visual elements
+    const isInlineTextStyling = ['STRONG', 'EM', 'B', 'I', 'U', 'S', 'MARK', 'SMALL', 'SUB', 'SUP'].includes(el.tagName);
+
+    // Skip nested <a> tags inside text containers (they're part of the parent's text)
+    // But keep <a> tags inside <li> that are navigation/filter buttons
+    const isNestedLink = el.tagName === 'A' && el.parentElement &&
+      ['P', 'SPAN'].includes(el.parentElement.tagName);
+
+    if (isInlineTextStyling || isNestedLink) {
+      return;
+    }
+
+    // Skip if no visual significance (isCheckboxInput defined earlier for opacity check)
+    if (!hasBg && !hasBorder && !hasShadow && !hasDirectText && !isInteractive && !isCheckboxInput && !isRoot) {
       return;
     }
 
     // Get text content (truncated for readability)
-    let textContent = el.textContent?.trim() || '';
-    if (el.childElementCount > 0) {
-      // For containers, only get direct text nodes
+    let textContent = '';
+
+    // Check if this is a "leaf" text container (has inline children but no block children)
+    // Leaf text containers should use full textContent (e.g., "<span><strong>3</strong> items left</span>")
+    // Containers with block children should only use direct text nodes
+    const hasBlockChildren = Array.from(el.children).some(child => {
+      const display = window.getComputedStyle(child).display;
+      return display === 'block' || display === 'flex' || display === 'grid' ||
+             display === 'list-item' || display === 'table';
+    });
+
+    if (hasBlockChildren) {
+      // For containers with block children, only get direct text nodes
       textContent = Array.from(el.childNodes)
         .filter(node => node.nodeType === Node.TEXT_NODE)
         .map(node => node.textContent.trim())
         .filter(t => t.length > 0)
         .join(' ');
+    } else {
+      // For leaf text containers, use full textContent (includes inline children)
+      textContent = el.textContent?.trim() || '';
     }
     textContent = textContent.substring(0, 100);
 
@@ -98,6 +155,10 @@ function extractDOMLayout() {
       marginLeft: computed.marginLeft,
 
       border: computed.border,
+      borderBottom: computed.borderBottom,
+      borderTop: computed.borderTop,
+      borderLeft: computed.borderLeft,
+      borderRight: computed.borderRight,
       borderRadius: computed.borderRadius,
 
       // Dimensions
@@ -125,8 +186,10 @@ function extractDOMLayout() {
       disabled: el.disabled === true ? true : null,
 
       // Visibility
+      // Note: checkboxes have opacity:0 in CSS but renderer draws them as circles,
+      // so we don't include opacity for checkbox inputs
       visibility: computed.visibility,
-      opacity: computed.opacity,
+      opacity: isCheckboxInput ? null : computed.opacity,
       zIndex: computed.zIndex,
     };
 

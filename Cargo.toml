@@ -1,5 +1,5 @@
 [workspace]
-members = ["tools", "renderer"]
+members = ["tools", "renderers/classic", "renderers/emergent"]
 resolver = "2"
 
 [workspace.package]

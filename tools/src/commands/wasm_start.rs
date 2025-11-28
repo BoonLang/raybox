@@ -31,7 +31,7 @@ pub fn run(release: bool, open_browser: bool, port: u16) -> Result<()> {
 
     println!("=== Development Server ===");
     println!("  URL: http://localhost:{}", port);
-    println!("  Watching: renderer/src/");
+    println!("  Watching: renderers/classic/src/");
     println!("  Press Ctrl+C to stop");
     println!();
 
@@ -125,10 +125,10 @@ fn run_watcher(release: bool, build_id: Arc<Mutex<String>>) -> Result<()> {
         }
     })?;
 
-    // Watch renderer/src directory (includes .rs and .wgsl files)
-    watcher.watch(Path::new("renderer/src"), RecursiveMode::Recursive)?;
+    // Watch classic renderer src directory (includes .rs and .wgsl files)
+    watcher.watch(Path::new("renderers/classic/src"), RecursiveMode::Recursive)?;
     watcher.watch(
-        Path::new("renderer/Cargo.toml"),
+        Path::new("renderers/classic/Cargo.toml"),
         RecursiveMode::NonRecursive,
     )?;
     // Watch web directory (includes .html, .js, .css files)

@@ -284,16 +284,21 @@ raybox/
 │   ├── REFERENCE_METADATA.md     # Screenshot metadata
 │   └── todomvc_populated.html    # Static HTML for testing
 │
-├── renderer/                     # WASM WebGPU renderer crate
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs                # Entry point, WebGPU init, main render loop
-│       ├── layout.rs             # Layout data types (shared with tools)
-│       ├── pipeline.rs           # Triangle pipeline (demo/debug)
-│       ├── rectangle_pipeline.rs # Rectangle rendering pipeline
-│       ├── border_pipeline.rs    # Border rendering pipeline
-│       ├── textured_quad_pipeline.rs # Textured quad for text rendering
-│       └── text_renderer.rs      # Canvas2D text-to-texture renderer
+├── renderers/                    # WASM WebGPU renderers
+│   ├── classic/                  # Classic pipeline-based renderer
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs                # Entry point, WebGPU init, main render loop
+│   │       ├── layout.rs             # Layout data types
+│   │       ├── pipeline.rs           # Triangle pipeline (demo/debug)
+│   │       ├── rectangle_pipeline.rs # Rectangle rendering pipeline
+│   │       ├── border_pipeline.rs    # Border rendering pipeline
+│   │       ├── textured_quad_pipeline.rs # Textured quad for text rendering
+│   │       └── text_renderer.rs      # Canvas2D text-to-texture renderer
+│   └── emergent/                 # SDF/Raymarching renderer (future)
+│       ├── Cargo.toml
+│       └── src/
+│           └── lib.rs                # Stub - implementation pending
 │
 ├── web/                          # Web assets (served by wasm-start)
 │   ├── index.html                # Main HTML with WASM bootstrap
@@ -413,7 +418,7 @@ This command:
 1. Builds the WASM renderer (debug mode, fast compilation)
 2. Generates JS bindings with wasm-bindgen
 3. Starts HTTP server on http://localhost:8000
-4. Watches `renderer/src/` for file changes
+4. Watches `renderers/classic/src/` for file changes
 5. Auto-rebuilds and triggers browser reload on changes
 
 **The auto-reload workflow is CRITICAL for rapid iteration!**

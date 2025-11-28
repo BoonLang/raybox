@@ -93,6 +93,12 @@ pub struct Element {
     pub border_radius: Option<String>,
     #[serde(rename = "borderBottom")]
     pub border_bottom: Option<String>,
+    #[serde(rename = "borderTop")]
+    pub border_top: Option<String>,
+    #[serde(rename = "borderLeft")]
+    pub border_left: Option<String>,
+    #[serde(rename = "borderRight")]
+    pub border_right: Option<String>,
     pub border: Option<String>,
 
     // Other styles
@@ -215,15 +221,16 @@ impl Element {
         false
     }
 
-    /// Parse borderBottom shorthand (e.g., "1px solid #ededed" -> (width, color))
+    /// Parse borderBottom shorthand (e.g., "1px solid #ededed" or "1px solid rgb(237, 237, 237)")
     pub fn parse_border_bottom(&self) -> Option<(f32, String)> {
         let border_str = self.border_bottom.as_ref()?;
         let parts: Vec<&str> = border_str.split_whitespace().collect();
 
         if parts.len() >= 3 {
-            // Format: "1px solid #ededed"
+            // Format: "1px solid #ededed" or "1px solid rgb(237, 237, 237)"
             let width_str = parts[0];
-            let color_str = parts[2];
+            // Join all parts from index 2 onwards to handle rgb() with spaces
+            let color_str = parts[2..].join(" ");
 
             let width = if width_str.ends_with("px") {
                 width_str[..width_str.len() - 2].parse::<f32>().ok()?
@@ -231,21 +238,22 @@ impl Element {
                 width_str.parse::<f32>().ok()?
             };
 
-            Some((width, color_str.to_string()))
+            Some((width, color_str))
         } else {
             None
         }
     }
 
-    /// Parse border shorthand (e.g., "1px solid #ce4646" -> (width, color))
+    /// Parse border shorthand (e.g., "1px solid #ce4646" or "1px solid rgb(206, 70, 70)")
     pub fn parse_border(&self) -> Option<(f32, String)> {
         let border_str = self.border.as_ref()?;
         let parts: Vec<&str> = border_str.split_whitespace().collect();
 
         if parts.len() >= 3 {
-            // Format: "1px solid #ce4646"
+            // Format: "1px solid #ce4646" or "1px solid rgb(206, 70, 70)"
             let width_str = parts[0];
-            let color_str = parts[2];
+            // Join all parts from index 2 onwards to handle rgb() with spaces
+            let color_str = parts[2..].join(" ");
 
             let width = if width_str.ends_with("px") {
                 width_str[..width_str.len() - 2].parse::<f32>().ok()?
@@ -253,7 +261,7 @@ impl Element {
                 width_str.parse::<f32>().ok()?
             };
 
-            Some((width, color_str.to_string()))
+            Some((width, color_str))
         } else {
             None
         }
@@ -333,14 +341,42 @@ pub struct Shadow {
     pub color: (f32, f32, f32, f32), // RGBA normalized
 }
 
+/// Split box-shadow string by commas, but ignore commas inside parentheses
+/// e.g., "rgba(0, 0, 0, 0.2) 0px 2px, rgba(0, 0, 0, 0.1) 0px 25px" -> 2 layers
+fn split_shadow_layers(s: &str) -> Vec<&str> {
+    let mut layers = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                layers.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    // Add the last layer
+    if start < s.len() {
+        layers.push(&s[start..]);
+    }
+    layers
+}
+
 /// Parse box-shadow CSS property
-/// Format: [inset] offset-x offset-y [blur-radius] [spread-radius] color
+/// Supports two formats:
+/// - Standard CSS: [inset] offset-x offset-y [blur-radius] [spread-radius] color
+/// - Chrome computed: [inset] color offset-x offset-y blur-radius spread-radius
 /// Multiple shadows separated by commas
 pub fn parse_box_shadow(box_shadow_str: &str) -> Vec<Shadow> {
     let mut shadows = Vec::new();
 
-    // Split by commas (multiple shadow layers)
-    for layer in box_shadow_str.split(',') {
+    // Split by commas NOT inside parentheses (rgba values have commas inside)
+    let layers = split_shadow_layers(box_shadow_str);
+    for layer in layers {
         let layer = layer.trim();
         if layer.is_empty() {
             continue;
@@ -360,43 +396,85 @@ pub fn parse_box_shadow(box_shadow_str: &str) -> Vec<Shadow> {
             continue; // Need at least offset-x, offset-y, color
         }
 
-        // Parse numeric values (offset-x, offset-y, blur, spread)
-        let mut values = Vec::new();
-        let mut color_start = 0;
+        // Detect format by checking if first token is a color (starts with rgb/rgba/#)
+        let color_first = tokens[0].starts_with("rgb") || tokens[0].starts_with('#');
 
-        for (i, token) in tokens.iter().enumerate() {
-            // Try to parse as number with optional unit
-            if let Some(num) = parse_css_length(token) {
-                values.push(num);
+        if color_first {
+            // Chrome computed format: color offset-x offset-y blur spread
+            // Find where color ends by looking for closing parenthesis
+            let rejoined = tokens.join(" ");
+            let color_end = if let Some(paren_pos) = rejoined.find(')') {
+                paren_pos + 1
             } else {
-                // Not a number, must be color
-                color_start = i;
-                break;
+                // Hex color or something else
+                tokens[0].len()
+            };
+
+            let color_str = &rejoined[..color_end];
+            let rest = rejoined[color_end..].trim();
+
+            // Parse numeric values from rest
+            let num_tokens: Vec<&str> = rest.split_whitespace().collect();
+            let mut values = Vec::new();
+            for token in &num_tokens {
+                if let Some(num) = parse_css_length(token) {
+                    values.push(num);
+                }
             }
+
+            if values.len() < 2 {
+                continue;
+            }
+
+            let offset_x = values[0];
+            let offset_y = values[1];
+            let blur_radius = values.get(2).copied().unwrap_or(0.0);
+            let spread_radius = values.get(3).copied().unwrap_or(0.0);
+            let color = parse_color(color_str).unwrap_or((0.0, 0.0, 0.0, 0.2));
+
+            shadows.push(Shadow {
+                inset,
+                offset_x,
+                offset_y,
+                blur_radius,
+                spread_radius,
+                color,
+            });
+        } else {
+            // Standard format: offset-x offset-y [blur] [spread] color
+            let mut values = Vec::new();
+            let mut color_start = 0;
+
+            for (i, token) in tokens.iter().enumerate() {
+                if let Some(num) = parse_css_length(token) {
+                    values.push(num);
+                } else {
+                    color_start = i;
+                    break;
+                }
+            }
+
+            if values.len() < 2 {
+                continue;
+            }
+
+            let offset_x = values[0];
+            let offset_y = values[1];
+            let blur_radius = values.get(2).copied().unwrap_or(0.0);
+            let spread_radius = values.get(3).copied().unwrap_or(0.0);
+
+            let color_str = tokens[color_start..].join(" ");
+            let color = parse_color(&color_str).unwrap_or((0.0, 0.0, 0.0, 0.2));
+
+            shadows.push(Shadow {
+                inset,
+                offset_x,
+                offset_y,
+                blur_radius,
+                spread_radius,
+                color,
+            });
         }
-
-        // Need at least 2 values (offset-x, offset-y)
-        if values.len() < 2 {
-            continue;
-        }
-
-        let offset_x = values[0];
-        let offset_y = values[1];
-        let blur_radius = values.get(2).copied().unwrap_or(0.0);
-        let spread_radius = values.get(3).copied().unwrap_or(0.0);
-
-        // Parse color (rest of tokens from color_start)
-        let color_str = tokens[color_start..].join(" ");
-        let color = parse_color(&color_str).unwrap_or((0.0, 0.0, 0.0, 0.2));
-
-        shadows.push(Shadow {
-            inset,
-            offset_x,
-            offset_y,
-            blur_radius,
-            spread_radius,
-            color,
-        });
     }
 
     shadows
@@ -462,5 +540,22 @@ mod tests {
         assert_eq!(shadows[0].spread_radius, 0.0);
         assert_eq!(shadows[1].offset_y, 25.0);
         assert_eq!(shadows[1].blur_radius, 50.0);
+    }
+
+    #[test]
+    fn test_parse_box_shadow_chrome_format() {
+        // Chrome computed style puts color first
+        let shadows = parse_box_shadow(
+            "rgba(0, 0, 0, 0.2) 0px 2px 4px 0px, rgba(0, 0, 0, 0.1) 0px 25px 50px 0px",
+        );
+        assert_eq!(shadows.len(), 2);
+        assert_eq!(shadows[0].offset_x, 0.0);
+        assert_eq!(shadows[0].offset_y, 2.0);
+        assert_eq!(shadows[0].blur_radius, 4.0);
+        assert_eq!(shadows[0].spread_radius, 0.0);
+        assert_eq!(shadows[0].color.3, 0.2); // alpha
+        assert_eq!(shadows[1].offset_y, 25.0);
+        assert_eq!(shadows[1].blur_radius, 50.0);
+        assert_eq!(shadows[1].color.3, 0.1); // alpha
     }
 }
