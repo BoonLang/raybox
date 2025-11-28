@@ -17,13 +17,16 @@ struct TextVertex {
     position: [f32; 2],
     uv: [f32; 2],
     color: [f32; 4],
+    scale: f32,      // font_size / glyph_size - for proper SDF scaling
+    _padding: f32,   // Align to 8 bytes
 }
 
 impl TextVertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
+    const ATTRIBS: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
         0 => Float32x2,  // position
         1 => Float32x2,  // uv
         2 => Float32x4,  // color
+        3 => Float32x2,  // scale + padding
     ];
 
     fn desc() -> wgpu::VertexBufferLayout<'static> {
@@ -295,17 +298,19 @@ impl TextPipeline {
     /// Add text at a specific position (left-aligned)
     pub fn add_text(&mut self, text: &str, x: f32, y: f32, font_size: f32, color: [f32; 4]) {
         let layout = self.font_atlas.layout_text(text, x, y, font_size);
-        self.add_glyphs(&layout.glyphs, color);
+        let scale = font_size / self.font_atlas.glyph_size;
+        self.add_glyphs(&layout.glyphs, color, scale);
     }
 
     /// Add centered text at a specific position
     pub fn add_centered_text(&mut self, text: &str, center_x: f32, center_y: f32, font_size: f32, color: [f32; 4]) {
         let layout = self.font_atlas.layout_text_centered(text, center_x, center_y, font_size);
-        self.add_glyphs(&layout.glyphs, color);
+        let scale = font_size / self.font_atlas.glyph_size;
+        self.add_glyphs(&layout.glyphs, color, scale);
     }
 
     /// Add glyphs to the pending batch
-    fn add_glyphs(&mut self, glyphs: &[PositionedGlyph], color: [f32; 4]) {
+    fn add_glyphs(&mut self, glyphs: &[PositionedGlyph], color: [f32; 4], scale: f32) {
         for glyph in glyphs {
             if glyph.char == ' ' {
                 continue;
@@ -321,10 +326,10 @@ impl TextPipeline {
             let u1 = glyph.uv_x + glyph.uv_width;
             let v1 = glyph.uv_y + glyph.uv_height;
 
-            self.pending_vertices.push(TextVertex { position: [x0, y0], uv: [u0, v0], color });
-            self.pending_vertices.push(TextVertex { position: [x1, y0], uv: [u1, v0], color });
-            self.pending_vertices.push(TextVertex { position: [x1, y1], uv: [u1, v1], color });
-            self.pending_vertices.push(TextVertex { position: [x0, y1], uv: [u0, v1], color });
+            self.pending_vertices.push(TextVertex { position: [x0, y0], uv: [u0, v0], color, scale, _padding: 0.0 });
+            self.pending_vertices.push(TextVertex { position: [x1, y0], uv: [u1, v0], color, scale, _padding: 0.0 });
+            self.pending_vertices.push(TextVertex { position: [x1, y1], uv: [u1, v1], color, scale, _padding: 0.0 });
+            self.pending_vertices.push(TextVertex { position: [x0, y1], uv: [u0, v1], color, scale, _padding: 0.0 });
         }
     }
 

@@ -1,9 +1,11 @@
-// MTSDF Text Rendering Shader
+// SDF Text Rendering Shader
 //
-// Uses Multi-channel True Signed Distance Field for crisp text at any size.
-// The MTSDF atlas stores:
-// - R, G, B channels: Multi-channel distance for sharp corners
-// - A channel: True distance for effects (shadows, outlines)
+// Renders SDF fonts with mathematical scaling - one atlas works at any size.
+// The scale factor (font_size / glyph_size) is used to calculate proper
+// anti-aliasing width, giving crisp edges at any scale.
+//
+// Key formula: aa_width = pixel_width * 0.05
+// where pixel_width = 1 / (sdf_range * scale)
 
 struct Uniforms {
     resolution: vec2<f32>,
@@ -15,12 +17,14 @@ struct VertexInput {
     @location(0) position: vec2<f32>,  // Screen position
     @location(1) uv: vec2<f32>,         // Atlas UV coordinates
     @location(2) color: vec4<f32>,      // Text color
+    @location(3) scale_pad: vec2<f32>,  // scale (font_size / glyph_size) + padding
 }
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) scale: f32,
 }
 
 @group(0) @binding(0)
@@ -45,6 +49,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.clip_position = vec4<f32>(clip_x, clip_y, 0.0, 1.0);
     output.uv = input.uv;
     output.color = input.color;
+    output.scale = input.scale_pad.x;  // Pass scale to fragment shader
 
     return output;
 }
@@ -63,21 +68,21 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // 0.5 = edge, >0.5 = inside glyph, <0.5 = outside glyph
     let signed_dist = sample.r;
 
-    // Calculate screen-space derivative for proper anti-aliasing
-    let gradient = vec2<f32>(dpdx(signed_dist), dpdy(signed_dist));
-    let gradient_length = length(gradient);
+    // Mathematical SDF scaling for crisp text at any size:
+    //
+    // pixel_width = how much normalized SDF space 1 screen pixel covers
+    // At native size (scale=1): 1 pixel = 1/sdf_range in SDF space
+    // At 2x scale: 1 pixel = 1/(sdf_range * 2) in SDF space (finer detail)
+    //
+    // aa_width controls anti-aliasing: smaller = crisper, larger = smoother
+    // 0.2 gives ~0.4 pixel of smoothing - good balance with 128px atlas
+    let pixel_width = 1.0 / (uniforms.sdf_range * input.scale);
+    let aa_width = pixel_width * 0.2;
 
-    // Anti-alias width: typically 1-2 pixels of smooth transition
-    // Use screen-space gradient to scale properly at any zoom level
-    let aa_width = 0.5 / max(gradient_length * uniforms.sdf_range, 0.001);
+    // Threshold at 0.5 (the glyph edge) with tight smoothstep for crisp AA
+    let alpha = smoothstep(0.5 - aa_width, 0.5 + aa_width, signed_dist);
 
-    // Clamp aa_width to reasonable bounds to prevent excessive blur or hard edges
-    let clamped_aa = clamp(aa_width, 0.01, 0.25);
-
-    // Smoothstep for anti-aliased edges around the 0.5 threshold
-    let alpha = smoothstep(0.5 - clamped_aa, 0.5 + clamped_aa, signed_dist);
-
-    // Discard fully transparent pixels (outside the glyph + padding)
+    // Discard fully transparent pixels
     if (alpha < 0.001) {
         discard;
     }

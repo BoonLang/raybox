@@ -108,6 +108,104 @@ fn sd_chevron(p: vec2<f32>, scale: f32) -> f32 {
     return min(arm1, arm2);
 }
 
+// ============================================================================
+// SDF Letters for "todos" title (raymarched text - infinite resolution)
+// ============================================================================
+
+// Letter 't' - vertical stem with crossbar
+fn sd_letter_t(p: vec2<f32>, scale: f32) -> f32 {
+    let w = 0.08 * scale;  // stroke width
+
+    // Vertical stem (slightly off-center to left for better balance)
+    let stem = sd_box_2d(p - vec2<f32>(-0.02 * scale, 0.0), vec2<f32>(w, 0.4 * scale));
+
+    // Crossbar at top
+    let crossbar = sd_box_2d(p - vec2<f32>(0.0, 0.25 * scale), vec2<f32>(0.2 * scale, w));
+
+    return min(stem, crossbar);
+}
+
+// Letter 'o' - circle (ring)
+fn sd_letter_o(p: vec2<f32>, scale: f32) -> f32 {
+    let outer_r = 0.3 * scale;
+    let inner_r = 0.14 * scale;
+
+    let outer = sd_circle(p, outer_r);
+    let inner = sd_circle(p, inner_r);
+
+    return max(outer, -inner);  // Subtract inner from outer
+}
+
+// Letter 'd' - vertical stem on right + bowl on left
+fn sd_letter_d(p: vec2<f32>, scale: f32) -> f32 {
+    let w = 0.08 * scale;
+
+    // Vertical stem on right (negative x in shader coords = right on screen)
+    let stem = sd_box_2d(p - vec2<f32>(-0.15 * scale, 0.1 * scale), vec2<f32>(w, 0.5 * scale));
+
+    // Bowl (circle) on left, positioned lower
+    let bowl_outer = sd_circle(p - vec2<f32>(0.0, -0.1 * scale), 0.3 * scale);
+    let bowl_inner = sd_circle(p - vec2<f32>(0.0, -0.1 * scale), 0.14 * scale);
+    let bowl = max(bowl_outer, -bowl_inner);
+
+    return min(stem, bowl);
+}
+
+// Letter 's' - stylized S shape using curved segments
+fn sd_letter_s(p: vec2<f32>, scale: f32) -> f32 {
+    let w = 0.08 * scale;
+    let r = 0.18 * scale;
+
+    // Top arc (right-facing C)
+    let top_center = vec2<f32>(0.0, 0.15 * scale);
+    let top_outer = sd_circle(p - top_center, r + w);
+    let top_inner = sd_circle(p - top_center, r - w);
+    let top_arc = max(top_outer, -top_inner);
+    // Cut off right side of top arc
+    let top_cut = max(top_arc, p.x - 0.05 * scale);
+
+    // Bottom arc (left-facing C)
+    let bot_center = vec2<f32>(0.0, -0.15 * scale);
+    let bot_outer = sd_circle(p - bot_center, r + w);
+    let bot_inner = sd_circle(p - bot_center, r - w);
+    let bot_arc = max(bot_outer, -bot_inner);
+    // Cut off left side of bottom arc
+    let bot_cut = max(bot_arc, -p.x - 0.05 * scale);
+
+    return min(top_cut, bot_cut);
+}
+
+// Complete "todos" word as single SDF - positions letters with proper kerning
+fn sd_todos_word(p: vec2<f32>, scale: f32) -> f32 {
+    let spacing = 0.55 * scale;  // Letter spacing
+
+    // Position letters from left to right: t(-2), o(-1), d(0), o(+1), s(+2)
+    // Negative offset = left side of word, Positive offset = right side
+    // Each letter needs mirrored X for correct orientation
+
+    // t - leftmost letter (negative x offset)
+    let t_pos = p - vec2<f32>(-2.0 * spacing, 0.0);
+    let t = sd_letter_t(vec2<f32>(-t_pos.x, t_pos.y), scale);  // Mirror X
+
+    // o - second letter (symmetric, no mirror needed)
+    let o1_pos = p - vec2<f32>(-1.0 * spacing, -0.1 * scale);
+    let o1 = sd_letter_o(o1_pos, scale);
+
+    // d - center letter (no mirror - stem stays on right side)
+    let d_pos = p - vec2<f32>(0.0, 0.0);
+    let d = sd_letter_d(d_pos, scale);
+
+    // o - fourth letter (symmetric, no mirror needed)
+    let o2_pos = p - vec2<f32>(1.0 * spacing, -0.1 * scale);
+    let o2 = sd_letter_o(o2_pos, scale);
+
+    // s - rightmost letter (positive x offset)
+    let s_pos = p - vec2<f32>(2.0 * spacing, 0.0);
+    let s = sd_letter_s(vec2<f32>(-s_pos.x, s_pos.y), scale);  // Mirror X
+
+    return min(min(min(min(t, o1), d), o2), s);
+}
+
 // Legacy 3D functions (kept for compatibility)
 fn sd_box(p: vec3<f32>, b: vec3<f32>) -> f32 {
     let q = abs(p) - b;
@@ -178,6 +276,9 @@ fn get_element_sdf_2d(p: vec2<f32>, elem: Element) -> f32 {
         }
         case 5u: { // Chevron
             return sd_chevron(local_p, corner_radius);
+        }
+        case 6u: { // TodosWord (raymarched "todos" title)
+            return sd_todos_word(local_p, corner_radius);
         }
         default: {
             return sd_box_2d(local_p, elem.half_extents.xy);

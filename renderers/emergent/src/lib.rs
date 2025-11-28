@@ -149,10 +149,9 @@ mod wasm_impl {
             0.0,
         ));
 
-        // "todos" title - now rendered via MTSDF text pipeline (not SDF elements)
+        // "todos" title - rendered via SDF text pipeline (not raymarched)
         // From layout.json: y=43.59, w=550, h=19.59, color rgb(184, 63, 69)
-        // Center: x=350, y ~70 (above the card)
-        // NOTE: Text is now rendered separately via TextPipeline, not as scene elements
+        // Rendered via text_pipeline.add_centered_text() in render_scene()
 
         // Main todoapp card (white)
         // From layout.json: x=75, y=130, w=550, h=345.1875
@@ -332,9 +331,9 @@ mod wasm_impl {
         let placeholder_color = [0.90, 0.90, 0.90, 1.0]; // #e6e6e6 - placeholder
         let footer_color = [0.47, 0.47, 0.47, 1.0]; // rgb(119, 119, 119) - footer text
 
-        // 1. "todos" title - centered at x=350, y=53 (from layout.json: y=43.59, h=19.59)
-        // Reference: fontSize=80px, but rendered height is only ~20px due to font-weight:200
-        // Center y = 43.59 + 19.59/2 ≈ 53
+        // 1. "todos" title - SDF text (mathematically scaled for crisp rendering)
+        // Reference: layout.json y=43.59, fontSize=80 (title), centered at x=350
+        // Using SDF scaling fix: scale = font_size/glyph_size adjusts sdf_range
         gpu.text_pipeline.add_centered_text("todos", 350.0, 53.0, 80.0, title_color);
 
         // 2. Input placeholder - "What needs to be done?"

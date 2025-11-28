@@ -322,6 +322,36 @@ enum Commands {
         #[arg(long)]
         charset: Option<String>,
     },
+
+    /// Analyze text rendering quality (blur vs jaggedness)
+    TextQuality {
+        /// Reference image (with good text quality)
+        #[arg(short, long)]
+        reference: String,
+
+        /// Current image to analyze
+        #[arg(short, long)]
+        current: String,
+
+        /// Region to crop: x,y,width,height (e.g., "100,0,200,80")
+        #[arg(long)]
+        region: Option<String>,
+
+        /// Save cropped images (prefix path)
+        #[arg(long)]
+        output_crop: Option<String>,
+    },
+
+    /// Analyze text quality of a single image (no reference)
+    TextQualitySingle {
+        /// Image to analyze
+        #[arg(short, long)]
+        image: String,
+
+        /// Region to crop: x,y,width,height (e.g., "100,0,200,80")
+        #[arg(long)]
+        region: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -559,6 +589,42 @@ fn main() -> Result<()> {
                 charset: charset.unwrap_or_else(|| (32u8..=126u8).map(|c| c as char).collect()),
             };
             commands::generate_sdf_atlas::run(&font, &output_png, &output_json, config)?;
+        }
+
+        Commands::TextQuality {
+            reference,
+            current,
+            region,
+            output_crop,
+        } => {
+            let region_tuple = region.map(|r| {
+                let parts: Vec<u32> = r.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                if parts.len() == 4 {
+                    (parts[0], parts[1], parts[2], parts[3])
+                } else {
+                    panic!("Region must be: x,y,width,height");
+                }
+            });
+            let metrics = commands::text_quality::run(
+                &reference,
+                &current,
+                region_tuple,
+                output_crop.as_deref(),
+            )?;
+            metrics.print_report();
+        }
+
+        Commands::TextQualitySingle { image, region } => {
+            let region_tuple = region.map(|r| {
+                let parts: Vec<u32> = r.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                if parts.len() == 4 {
+                    (parts[0], parts[1], parts[2], parts[3])
+                } else {
+                    panic!("Region must be: x,y,width,height");
+                }
+            });
+            let metrics = commands::text_quality::run_single(&image, region_tuple)?;
+            metrics.print_report();
         }
     }
 

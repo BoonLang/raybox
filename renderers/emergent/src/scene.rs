@@ -21,6 +21,7 @@ pub enum ShapeType {
     Ring = 3,       // Hollow circle (for unchecked checkboxes)
     Checkmark = 4,  // Checkmark for completed items
     Chevron = 5,    // Chevron/arrow for toggle-all
+    TodosWord = 6,  // Raymarched "todos" title (infinite resolution)
 }
 
 /// A single element in the scene
@@ -125,6 +126,24 @@ impl Element {
             color,
             corner_radius: size, // Store size for scaling
             shape_type: ShapeType::Chevron,
+            depth_offset,
+        }
+    }
+
+    /// Create the raymarched "todos" title word
+    /// scale: controls the size of the letters (e.g., 80.0 for 80px equivalent)
+    pub fn new_todos_word(
+        center: [f32; 3],
+        scale: f32,
+        color: [f32; 3],
+        depth_offset: f32,
+    ) -> Self {
+        Self {
+            center,
+            half_extents: [scale * 2.0, scale * 0.5, 0.01], // Wide bounding box for "todos"
+            color,
+            corner_radius: scale, // Store scale for the SDF
+            shape_type: ShapeType::TodosWord,
             depth_offset,
         }
     }

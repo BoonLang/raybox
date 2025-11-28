@@ -10,6 +10,7 @@ pub mod pixel_diff;
 pub mod screenshot;
 pub mod screenshot_helpers;
 pub mod serve;
+pub mod text_quality;
 pub mod visualize_layout;
 pub mod wasm_build;
 pub mod wasm_start;
