@@ -3,6 +3,8 @@ pub mod capture_js;
 pub mod compare_layouts;
 pub mod extract_dom;
 pub mod extract_dom_cdp;
+pub mod generate_mtsdf_atlas;
+pub mod generate_sdf_atlas;
 pub mod integration_test;
 pub mod pixel_diff;
 pub mod screenshot;

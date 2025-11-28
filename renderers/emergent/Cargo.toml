@@ -27,5 +27,8 @@ log = { workspace = true }
 # Byte serialization for GPU buffers
 bytemuck = { version = "1.18", features = ["derive"] }
 
+# Image loading for font atlas
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 [features]
 default = []

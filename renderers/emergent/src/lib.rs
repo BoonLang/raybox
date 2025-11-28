@@ -6,8 +6,12 @@
 //! - Bevels emerge from smooth unions at contact zones
 //! - Fillets emerge from smooth subtractions at recesses
 
+mod font;
 mod pipeline;
 mod scene;
+mod text_pipeline;
+
+pub use font::{FontAtlas, TextLayout, PositionedGlyph, load_inter_atlas};
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_impl {
@@ -15,6 +19,7 @@ mod wasm_impl {
 
     use super::pipeline::RaymarchPipeline;
     use super::scene::{Element, Scene};
+    use super::text_pipeline::TextPipeline;
 
     #[wasm_bindgen(start)]
     pub fn init() {
@@ -43,6 +48,7 @@ mod wasm_impl {
         #[allow(dead_code)]
         surface_config: wgpu::SurfaceConfiguration,
         raymarch_pipeline: RaymarchPipeline,
+        text_pipeline: TextPipeline,
     }
 
     async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
@@ -111,12 +117,21 @@ mod wasm_impl {
         let raymarch_pipeline =
             RaymarchPipeline::new(&device, surface_format, width as f32, height as f32);
 
+        let text_pipeline = TextPipeline::new(
+            &device,
+            &queue,
+            surface_format,
+            width as f32,
+            height as f32,
+        );
+
         Ok(GpuContext {
             device,
             queue,
             surface,
             surface_config,
             raymarch_pipeline,
+            text_pipeline,
         })
     }
 
@@ -134,16 +149,10 @@ mod wasm_impl {
             0.0,
         ));
 
-        // "todos" title - procedural SDF text
+        // "todos" title - now rendered via MTSDF text pipeline (not SDF elements)
         // From layout.json: y=43.59, w=550, h=19.59, color rgb(184, 63, 69)
-        // Center: x=350, y=43.59 + 9.8 ≈ 53
-        scene.add_element(Element::new_todos_text(
-            [350.0, 53.0, 0.1],
-            180.0,  // width for scaling letters
-            40.0,   // height
-            [0.72, 0.25, 0.27], // rgb(184, 63, 69)
-            0.0,
-        ));
+        // Center: x=350, y ~70 (above the card)
+        // NOTE: Text is now rendered separately via TextPipeline, not as scene elements
 
         // Main todoapp card (white)
         // From layout.json: x=75, y=130, w=550, h=345.1875
@@ -167,11 +176,10 @@ mod wasm_impl {
 
         // Chevron/toggle-all on left of input (x=75, w=45)
         // Center: x=75+22.5=97.5, y=162.5
-        scene.add_element(Element::new_rounded_box(
+        scene.add_element(Element::new_chevron(
             [97.5, 162.5, 0.2],
-            [8.0, 8.0, 0.01],
-            [0.75, 0.75, 0.75],
-            3.0,
+            20.0,  // size
+            [0.68, 0.68, 0.68],  // gray
             0.0,
         ));
 
@@ -202,21 +210,28 @@ mod wasm_impl {
             let cb_center_y = checkbox_y + 20.0;
 
             if *is_completed {
-                // Green filled circle for completed
-                scene.add_element(Element::new_rounded_box(
-                    [cb_center_x, cb_center_y, 0.3],
-                    [13.0, 13.0, 0.01],
-                    [0.35, 0.72, 0.35], // green
-                    13.0,
-                    0.0,
-                ));
-            } else {
-                // Gray hollow ring for unchecked
+                // Green ring for completed (like reference)
                 scene.add_element(Element::new_ring(
                     [cb_center_x, cb_center_y, 0.3],
                     12.0,
-                    2.0,
-                    [0.82, 0.82, 0.82],
+                    1.5,  // thin ring
+                    [0.35, 0.72, 0.35], // green
+                    0.0,
+                ));
+                // White checkmark inside
+                scene.add_element(Element::new_checkmark(
+                    [cb_center_x, cb_center_y, 0.35],
+                    18.0,  // size
+                    [0.35, 0.72, 0.35], // green checkmark
+                    0.0,
+                ));
+            } else {
+                // Gray hollow ring for unchecked (thinner)
+                scene.add_element(Element::new_ring(
+                    [cb_center_x, cb_center_y, 0.3],
+                    12.0,
+                    1.2,  // thinner ring like reference
+                    [0.88, 0.88, 0.88], // lighter gray
                     0.0,
                 ));
             }
@@ -307,6 +322,64 @@ mod wasm_impl {
         gpu.raymarch_pipeline
             .update_scene(&gpu.device, &gpu.queue, scene);
 
+        // Clear previous text batch
+        gpu.text_pipeline.clear_batch();
+
+        // Colors
+        let title_color = [0.72, 0.25, 0.27, 1.0]; // rgb(184, 63, 69) - TodoMVC red
+        let text_color = [0.31, 0.31, 0.31, 1.0];  // rgb(77, 77, 77) - dark gray
+        let completed_color = [0.82, 0.82, 0.82, 1.0]; // rgb(210, 210, 210) - light gray for completed
+        let placeholder_color = [0.90, 0.90, 0.90, 1.0]; // #e6e6e6 - placeholder
+        let footer_color = [0.47, 0.47, 0.47, 1.0]; // rgb(119, 119, 119) - footer text
+
+        // 1. "todos" title - centered at x=350, y=53 (from layout.json: y=43.59, h=19.59)
+        // Reference: fontSize=80px, but rendered height is only ~20px due to font-weight:200
+        // Center y = 43.59 + 19.59/2 ≈ 53
+        gpu.text_pipeline.add_centered_text("todos", 350.0, 53.0, 80.0, title_color);
+
+        // 2. Input placeholder - "What needs to be done?"
+        // Reference: element y=130, paddingTop=16px, fontSize=24px
+        // Text top = 130 + 16 = 146
+        gpu.text_pipeline.add_text("What needs to be done?", 135.0, 146.0, 24.0, placeholder_color);
+
+        // 3. Todo item labels (font size 24px, left aligned)
+        // From layout.json: x=75, paddingLeft=60px → text x=135
+        // Each item has paddingTop=15px, so text y = element y + 15
+        // Item 1: y=196 → text y=211
+        // Item 2: y=255.8 → text y=270.8
+        // Item 3: y=315.6 → text y=330.6
+        // Item 4: y=375.4 → text y=390.4
+        let todo_items = [
+            ("Buy groceries", 211.0, false),
+            ("Walk the dog", 271.0, false),
+            ("Finish TodoMVC renderer", 331.0, true),  // completed
+            ("Read documentation", 390.0, false),
+        ];
+
+        for (text, y, is_completed) in todo_items.iter() {
+            let color = if *is_completed { completed_color } else { text_color };
+            gpu.text_pipeline.add_text(text, 135.0, *y, 24.0, color);
+        }
+
+        // 4. Footer text (fontSize=15px from layout.json)
+        // Reference: "3 items left" at x=90, y=445.19
+        gpu.text_pipeline.add_text("3 items left", 90.0, 445.0, 15.0, footer_color);
+
+        // Filter buttons - fontSize=15px, each has padding 3px 7px
+        // "All": x=250.78, width=32.67, so center_x = 250.78 + 16.34 ≈ 267
+        // y=442.19, height=25, center_y = 442.19 + 12.5 ≈ 455
+        gpu.text_pipeline.add_centered_text("All", 267.0, 455.0, 15.0, footer_color);
+        // "Active": x=293.63, width=56.86, center_x ≈ 322
+        gpu.text_pipeline.add_centered_text("Active", 322.0, 455.0, 15.0, footer_color);
+        // "Completed": x=360.66, width=88.55, center_x ≈ 405
+        gpu.text_pipeline.add_centered_text("Completed", 405.0, 455.0, 15.0, footer_color);
+
+        // "Clear completed" - x=500.78, y=445.19
+        gpu.text_pipeline.add_text("Clear completed", 501.0, 445.0, 15.0, footer_color);
+
+        // Upload all text to GPU
+        gpu.text_pipeline.flush_batch(&gpu.queue);
+
         // Get frame
         let frame = gpu
             .surface
@@ -316,8 +389,15 @@ mod wasm_impl {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Render
+        // Render raymarched scene first
         gpu.raymarch_pipeline.render(&gpu.device, &gpu.queue, &view);
+
+        // Render text on top
+        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Text Encoder"),
+        });
+        gpu.text_pipeline.render(&mut encoder, &view);
+        gpu.queue.submit(std::iter::once(encoder.finish()));
 
         frame.present();
 

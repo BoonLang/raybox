@@ -55,5 +55,14 @@ flate2 = { version = "1.0", features = ["rust_backend"] }
 brotli = "3.4"
 open = "5.0"
 
+# MTSDF font atlas generation
+msdf = "0.1"
+ttf-parser = "0.15"  # Must match msdf's ttf-parser version
+rectangle-pack = "0.4"
+mint = "0.5"
+
+# SDF font rendering (alternative to msdf)
+fontdue = "0.8"
+
 [dev-dependencies]
 tempfile = "3.8"

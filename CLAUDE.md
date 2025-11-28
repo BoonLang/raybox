@@ -145,6 +145,17 @@ cargo run -p tools -- screenshot --url http://localhost:8000 --output /tmp/full.
 
 **Note:** Both `screenshot` and `check-console` commands automatically use required WebGPU flags.
 
+**IMPORTANT - Showing renderer progress to user:**
+When taking screenshots to show the user renderer progress, ALWAYS save to:
+```
+renderers/emergent/screenshots/screenshot.png
+```
+Example:
+```bash
+./target/debug/raybox-tools screenshot --url http://localhost:8001 --output renderers/emergent/screenshots/screenshot.png --width 700 --height 700
+```
+This path is tracked by the user and allows them to see visual progress.
+
 ### 7. Self-Verification Before Asking User ⚠️ CRITICAL
 
 **NEVER ask the user to confirm something you can verify yourself.**

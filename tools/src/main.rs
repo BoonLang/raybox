@@ -264,6 +264,64 @@ enum Commands {
         #[arg(short, long, default_value = "0.1")]
         threshold: f64,
     },
+
+    /// Generate MTSDF font atlas from TTF/OTF font file
+    GenerateMtsdfAtlas {
+        /// Path to font file (TTF/OTF)
+        #[arg(short, long)]
+        font: String,
+
+        /// Output PNG file path
+        #[arg(short, long)]
+        output_png: String,
+
+        /// Output JSON metadata file path
+        #[arg(short = 'j', long)]
+        output_json: String,
+
+        /// Glyph size in pixels (default: 32)
+        #[arg(long, default_value = "32")]
+        glyph_size: u32,
+
+        /// Padding around each glyph (default: 4)
+        #[arg(long, default_value = "4")]
+        padding: u32,
+
+        /// SDF distance range (default: 4.0)
+        #[arg(long, default_value = "4.0")]
+        sdf_range: f32,
+
+        /// Characters to include (default: ASCII printable 32-126)
+        #[arg(long)]
+        charset: Option<String>,
+    },
+
+    /// Generate SDF font atlas using fontdue (simpler than MTSDF)
+    GenerateSdfAtlas {
+        /// Path to font file (TTF/OTF)
+        #[arg(short, long)]
+        font: String,
+
+        /// Output PNG file path
+        #[arg(short, long)]
+        output_png: String,
+
+        /// Output JSON metadata file path
+        #[arg(short = 'j', long)]
+        output_json: String,
+
+        /// Glyph size in pixels (default: 64)
+        #[arg(long, default_value = "64")]
+        glyph_size: u32,
+
+        /// Padding around each glyph (default: 8)
+        #[arg(long, default_value = "8")]
+        padding: u32,
+
+        /// Characters to include (default: ASCII printable 32-126)
+        #[arg(long)]
+        charset: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -467,6 +525,40 @@ fn main() -> Result<()> {
                 std::path::Path::new(&right),
                 threshold,
             )?;
+        }
+
+        Commands::GenerateMtsdfAtlas {
+            font,
+            output_png,
+            output_json,
+            glyph_size,
+            padding,
+            sdf_range,
+            charset,
+        } => {
+            let config = commands::generate_mtsdf_atlas::AtlasConfig {
+                glyph_size,
+                padding,
+                sdf_range,
+                charset: charset.unwrap_or_else(|| (32u8..=126u8).map(|c| c as char).collect()),
+            };
+            commands::generate_mtsdf_atlas::run(&font, &output_png, &output_json, config)?;
+        }
+
+        Commands::GenerateSdfAtlas {
+            font,
+            output_png,
+            output_json,
+            glyph_size,
+            padding,
+            charset,
+        } => {
+            let config = commands::generate_sdf_atlas::AtlasConfig {
+                glyph_size,
+                padding,
+                charset: charset.unwrap_or_else(|| (32u8..=126u8).map(|c| c as char).collect()),
+            };
+            commands::generate_sdf_atlas::run(&font, &output_png, &output_json, config)?;
         }
     }
 

@@ -59,70 +59,53 @@ fn sd_ring(p: vec2<f32>, outer_radius: f32, thickness: f32) -> f32 {
 }
 
 // ============================================================================
-// Procedural SDF Letters (for "todos" title)
+// Procedural SDF Shapes
 // ============================================================================
 
-// Letter 't' - vertical stem with horizontal crossbar at top
-fn sd_letter_t(p: vec2<f32>, scale: f32) -> f32 {
-    let stem = sd_box_2d(p - vec2<f32>(0.0, -0.05) * scale, vec2<f32>(0.06, 0.35) * scale);
-    let cross = sd_box_2d(p - vec2<f32>(0.0, 0.22) * scale, vec2<f32>(0.18, 0.05) * scale);
-    return min(stem, cross);
+// Checkmark shape for completed todos
+fn sd_checkmark(p: vec2<f32>, scale: f32) -> f32 {
+    let thickness = 0.06 * scale;
+
+    // Short stroke going down-left (the small part of checkmark)
+    let p1 = p - vec2<f32>(-0.08, -0.02) * scale;
+    let angle1 = -0.65;
+    let c1 = cos(angle1);
+    let s1 = sin(angle1);
+    let p1_rot = vec2<f32>(p1.x * c1 + p1.y * s1, -p1.x * s1 + p1.y * c1);
+    let stroke1 = sd_box_2d(p1_rot, vec2<f32>(0.10 * scale, thickness));
+
+    // Long stroke going up-right (the long part of checkmark)
+    let p2 = p - vec2<f32>(0.06, 0.06) * scale;
+    let angle2 = 0.5;
+    let c2 = cos(angle2);
+    let s2 = sin(angle2);
+    let p2_rot = vec2<f32>(p2.x * c2 + p2.y * s2, -p2.x * s2 + p2.y * c2);
+    let stroke2 = sd_box_2d(p2_rot, vec2<f32>(0.16 * scale, thickness));
+
+    return min(stroke1, stroke2);
 }
 
-// Letter 'o' - ring shape
-fn sd_letter_o(p: vec2<f32>, scale: f32) -> f32 {
-    return sd_ring(p, 0.22 * scale, 0.06 * scale);
-}
+// Chevron/arrow shape for toggle-all (pointing down)
+fn sd_chevron(p: vec2<f32>, scale: f32) -> f32 {
+    let thickness = 0.03 * scale;
 
-// Letter 'd' - vertical stem on RIGHT with bowl on LEFT
-fn sd_letter_d(p: vec2<f32>, scale: f32) -> f32 {
-    // Tall stem on the right side
-    let stem = sd_box_2d(p - vec2<f32>(0.16, 0.05) * scale, vec2<f32>(0.06, 0.4) * scale);
-    // Bowl on the left - a ring clipped to show only left half
-    let bowl = sd_ring(p - vec2<f32>(0.0, -0.13) * scale, 0.22 * scale, 0.06 * scale);
-    return min(stem, bowl);
-}
+    // Left arm of chevron
+    let p1 = p - vec2<f32>(-0.10, 0.05) * scale;
+    let angle1 = -0.75;
+    let c1 = cos(angle1);
+    let s1 = sin(angle1);
+    let p1_rot = vec2<f32>(p1.x * c1 + p1.y * s1, -p1.x * s1 + p1.y * c1);
+    let arm1 = sd_box_2d(p1_rot, vec2<f32>(0.14 * scale, thickness));
 
-// Letter 's' - S-curve shape using two 3/4 circles
-fn sd_letter_s(p: vec2<f32>, scale: f32) -> f32 {
-    let r = 0.11 * scale;
-    let t = 0.055 * scale;
+    // Right arm of chevron
+    let p2 = p - vec2<f32>(0.10, 0.05) * scale;
+    let angle2 = 0.75;
+    let c2 = cos(angle2);
+    let s2 = sin(angle2);
+    let p2_rot = vec2<f32>(p2.x * c2 + p2.y * s2, -p2.x * s2 + p2.y * c2);
+    let arm2 = sd_box_2d(p2_rot, vec2<f32>(0.14 * scale, thickness));
 
-    // Top arc - remove bottom-left quadrant to form top of S
-    let top_c = vec2<f32>(0.0, 0.08 * scale);
-    let top_p = p - top_c;
-    let d_top = sd_ring(top_p, r, t);
-    // Keep where x >= 0 OR y >= 0 (remove bottom-left quadrant)
-    let s_top = max(d_top, min(-top_p.x, -top_p.y));
-
-    // Bottom arc - remove top-right quadrant to form bottom of S
-    let bot_c = vec2<f32>(0.0, -0.08 * scale);
-    let bot_p = p - bot_c;
-    let d_bot = sd_ring(bot_p, r, t);
-    // Keep where x <= 0 OR y <= 0 (remove top-right quadrant)
-    let s_bot = max(d_bot, min(bot_p.x, bot_p.y));
-
-    return min(s_top, s_bot);
-}
-
-// Complete "todos" text as a single SDF
-fn sd_todos_text(p: vec2<f32>, width: f32) -> f32 {
-    // Flip Y to convert from screen coords (Y-down) to SDF coords (Y-up)
-    let fp = vec2<f32>(p.x, -p.y);
-
-    let scale = width / 4.5; // Adjust for letter spacing
-    let spacing = scale * 0.55;
-
-    // Center the text horizontally
-    let start_x = -2.0 * spacing;
-
-    let t1 = sd_letter_t(fp - vec2<f32>(start_x + 0.0 * spacing, 0.0), scale);
-    let o1 = sd_letter_o(fp - vec2<f32>(start_x + 0.9 * spacing, -0.08 * scale), scale);
-    let d1 = sd_letter_d(fp - vec2<f32>(start_x + 1.85 * spacing, -0.03 * scale), scale);
-    let o2 = sd_letter_o(fp - vec2<f32>(start_x + 2.9 * spacing, -0.08 * scale), scale);
-    let s1 = sd_letter_s(fp - vec2<f32>(start_x + 3.85 * spacing, -0.03 * scale), scale);
-
-    return min(min(min(min(t1, o1), d1), o2), s1);
+    return min(arm1, arm2);
 }
 
 // Legacy 3D functions (kept for compatibility)
@@ -175,7 +158,7 @@ struct HitInfo {
 fn get_element_sdf_2d(p: vec2<f32>, elem: Element) -> f32 {
     let local_p = p - elem.center.xy;
     let shape_type = u32(elem.params.y);
-    let corner_radius = elem.params.x; // Also used as ring thickness for Ring, or text width for TodosText
+    let corner_radius = elem.params.x; // Also used as ring thickness for Ring, or size for shapes
 
     switch shape_type {
         case 0u: { // Box
@@ -190,8 +173,11 @@ fn get_element_sdf_2d(p: vec2<f32>, elem: Element) -> f32 {
         case 3u: { // Ring (hollow circle)
             return sd_ring(local_p, elem.half_extents.x, corner_radius);
         }
-        case 4u: { // TodosText (procedural "todos" text)
-            return sd_todos_text(local_p, corner_radius);
+        case 4u: { // Checkmark
+            return sd_checkmark(local_p, corner_radius);
+        }
+        case 5u: { // Chevron
+            return sd_chevron(local_p, corner_radius);
         }
         default: {
             return sd_box_2d(local_p, elem.half_extents.xy);

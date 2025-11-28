@@ -19,7 +19,8 @@ pub enum ShapeType {
     RoundedBox = 1,
     Sphere = 2,
     Ring = 3,       // Hollow circle (for unchecked checkboxes)
-    TodosText = 4,  // Procedural "todos" text
+    Checkmark = 4,  // Checkmark for completed items
+    Chevron = 5,    // Chevron/arrow for toggle-all
 }
 
 /// A single element in the scene
@@ -94,21 +95,36 @@ impl Element {
         }
     }
 
-    /// Create procedural "todos" text
-    /// width: the width of the text bounding box (used to scale letters)
-    pub fn new_todos_text(
+    /// Create a checkmark shape for completed todos
+    pub fn new_checkmark(
         center: [f32; 3],
-        width: f32,
-        height: f32,
+        size: f32,
         color: [f32; 3],
         depth_offset: f32,
     ) -> Self {
         Self {
             center,
-            half_extents: [width / 2.0, height / 2.0, 0.01],
+            half_extents: [size / 2.0, size / 2.0, 0.01],
             color,
-            corner_radius: width, // Store full width for text scaling
-            shape_type: ShapeType::TodosText,
+            corner_radius: size, // Store size for scaling
+            shape_type: ShapeType::Checkmark,
+            depth_offset,
+        }
+    }
+
+    /// Create a chevron/arrow shape for toggle-all
+    pub fn new_chevron(
+        center: [f32; 3],
+        size: f32,
+        color: [f32; 3],
+        depth_offset: f32,
+    ) -> Self {
+        Self {
+            center,
+            half_extents: [size / 2.0, size / 2.0, 0.01],
+            color,
+            corner_radius: size, // Store size for scaling
+            shape_type: ShapeType::Chevron,
             depth_offset,
         }
     }
