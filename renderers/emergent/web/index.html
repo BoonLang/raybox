@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Emergent Renderer - SDF Raymarching</title>
+    <title>Emergent</title>
     <style>
         * {
             margin: 0;
@@ -11,74 +11,43 @@
             box-sizing: border-box;
         }
         body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
             background-color: #f5f5f5;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        }
-        .container {
-            text-align: center;
-        }
-        h1 {
-            margin-bottom: 20px;
-            color: #333;
-            font-weight: 300;
         }
         canvas {
             display: block;
-            margin: 0 auto;
-            border: 1px solid #ddd;
-            background-color: #f0f0f0;
-        }
-        .info {
-            margin-top: 20px;
-            color: #666;
-            font-size: 14px;
         }
         .error {
             color: #c00;
             padding: 20px;
             max-width: 500px;
-            margin: 0 auto;
+            margin: 20px auto;
+            text-align: center;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Emergent Renderer</h1>
-        <canvas id="canvas" width="700" height="700"></canvas>
-        <div class="info">SDF Raymarching with real lighting and shadows</div>
-    </div>
+    <canvas id="canvas" width="700" height="700"></canvas>
+    <div id="error"></div>
 
     <script type="module">
         async function init() {
-            // Check WebGPU support
+            const errorDiv = document.getElementById('error');
+
             if (!navigator.gpu) {
-                document.querySelector('.info').innerHTML =
-                    '<span class="error">WebGPU not supported. Please use Chrome with WebGPU flags enabled.</span>';
+                errorDiv.innerHTML = '<p class="error">WebGPU not supported</p>';
                 return;
             }
 
             try {
-                // Load WASM module
                 const { default: init, start_renderer } = await import('./pkg/emergent_renderer.js');
                 await init();
-
-                console.log('Emergent Renderer: WASM loaded');
-
-                // Start the renderer
                 await start_renderer('canvas');
-
                 console.log('Emergent Renderer: Rendering complete');
             } catch (e) {
-                console.error('Emergent Renderer error:', e);
-                document.querySelector('.info').innerHTML =
-                    `<span class="error">Error: ${e.message || e}</span>`;
+                console.error('Error:', e);
+                errorDiv.innerHTML = `<p class="error">${e.message || e}</p>`;
             }
         }
-
         init();
     </script>
 </body>

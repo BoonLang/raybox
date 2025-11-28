@@ -49,6 +49,8 @@ impl ConsoleMonitor {
                     "--use-angle=vulkan",
                     "--disable-software-rasterizer",
                     "--ozone-platform=x11", // Linux only, but harmless on other platforms
+                    "--disable-session-crashed-bubble",
+                    "--hide-crash-restore-bubble",
                 ];
 
                 Browser::launch(

@@ -18,6 +18,8 @@ pub enum ShapeType {
     Box = 0,
     RoundedBox = 1,
     Sphere = 2,
+    Ring = 3,       // Hollow circle (for unchecked checkboxes)
+    TodosText = 4,  // Procedural "todos" text
 }
 
 /// A single element in the scene
@@ -68,6 +70,45 @@ impl Element {
             color,
             corner_radius: radius,
             shape_type: ShapeType::Sphere,
+            depth_offset,
+        }
+    }
+
+    /// Create a ring (hollow circle) - good for unchecked checkboxes
+    /// outer_radius: the outer edge of the ring
+    /// thickness: the width of the ring stroke
+    pub fn new_ring(
+        center: [f32; 3],
+        outer_radius: f32,
+        thickness: f32,
+        color: [f32; 3],
+        depth_offset: f32,
+    ) -> Self {
+        Self {
+            center,
+            half_extents: [outer_radius, outer_radius, 0.01],
+            color,
+            corner_radius: thickness, // Store thickness in corner_radius for Ring shape
+            shape_type: ShapeType::Ring,
+            depth_offset,
+        }
+    }
+
+    /// Create procedural "todos" text
+    /// width: the width of the text bounding box (used to scale letters)
+    pub fn new_todos_text(
+        center: [f32; 3],
+        width: f32,
+        height: f32,
+        color: [f32; 3],
+        depth_offset: f32,
+    ) -> Self {
+        Self {
+            center,
+            half_extents: [width / 2.0, height / 2.0, 0.01],
+            color,
+            corner_radius: width, // Store full width for text scaling
+            shape_type: ShapeType::TodosText,
             depth_offset,
         }
     }

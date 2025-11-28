@@ -52,9 +52,10 @@ impl RaymarchPipeline {
             _padding: 0,
             camera_pos: [350.0, 350.0, 600.0, 0.0],
             camera_target: [350.0, 350.0, 0.0, 0.0],
-            light_dir: [0.5, 0.8, 0.6, 0.0], // From top-right-front
-            light_color: [1.0, 1.0, 1.0, 1.0],
-            ambient_color: [0.3, 0.3, 0.35, 1.0],
+            // More front-facing light for flatter appearance
+            light_dir: [0.1, 0.2, 0.97, 0.0], // Almost straight-on from front
+            light_color: [0.6, 0.6, 0.6, 1.0], // Softer light
+            ambient_color: [0.7, 0.7, 0.7, 1.0], // Higher ambient for flatter look
         };
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

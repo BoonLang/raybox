@@ -123,121 +123,180 @@ mod wasm_impl {
     fn create_demo_scene() -> Scene {
         let mut scene = Scene::new();
 
-        // TodoMVC-like layout for 700x700 viewport
-        // Demonstrates emergent rendering: shadows from real lighting, no explicit shadow declarations
+        // TodoMVC layout based on layout.json (700x700 viewport)
+        // Body at x=75, y=130, w=550 -> center_x = 75 + 275 = 350
 
-        // Background plane (the "surface" everything sits on)
+        // Background plane (#f5f5f5) - fills viewport
         scene.add_element(Element::new_box(
-            [350.0, 350.0, -20.0], // center, pushed back
-            [400.0, 400.0, 5.0],   // half-extents
-            [0.94, 0.94, 0.94],    // light gray background
+            [350.0, 350.0, -1.0],
+            [1000.0, 1000.0, 0.01],
+            [0.96, 0.96, 0.96], // rgb(245, 245, 245)
             0.0,
         ));
 
-        // Main card (white, raised above background)
-        // The shadow emerges naturally from the lighting!
+        // "todos" title - procedural SDF text
+        // From layout.json: y=43.59, w=550, h=19.59, color rgb(184, 63, 69)
+        // Center: x=350, y=43.59 + 9.8 ≈ 53
+        scene.add_element(Element::new_todos_text(
+            [350.0, 53.0, 0.1],
+            180.0,  // width for scaling letters
+            40.0,   // height
+            [0.72, 0.25, 0.27], // rgb(184, 63, 69)
+            0.0,
+        ));
+
+        // Main todoapp card (white)
+        // From layout.json: x=75, y=130, w=550, h=345.1875
+        // Center: (350, 302.6)
         scene.add_element(Element::new_box(
-            [350.0, 300.0, 0.0],   // center
-            [260.0, 200.0, 8.0],   // half-extents (thick card)
-            [1.0, 1.0, 1.0],       // white
-            15.0,                  // raised above background
+            [350.0, 302.6, 0.0],
+            [275.0, 172.6, 0.01],
+            [1.0, 1.0, 1.0], // white
+            0.0,
         ));
 
-        // Input field at top (slightly recessed)
+        // Input field (new-todo)
+        // From layout.json: x=75, y=130, w=550, h=65
+        // Center: (350, 162.5)
+        scene.add_element(Element::new_box(
+            [350.0, 162.5, 0.1],
+            [275.0, 32.5, 0.01],
+            [1.0, 1.0, 1.0],
+            0.0,
+        ));
+
+        // Chevron/toggle-all on left of input (x=75, w=45)
+        // Center: x=75+22.5=97.5, y=162.5
         scene.add_element(Element::new_rounded_box(
-            [350.0, 130.0, 12.0],  // positioned near top of card
-            [240.0, 22.0, 3.0],    // half-extents
-            [0.99, 0.99, 0.99],    // slightly off-white
-            4.0,                   // corner radius
-            5.0,                   // slightly raised
+            [97.5, 162.5, 0.2],
+            [8.0, 8.0, 0.01],
+            [0.75, 0.75, 0.75],
+            3.0,
+            0.0,
         ));
 
-        // Todo items with checkboxes - positioned inside the card
-        let todo_start_y = 190.0;
-        let todo_spacing = 52.0;
+        // Input placeholder text bar - "What needs to be done?"
+        // Positioned after paddingLeft: 60px, so x starts at ~135
+        scene.add_element(Element::new_rounded_box(
+            [310.0, 162.5, 0.2],
+            [140.0, 8.0, 0.01],
+            [0.90, 0.90, 0.90], // #e6e6e6 placeholder color
+            3.0,
+            0.0,
+        ));
 
-        for i in 0..4 {
-            let y = todo_start_y + (i as f32) * todo_spacing;
-            let is_completed = i == 2; // Third item is completed
+        // Todo items from layout.json
+        // Checkboxes are 40x40, positioned at x=75
+        // Checkbox centers: x=75+20=95, y=checkbox_y+20
+        let todo_items = [
+            // (item_y, checkbox_y, is_completed, has_border_below)
+            (196.0, 205.4, false, true),   // "Buy groceries"
+            (255.8, 265.2, false, true),   // "Walk the dog"
+            (315.6, 325.0, true, true),    // "Finish TodoMVC renderer" - completed
+            (375.4, 384.8, false, false),  // "Read documentation"
+        ];
 
-            // Checkbox - circular button (moved right to be inside card)
-            let checkbox_x = 130.0;
-            if is_completed {
-                // Completed - green filled checkbox with shadow
+        for (item_y, checkbox_y, is_completed, has_border) in todo_items.iter() {
+            // Checkbox center: x=95, y=checkbox_y+20
+            let cb_center_x = 95.0;
+            let cb_center_y = checkbox_y + 20.0;
+
+            if *is_completed {
+                // Green filled circle for completed
                 scene.add_element(Element::new_rounded_box(
-                    [checkbox_x, y, 20.0],
-                    [12.0, 12.0, 4.0],
-                    [0.3, 0.72, 0.4], // green
-                    12.0,             // fully rounded
-                    10.0,             // raised - casts shadow
+                    [cb_center_x, cb_center_y, 0.3],
+                    [13.0, 13.0, 0.01],
+                    [0.35, 0.72, 0.35], // green
+                    13.0,
+                    0.0,
                 ));
             } else {
-                // Uncompleted - light gray circle
-                scene.add_element(Element::new_rounded_box(
-                    [checkbox_x, y, 18.0],
-                    [11.0, 11.0, 3.0],
-                    [0.82, 0.82, 0.82], // light gray
-                    11.0,               // fully rounded
-                    8.0,
+                // Gray hollow ring for unchecked
+                scene.add_element(Element::new_ring(
+                    [cb_center_x, cb_center_y, 0.3],
+                    12.0,
+                    2.0,
+                    [0.82, 0.82, 0.82],
+                    0.0,
                 ));
             }
 
-            // Todo item "text area" placeholder (shows where text would go)
+            // Text label placeholder (after paddingLeft: 60px)
+            // Label starts at x=135, center around x=320
+            let text_y = item_y + 29.4; // Vertically centered in 58.8px height
             scene.add_element(Element::new_rounded_box(
-                [350.0, y, 16.0],
-                [180.0, 10.0, 2.0],
-                [0.96, 0.96, 0.96], // very light gray
+                [320.0, text_y, 0.3],
+                [120.0, 8.0, 0.01],
+                if *is_completed {
+                    [0.85, 0.85, 0.85] // lighter for completed (strikethrough effect)
+                } else {
+                    [0.72, 0.72, 0.72] // rgb(72, 72, 72) -> placeholder gray
+                },
                 3.0,
-                6.0,
+                0.0,
             ));
 
-            // Separator line below each item (except last)
-            if i < 3 {
+            // Border/separator line (1px solid #ededed)
+            if *has_border {
+                let border_y = item_y + 59.8; // Bottom of item
                 scene.add_element(Element::new_box(
-                    [350.0, y + 24.0, 14.0],
-                    [230.0, 0.4, 0.4],
-                    [0.9, 0.9, 0.9], // separator color
-                    4.0,
+                    [350.0, border_y, 0.2],
+                    [275.0, 0.5, 0.01],
+                    [0.93, 0.93, 0.93], // #ededed
+                    0.0,
                 ));
             }
         }
 
-        // Footer area with filter buttons
-        let footer_y = 430.0;
+        // Footer area
+        // From layout.json: x=75, y=434.1875, w=550, h=41
+        // Center: (350, 454.7)
+        let footer_center_y = 454.7;
 
-        // Footer background
+        // Footer background (subtle)
         scene.add_element(Element::new_box(
-            [350.0, footer_y, 13.0],
-            [240.0, 16.0, 2.0],
-            [0.98, 0.98, 0.98],
-            4.0,
+            [350.0, footer_center_y, 0.15],
+            [275.0, 20.5, 0.01],
+            [0.99, 0.99, 0.99],
+            0.0,
         ));
 
-        // "All" filter button (selected - slightly raised)
+        // "3 items left" text placeholder
+        // From layout.json: x=90, y=445.19, w=72.5 -> center x=126
         scene.add_element(Element::new_rounded_box(
-            [265.0, footer_y, 17.0],
-            [20.0, 10.0, 2.0],
-            [1.0, 1.0, 1.0],
-            4.0,
-            6.0,
+            [126.0, 455.0, 0.3],
+            [36.0, 6.0, 0.01],
+            [0.55, 0.55, 0.55],
+            3.0,
+            0.0,
         ));
 
-        // "Active" filter button
+        // Filter buttons - positioned per layout.json
+        // "All" (selected): x=250.78, w=32.67 -> center x=267
         scene.add_element(Element::new_rounded_box(
-            [320.0, footer_y, 15.0],
-            [28.0, 10.0, 1.5],
-            [0.97, 0.97, 0.97],
-            4.0,
-            4.0,
+            [267.0, 454.7, 0.3],
+            [16.0, 12.5, 0.01],
+            [0.95, 0.92, 0.92], // slight red tint for selected
+            3.0,
+            0.0,
         ));
 
-        // "Completed" filter button
+        // "Active": x=293.63, w=56.86 -> center x=322
         scene.add_element(Element::new_rounded_box(
-            [395.0, footer_y, 15.0],
-            [40.0, 10.0, 1.5],
-            [0.97, 0.97, 0.97],
-            4.0,
-            4.0,
+            [322.0, 454.7, 0.3],
+            [28.0, 12.5, 0.01],
+            [0.96, 0.96, 0.96],
+            3.0,
+            0.0,
+        ));
+
+        // "Completed": x=360.66, w=88.55 -> center x=405
+        scene.add_element(Element::new_rounded_box(
+            [405.0, 454.7, 0.3],
+            [44.0, 12.5, 0.01],
+            [0.96, 0.96, 0.96],
+            3.0,
+            0.0,
         ));
 
         scene
@@ -261,6 +320,12 @@ mod wasm_impl {
         gpu.raymarch_pipeline.render(&gpu.device, &gpu.queue, &view);
 
         frame.present();
+
+        // Signal to screenshot tool that rendering is complete
+        if let Some(win) = web_sys::window() {
+            let _ = js_sys::Reflect::set(&win, &"__emergent_webgpu_ok".into(), &wasm_bindgen::JsValue::TRUE);
+        }
+
         Ok(())
     }
 }

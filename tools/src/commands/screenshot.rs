@@ -29,6 +29,8 @@ pub fn run(url: &str, output: &str, width: u32, height: u32, _headed: bool) -> R
             "--enable-unsafe-webgpu",
             "--enable-webgpu-developer-features",
             "--enable-features=UseSkiaRenderer",
+            "--disable-session-crashed-bubble",
+            "--hide-crash-restore-bubble",
         ];
 
         let cfg = BrowserConfig::builder()
@@ -180,7 +182,8 @@ pub fn run(url: &str, output: &str, width: u32, height: u32, _headed: bool) -> R
             }
         } else {
             let len = page_size.unwrap_or(0);
-            if len < 10_000 {
+            // Don't use toDataURL fallback for WebGPU - it doesn't preserve drawing buffer
+            if len < 10_000 && !webgpu_ok {
                 println!("  Page screenshot is very small ({} bytes) — trying canvas.toDataURL fallback", len);
                 let data_url: Option<String> = page
                     .evaluate("() => { const c=document.getElementById('canvas'); return c ? c.toDataURL('image/png') : null; }")
@@ -204,6 +207,9 @@ pub fn run(url: &str, output: &str, width: u32, height: u32, _headed: bool) -> R
                 }
             } else {
                 println!("✓ Screenshot saved via page.screenshot -> {}", output);
+                if len < 10_000 {
+                    println!("  Warning: Screenshot is small ({} bytes) but WebGPU detected, keeping page capture", len);
+                }
             }
         }
 
