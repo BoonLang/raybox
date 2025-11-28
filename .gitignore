@@ -17,6 +17,13 @@ Thumbs.db
 /dist/
 /output/
 
+# WASM build tools (downloaded binaries)
+**/web/bin/
+web/pkg/
+
+# Generated WASM output
+renderers/*/web/pkg/
+
 # Temporary files
 /tmp/
 *.tmp
