@@ -68,16 +68,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // 0.5 = edge, >0.5 = inside glyph, <0.5 = outside glyph
     let signed_dist = sample.r;
 
-    // Mathematical SDF scaling for crisp text at any size:
-    //
-    // pixel_width = how much normalized SDF space 1 screen pixel covers
-    // At native size (scale=1): 1 pixel = 1/sdf_range in SDF space
-    // At 2x scale: 1 pixel = 1/(sdf_range * 2) in SDF space (finer detail)
-    //
-    // aa_width controls anti-aliasing: smaller = crisper, larger = smoother
-    // 0.2 gives ~0.4 pixel of smoothing - good balance with 128px atlas
-    let pixel_width = 1.0 / (uniforms.sdf_range * input.scale);
-    let aa_width = pixel_width * 0.2;
+    // Use fwidth() for screen-space anti-aliasing
+    // This is more accurate than scale-based calculation
+    let fw = fwidth(signed_dist);
+    let aa_width = fw * 0.5;  // 0.5 for crisp text (adjustable: 0.3-0.8)
 
     // Threshold at 0.5 (the glyph edge) with tight smoothstep for crisp AA
     let alpha = smoothstep(0.5 - aa_width, 0.5 + aa_width, signed_dist);

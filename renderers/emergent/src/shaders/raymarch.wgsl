@@ -244,12 +244,30 @@ fn op_smooth_union(d1: f32, d2: f32, k: f32) -> f32 {
 }
 
 // ============================================================================
+// Anti-aliasing helper
+// ============================================================================
+
+// Calculate smooth alpha for SDF edge anti-aliasing using screen-space derivatives
+// fwidth() gives us the rate of change of distance across neighboring pixels,
+// which is exactly what we need for mathematically correct AA at any scale.
+fn sdf_alpha(d: f32) -> f32 {
+    // fwidth(d) = abs(dFdx(d)) + abs(dFdy(d)) - how much d changes per pixel
+    // Multiply by 0.75 for crisp AA (0.5 = very crisp, 1.0 = softer, 1.5+ = blurry)
+    let aa_width = fwidth(d) * 0.75;
+    // Clamp to prevent issues with very small/large values
+    let clamped_aa = clamp(aa_width, 0.0001, 2.0);
+    // smoothstep: d < -aa = 1.0 (inside), d > +aa = 0.0 (outside), smooth transition between
+    return 1.0 - smoothstep(-clamped_aa, clamped_aa, d);
+}
+
+// ============================================================================
 // Scene evaluation (2D with z-ordering)
 // ============================================================================
 
 struct HitInfo {
     dist: f32,
     color: vec3<f32>,
+    alpha: f32,  // For edge anti-aliasing
 }
 
 // 2D element SDF evaluation (ignores z for shape, uses z for layering)
@@ -286,41 +304,59 @@ fn get_element_sdf_2d(p: vec2<f32>, elem: Element) -> f32 {
     }
 }
 
-// 2D scene evaluation with z-ordering (painter's algorithm)
-// Elements with higher z are drawn on top
+// 2D scene evaluation with z-ordering and proper alpha compositing
+// Elements with higher z are drawn on top, with smooth anti-aliased edges
 fn scene_sdf_2d(p: vec2<f32>) -> HitInfo {
     var result: HitInfo;
     result.dist = 1e10;
     result.color = vec3<f32>(0.95, 0.95, 0.95); // Background color
+    result.alpha = 1.0; // Start with opaque background
 
     let count = uniforms.element_count;
-    var top_z = -1e10;
 
-    // Find all elements that contain this point, pick the one with highest z
+    // Simple approach: find the top-most element with significant alpha
+    // and blend its anti-aliased edge with the background/layer below
+    var top_z = -1e10;
+    var top_alpha = 0.0;
+    var top_color = vec3<f32>(0.0);
+    var min_dist = 1e10;
+
     for (var i = 0u; i < count; i++) {
         let elem = elements[i];
         let d = get_element_sdf_2d(p, elem);
 
-        // If point is inside (or on edge of) this element
-        if d <= 0.0 {
-            // Use element with highest z value (front-most)
+        // Track minimum distance for debugging
+        if d < min_dist {
+            min_dist = d;
+        }
+
+        // Calculate smooth alpha for this element
+        let alpha = sdf_alpha(d);
+
+        // Only consider elements with non-zero alpha contribution
+        if alpha > 0.001 {
+            // Higher z wins (painter's algorithm with alpha)
             if elem.center.z > top_z {
+                // If new layer has higher z, it goes on top
+                // Blend: new layer over old accumulated result
                 top_z = elem.center.z;
-                result.dist = d;
-                result.color = elem.color.rgb;
+                top_alpha = alpha;
+                top_color = elem.color.rgb;
+            } else if elem.center.z == top_z && alpha > top_alpha {
+                // Same z-level, stronger alpha wins
+                top_alpha = alpha;
+                top_color = elem.color.rgb;
             }
         }
     }
 
-    // If no element hit, check if we're close to any edge (for anti-aliasing later)
-    if top_z < -1e9 {
-        for (var i = 0u; i < count; i++) {
-            let elem = elements[i];
-            let d = get_element_sdf_2d(p, elem);
-            if d < result.dist {
-                result.dist = d;
-            }
-        }
+    result.dist = min_dist;
+
+    // Composite the top element over background
+    if top_alpha > 0.001 {
+        // Alpha blending: result = foreground * alpha + background * (1 - alpha)
+        result.color = top_color * top_alpha + result.color * (1.0 - top_alpha);
+        result.alpha = 1.0; // Final output is always opaque (composited onto background)
     }
 
     return result;
