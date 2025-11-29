@@ -51,13 +51,10 @@ When the user asks me to commit, I should:
 **Current permanent docs (do not add to this list without permission):**
 1. CLAUDE.md - AI agent guide
 2. README.md - Project overview
-3. classic/docs/specs.md - Technical specification (classic)
-4. PROFILING_STRATEGY.md - CPU prevention (in classic/docs)
-5. WORKFLOW_ANALYSIS.md - Lessons learned (in classic/docs)
-6. RUST_ONLY_ARCHITECTURE.md - Architecture rationale (in classic/docs)
-7. V1_COMPLETE_REPORT.md - Historical record (in classic/docs)
-8. docs/ - Topic-specific documentation (CHROME_SETUP.md, DOM_EXTRACTION.md)
-9. AGENTS.md - Quick commands for agents (serve, screenshot, reference layout paths)
+3. AGENTS.md - Quick commands for agents (serve, screenshot, reference layout paths)
+4. docs/ - Topic-specific documentation (CHROME_SETUP.md, DOM_EXTRACTION.md, EMERGENT_RENDERER_MASTERPLAN.md)
+5. renderers/classic/docs/ - Classic renderer documentation (classic_summary.md)
+6. renderers/emergent/docs/ - Emergent renderer documentation
 
 ### 2. Rust-Only Architecture
 **NO PYTHON. NO NODE.JS. RUST ONLY.**
