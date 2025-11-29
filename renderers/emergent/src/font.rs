@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn test_load_inter_atlas() {
         let atlas = load_inter_atlas().expect("Failed to load Inter atlas");
-        assert_eq!(atlas.font_name, "Inter Light");
+        assert_eq!(atlas.font_name, "Inter-Light");
         assert!(atlas.glyphs.contains_key(&'A'));
         assert!(atlas.glyphs.contains_key(&'t'));
     }
