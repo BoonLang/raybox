@@ -252,8 +252,8 @@ fn op_smooth_union(d1: f32, d2: f32, k: f32) -> f32 {
 // which is exactly what we need for mathematically correct AA at any scale.
 fn sdf_alpha(d: f32) -> f32 {
     // fwidth(d) = abs(dFdx(d)) + abs(dFdy(d)) - how much d changes per pixel
-    // Multiply by 0.75 for crisp AA (0.5 = very crisp, 1.0 = softer, 1.5+ = blurry)
-    let aa_width = fwidth(d) * 0.75;
+    // Multiply by 0.5 for very crisp AA (0.5 = very crisp, 1.0 = softer, 1.5+ = blurry)
+    let aa_width = fwidth(d) * 0.5;
     // Clamp to prevent issues with very small/large values
     let clamped_aa = clamp(aa_width, 0.0001, 2.0);
     // smoothstep: d < -aa = 1.0 (inside), d > +aa = 0.0 (outside), smooth transition between
@@ -662,21 +662,40 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 // Fragment shader
 // ============================================================================
 
-// Mild sharpening filter - enhances edges without extreme halos
-fn mild_sharpen(pixel: vec2<f32>, center_color: vec3<f32>) -> vec3<f32> {
-    // Sample 4 neighbors at 1px distance
+// FidelityFX CAS (Contrast Adaptive Sharpening) - AMD's algorithm
+// Adapts sharpening strength based on local contrast:
+// - Less sharpening at high-contrast edges (prevents overshoot/ringing)
+// - More sharpening in low-contrast areas (enhances detail)
+fn cas_sharpen(pixel: vec2<f32>, center_color: vec3<f32>) -> vec3<f32> {
+    // Sample 4 neighbors in cross pattern
     let n = scene_sdf_2d(pixel + vec2<f32>(0.0, -1.0)).color;
     let s = scene_sdf_2d(pixel + vec2<f32>(0.0, 1.0)).color;
     let e = scene_sdf_2d(pixel + vec2<f32>(1.0, 0.0)).color;
     let w = scene_sdf_2d(pixel + vec2<f32>(-1.0, 0.0)).color;
 
-    // Calculate blur (average of neighbors)
-    let blur = (n + s + e + w) * 0.25;
+    // Find min/max of cross pattern (per channel)
+    let mn = min(min(n, s), min(e, w));
+    let mx = max(max(n, s), max(e, w));
 
-    // Mild unsharp mask - reduced to 1.0 to prevent "dirty" edges on circles
-    let SHARPEN_STRENGTH: f32 = 1.0;
-    let high_pass = center_color - blur;
-    let sharpened = center_color + high_pass * SHARPEN_STRENGTH;
+    // Contrast = max - min (high contrast = edge, low contrast = flat area)
+    let contrast = mx - mn;
+
+    // Adaptive weight: reduce sharpening at high contrast edges
+    // peak = 1.0 - 0.5 * contrast (clamped to 0-1)
+    // At contrast=0 (flat): peak=1.0 (full sharpening)
+    // At contrast=1 (edge): peak=0.5 (reduced sharpening)
+    let peak = vec3<f32>(1.0) - vec3<f32>(0.5) * saturate(contrast);
+
+    // Sharpening strength (0.8 for more pronounced sharpening)
+    let CAS_SHARPNESS: f32 = 0.8;
+    let wt = peak * CAS_SHARPNESS;
+
+    // Calculate average of neighbors
+    let avg = (n + s + e + w) * 0.25;
+
+    // Apply sharpening: center + (center - average) * weight
+    // This is unsharp mask but with adaptive weight
+    let sharpened = center_color + (center_color - avg) * wt;
 
     return clamp(sharpened, vec3<f32>(0.0), vec3<f32>(1.0));
 }
@@ -690,8 +709,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let result = scene_sdf_2d(pixel);
     let center_color = result.color;
 
-    // Apply mild sharpening to enhance edge visibility
-    let final_color = mild_sharpen(pixel, center_color);
+    // EXPERIMENT: No sharpening, just fwidth AA (like text shader)
+    let final_color = center_color;
 
     // Gamma correction
     let gamma_color = pow(final_color, vec3<f32>(1.0 / 2.2));
