@@ -71,7 +71,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // Sample center to calculate AA width (used for all sub-samples)
     let center_sample = textureSample(atlas_texture, atlas_sampler, input.uv);
     let fw = fwidth(center_sample.r);
-    let aa_width = fw * 0.75;  // Tighter AA to reduce blur
+    let aa_width = fw * 0.5;  // Tight AA for sharp edges without sharpening filter
 
     // Sample 4 sub-pixels in a 2x2 pattern
     let sample1 = textureSample(atlas_texture, atlas_sampler, input.uv + vec2<f32>(-uv_offset.x, -uv_offset.y));
@@ -88,6 +88,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     // Average the 4 sub-pixel samples
     let alpha = (alpha1 + alpha2 + alpha3 + alpha4) * 0.25;
+
+    // Note: No sharpening filter applied - unsharp mask destroys thin features
+    // like the middle leg of 'm'. Tight AA (0.5) provides sufficient sharpness.
 
     // Discard fully transparent pixels
     if (alpha < 0.001) {

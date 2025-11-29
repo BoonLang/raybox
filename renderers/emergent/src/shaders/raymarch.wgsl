@@ -662,14 +662,36 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 // Fragment shader
 // ============================================================================
 
+// Mild sharpening filter - enhances edges without extreme halos
+fn mild_sharpen(pixel: vec2<f32>, center_color: vec3<f32>) -> vec3<f32> {
+    // Sample 4 neighbors at 1px distance
+    let n = scene_sdf_2d(pixel + vec2<f32>(0.0, -1.0)).color;
+    let s = scene_sdf_2d(pixel + vec2<f32>(0.0, 1.0)).color;
+    let e = scene_sdf_2d(pixel + vec2<f32>(1.0, 0.0)).color;
+    let w = scene_sdf_2d(pixel + vec2<f32>(-1.0, 0.0)).color;
+
+    // Calculate blur (average of neighbors)
+    let blur = (n + s + e + w) * 0.25;
+
+    // Mild unsharp mask - reduced to 1.0 to prevent "dirty" edges on circles
+    let SHARPEN_STRENGTH: f32 = 1.0;
+    let high_pass = center_color - blur;
+    let sharpened = center_color + high_pass * SHARPEN_STRENGTH;
+
+    return clamp(sharpened, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let uv = input.uv;
     let pixel = uv * uniforms.resolution;
 
-    // Simple SDF rendering with fwidth-based AA (no post-process blur)
+    // SDF rendering with fwidth-based AA
     let result = scene_sdf_2d(pixel);
-    let final_color = result.color;
+    let center_color = result.color;
+
+    // Apply mild sharpening to enhance edge visibility
+    let final_color = mild_sharpen(pixel, center_color);
 
     // Gamma correction
     let gamma_color = pow(final_color, vec3<f32>(1.0 / 2.2));
