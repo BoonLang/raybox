@@ -667,21 +667,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let uv = input.uv;
     let pixel = uv * uniforms.resolution;
 
-    // ========================================
-    // APPROACH 4: EXTREME BOX BLUR/CMAA (YELLOW indicator)
-    // Always applies 5x5 box blur for visible effect
-    // ========================================
+    // Simple SDF rendering with fwidth-based AA (no post-process blur)
     let result = scene_sdf_2d(pixel);
-    let center_color = result.color;
-    let final_color = cmaa_blend(pixel, center_color);
-
-    // Add YELLOW indicator bar at top (50px height)
-    var output_color = final_color;
-    if pixel.y < 50.0 {
-        output_color = vec3<f32>(1.0, 1.0, 0.0); // YELLOW for CMAA
-    }
+    let final_color = result.color;
 
     // Gamma correction
-    let gamma_color = pow(output_color, vec3<f32>(1.0 / 2.2));
+    let gamma_color = pow(final_color, vec3<f32>(1.0 / 2.2));
     return vec4<f32>(gamma_color, 1.0);
 }
