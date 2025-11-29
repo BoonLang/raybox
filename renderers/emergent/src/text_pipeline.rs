@@ -73,6 +73,7 @@ impl TextPipeline {
         surface_format: wgpu::TextureFormat,
         width: f32,
         height: f32,
+        sample_count: u32,
     ) -> Self {
         // Load font atlas metadata
         let font_atlas = crate::font::load_inter_atlas()
@@ -269,7 +270,11 @@ impl TextPipeline {
                 conservative: false,
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             multiview: None,
             cache: None,
         });
@@ -341,8 +346,15 @@ impl TextPipeline {
         }
     }
 
-    /// Render the prepared text
-    pub fn render(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+    /// Render the prepared text with MSAA
+    /// msaa_view: The multisampled render target
+    /// resolve_target: The final single-sample output (surface view)
+    pub fn render(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        msaa_view: &wgpu::TextureView,
+        resolve_target: &wgpu::TextureView,
+    ) {
         if self.glyph_count == 0 {
             return;
         }
@@ -350,10 +362,10 @@ impl TextPipeline {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Text Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
+                view: msaa_view,
+                resolve_target: Some(resolve_target),
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load, // Don't clear - render on top
+                    load: wgpu::LoadOp::Load, // Don't clear - render on top of raymarched content
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,

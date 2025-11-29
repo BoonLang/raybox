@@ -61,20 +61,33 @@ fn median(r: f32, g: f32, b: f32) -> f32 {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    // Sample the SDF atlas (fontdue generates single-channel SDF, stored in all RGBA channels)
-    let sample = textureSample(atlas_texture, atlas_sampler, input.uv);
+    // 2x2 Supersampling for smoother anti-aliasing
+    // Sample 4 sub-pixel locations and average the results
 
-    // For fontdue SDF: all channels contain the same distance value
-    // 0.5 = edge, >0.5 = inside glyph, <0.5 = outside glyph
-    let signed_dist = sample.r;
+    // Calculate UV offset for sub-pixel sampling
+    // fwidth gives us the UV change across one pixel, use 0.25 for sub-pixel offsets
+    let uv_offset = fwidth(input.uv) * 0.25;
 
-    // Use fwidth() for screen-space anti-aliasing
-    // This is more accurate than scale-based calculation
-    let fw = fwidth(signed_dist);
-    let aa_width = fw * 0.5;  // 0.5 for crisp text (adjustable: 0.3-0.8)
+    // Sample center to calculate AA width (used for all sub-samples)
+    let center_sample = textureSample(atlas_texture, atlas_sampler, input.uv);
+    let fw = fwidth(center_sample.r);
+    let aa_width = fw * 0.75;  // Tighter AA to reduce blur
 
-    // Threshold at 0.5 (the glyph edge) with tight smoothstep for crisp AA
-    let alpha = smoothstep(0.5 - aa_width, 0.5 + aa_width, signed_dist);
+    // Sample 4 sub-pixels in a 2x2 pattern
+    let sample1 = textureSample(atlas_texture, atlas_sampler, input.uv + vec2<f32>(-uv_offset.x, -uv_offset.y));
+    let alpha1 = smoothstep(0.5 - aa_width, 0.5 + aa_width, sample1.r);
+
+    let sample2 = textureSample(atlas_texture, atlas_sampler, input.uv + vec2<f32>(uv_offset.x, -uv_offset.y));
+    let alpha2 = smoothstep(0.5 - aa_width, 0.5 + aa_width, sample2.r);
+
+    let sample3 = textureSample(atlas_texture, atlas_sampler, input.uv + vec2<f32>(-uv_offset.x, uv_offset.y));
+    let alpha3 = smoothstep(0.5 - aa_width, 0.5 + aa_width, sample3.r);
+
+    let sample4 = textureSample(atlas_texture, atlas_sampler, input.uv + vec2<f32>(uv_offset.x, uv_offset.y));
+    let alpha4 = smoothstep(0.5 - aa_width, 0.5 + aa_width, sample4.r);
+
+    // Average the 4 sub-pixel samples
+    let alpha = (alpha1 + alpha2 + alpha3 + alpha4) * 0.25;
 
     // Discard fully transparent pixels
     if (alpha < 0.001) {

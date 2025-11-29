@@ -41,14 +41,19 @@ mod wasm_impl {
         Ok(())
     }
 
+    /// MSAA sample count for anti-aliasing (4x is common)
+    const MSAA_SAMPLE_COUNT: u32 = 4;
+
     struct GpuContext {
         device: wgpu::Device,
         queue: wgpu::Queue,
         surface: wgpu::Surface<'static>,
-        #[allow(dead_code)]
         surface_config: wgpu::SurfaceConfiguration,
         raymarch_pipeline: RaymarchPipeline,
         text_pipeline: TextPipeline,
+        // MSAA resources
+        msaa_texture: wgpu::Texture,
+        msaa_view: wgpu::TextureView,
     }
 
     async fn initialize_webgpu(canvas_id: &str) -> Result<GpuContext, JsValue> {
@@ -114,8 +119,9 @@ mod wasm_impl {
         };
         surface.configure(&device, &surface_config);
 
+        // Pipelines render to MSAA texture (sRGB format, multisampled)
         let raymarch_pipeline =
-            RaymarchPipeline::new(&device, surface_format, width as f32, height as f32);
+            RaymarchPipeline::new(&device, surface_format, width as f32, height as f32, MSAA_SAMPLE_COUNT);
 
         let text_pipeline = TextPipeline::new(
             &device,
@@ -123,7 +129,25 @@ mod wasm_impl {
             surface_format,
             width as f32,
             height as f32,
+            MSAA_SAMPLE_COUNT,
         );
+
+        // Create MSAA texture for multisampled rendering
+        let msaa_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("MSAA Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: MSAA_SAMPLE_COUNT,
+            dimension: wgpu::TextureDimension::D2,
+            format: surface_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let msaa_view = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         Ok(GpuContext {
             device,
@@ -132,6 +156,8 @@ mod wasm_impl {
             surface_config,
             raymarch_pipeline,
             text_pipeline,
+            msaa_texture,
+            msaa_view,
         })
     }
 
@@ -384,18 +410,17 @@ mod wasm_impl {
             .surface
             .get_current_texture()
             .map_err(|e| format!("Failed to get surface texture: {:?}", e))?;
-        let view = frame
+        let output_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Render raymarched scene first
-        gpu.raymarch_pipeline.render(&gpu.device, &gpu.queue, &view);
+        // Render with MSAA: render to msaa_view and resolve to output_view
+        gpu.raymarch_pipeline.render(&gpu.device, &gpu.queue, &gpu.msaa_view, &output_view);
 
-        // Render text on top
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Text Encoder"),
         });
-        gpu.text_pipeline.render(&mut encoder, &view);
+        gpu.text_pipeline.render(&mut encoder, &gpu.msaa_view, &output_view);
         gpu.queue.submit(std::iter::once(encoder.finish()));
 
         frame.present();

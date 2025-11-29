@@ -30,6 +30,7 @@ pub struct RaymarchPipeline {
     element_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     uniforms: Uniforms,
+    sample_count: u32,
 }
 
 impl RaymarchPipeline {
@@ -38,6 +39,7 @@ impl RaymarchPipeline {
         surface_format: wgpu::TextureFormat,
         width: f32,
         height: f32,
+        sample_count: u32,
     ) -> Self {
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -154,7 +156,11 @@ impl RaymarchPipeline {
                 conservative: false,
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             multiview: None,
             cache: None,
         });
@@ -165,6 +171,7 @@ impl RaymarchPipeline {
             element_buffer,
             bind_group,
             uniforms,
+            sample_count,
         }
     }
 
@@ -232,12 +239,15 @@ impl RaymarchPipeline {
         });
     }
 
-    /// Render the scene
+    /// Render the scene with MSAA
+    /// msaa_view: The multisampled render target
+    /// resolve_target: The final single-sample output (surface view)
     pub fn render(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        view: &wgpu::TextureView,
+        msaa_view: &wgpu::TextureView,
+        resolve_target: &wgpu::TextureView,
     ) {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Raymarch Encoder"),
@@ -247,8 +257,8 @@ impl RaymarchPipeline {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Raymarch Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    resolve_target: None,
+                    view: msaa_view,
+                    resolve_target: Some(resolve_target),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.95,

@@ -261,6 +261,121 @@ fn sdf_alpha(d: f32) -> f32 {
 }
 
 // ============================================================================
+// Anti-aliasing Techniques
+// ============================================================================
+
+// APPROACH 1: Sharpen - Analytical edge enhancement using SDF
+// AGGRESSIVE: Strength increased from 0.25 to 3.0 for visible effect
+fn sharpen_at_edge(color: vec3<f32>, sdf_dist: f32, edge_proximity: f32) -> vec3<f32> {
+    let SHARPEN_STRENGTH: f32 = 3.0;  // WAS 0.25 - now very aggressive
+    let fw = fwidth(sdf_dist);
+    let edge_width = fw * 4.0;  // WAS 2.0 - wider edge detection
+    let edge_factor = 1.0 - smoothstep(0.0, edge_width, abs(sdf_dist));
+    let luminance = dot(color, vec3<f32>(0.299, 0.587, 0.114));
+    let gray = vec3<f32>(luminance);
+    let high_pass = color - gray;
+    let sharpen_amount = edge_factor * SHARPEN_STRENGTH * edge_proximity;
+    let sharpened = color + high_pass * sharpen_amount * 2.0;  // Extra boost
+    return clamp(sharpened, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// APPROACH 1: EXTREME SHARPEN - Creates visible halos around edges
+// EXTREME strength to make text look "etched" with dark outlines
+fn sharpen_blend(pixel: vec2<f32>, center_color: vec3<f32>) -> vec3<f32> {
+    // Sample neighbors at 1px distance
+    let n = scene_sdf_2d(pixel + vec2<f32>(0.0, -1.0)).color;
+    let s = scene_sdf_2d(pixel + vec2<f32>(0.0, 1.0)).color;
+    let e = scene_sdf_2d(pixel + vec2<f32>(1.0, 0.0)).color;
+    let w = scene_sdf_2d(pixel + vec2<f32>(-1.0, 0.0)).color;
+
+    // Calculate blur (average of neighbors)
+    let blur = (n + s + e + w) * 0.25;
+
+    // EXTREME unsharp mask - strength 4.0 creates obvious halos
+    let SHARPEN_STRENGTH: f32 = 4.0;
+    let high_pass = center_color - blur;
+    let sharpened = center_color + high_pass * SHARPEN_STRENGTH;
+
+    return clamp(sharpened, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// APPROACH 2: HEAVY BLUR - 2px radius blur for visibly soft/blurry text
+// Much larger sampling radius = obviously blurry result
+fn subpixel_blend(pixel: vec2<f32>, center_color: vec3<f32>) -> vec3<f32> {
+    // Sample at 2px distance for visible blur
+    let n1 = scene_sdf_2d(pixel + vec2<f32>(0.0, -1.0)).color;
+    let s1 = scene_sdf_2d(pixel + vec2<f32>(0.0, 1.0)).color;
+    let e1 = scene_sdf_2d(pixel + vec2<f32>(1.0, 0.0)).color;
+    let w1 = scene_sdf_2d(pixel + vec2<f32>(-1.0, 0.0)).color;
+    let n2 = scene_sdf_2d(pixel + vec2<f32>(0.0, -2.0)).color;
+    let s2 = scene_sdf_2d(pixel + vec2<f32>(0.0, 2.0)).color;
+    let e2 = scene_sdf_2d(pixel + vec2<f32>(2.0, 0.0)).color;
+    let w2 = scene_sdf_2d(pixel + vec2<f32>(-2.0, 0.0)).color;
+
+    // Heavy blur - average ALL samples with equal weight
+    // This creates very visible softening
+    return (center_color + n1 + s1 + e1 + w1 + n2 + s2 + e2 + w2) / 9.0;
+}
+
+// APPROACH 3: EXTREME HORIZONTAL BLUR - Always blurs horizontally
+// Creates visible horizontal smearing/streaking effect
+fn fxaa_blend(pixel: vec2<f32>, center_color: vec3<f32>) -> vec3<f32> {
+    // Sample horizontal neighbors at 1px and 2px for strong horizontal blur
+    let e1 = scene_sdf_2d(pixel + vec2<f32>(1.0, 0.0)).color;
+    let w1 = scene_sdf_2d(pixel + vec2<f32>(-1.0, 0.0)).color;
+    let e2 = scene_sdf_2d(pixel + vec2<f32>(2.0, 0.0)).color;
+    let w2 = scene_sdf_2d(pixel + vec2<f32>(-2.0, 0.0)).color;
+
+    // EXTREME: 100% horizontal blur - completely replaces center
+    // This creates very obvious horizontal smearing
+    return (center_color + e1 + w1 + e2 + w2) / 5.0;
+}
+
+// APPROACH 4: EXTREME 5x5 GAUSSIAN BLUR - Maximum softness/blur
+// Full 5x5 gaussian kernel for extremely soft/blurry result
+fn cmaa_blend(pixel: vec2<f32>, center_color: vec3<f32>) -> vec3<f32> {
+    // Sample a 5x5 neighborhood - this is EXTREMELY heavy blur
+    // Row -2
+    let r2_c2 = scene_sdf_2d(pixel + vec2<f32>(-2.0, -2.0)).color;
+    let r2_c1 = scene_sdf_2d(pixel + vec2<f32>(-1.0, -2.0)).color;
+    let r2_c0 = scene_sdf_2d(pixel + vec2<f32>( 0.0, -2.0)).color;
+    let r2_c3 = scene_sdf_2d(pixel + vec2<f32>( 1.0, -2.0)).color;
+    let r2_c4 = scene_sdf_2d(pixel + vec2<f32>( 2.0, -2.0)).color;
+    // Row -1
+    let r1_c2 = scene_sdf_2d(pixel + vec2<f32>(-2.0, -1.0)).color;
+    let r1_c1 = scene_sdf_2d(pixel + vec2<f32>(-1.0, -1.0)).color;
+    let r1_c0 = scene_sdf_2d(pixel + vec2<f32>( 0.0, -1.0)).color;
+    let r1_c3 = scene_sdf_2d(pixel + vec2<f32>( 1.0, -1.0)).color;
+    let r1_c4 = scene_sdf_2d(pixel + vec2<f32>( 2.0, -1.0)).color;
+    // Row 0
+    let r0_c2 = scene_sdf_2d(pixel + vec2<f32>(-2.0,  0.0)).color;
+    let r0_c1 = scene_sdf_2d(pixel + vec2<f32>(-1.0,  0.0)).color;
+    let r0_c3 = scene_sdf_2d(pixel + vec2<f32>( 1.0,  0.0)).color;
+    let r0_c4 = scene_sdf_2d(pixel + vec2<f32>( 2.0,  0.0)).color;
+    // Row +1
+    let r3_c2 = scene_sdf_2d(pixel + vec2<f32>(-2.0,  1.0)).color;
+    let r3_c1 = scene_sdf_2d(pixel + vec2<f32>(-1.0,  1.0)).color;
+    let r3_c0 = scene_sdf_2d(pixel + vec2<f32>( 0.0,  1.0)).color;
+    let r3_c3 = scene_sdf_2d(pixel + vec2<f32>( 1.0,  1.0)).color;
+    let r3_c4 = scene_sdf_2d(pixel + vec2<f32>( 2.0,  1.0)).color;
+    // Row +2
+    let r4_c2 = scene_sdf_2d(pixel + vec2<f32>(-2.0,  2.0)).color;
+    let r4_c1 = scene_sdf_2d(pixel + vec2<f32>(-1.0,  2.0)).color;
+    let r4_c0 = scene_sdf_2d(pixel + vec2<f32>( 0.0,  2.0)).color;
+    let r4_c3 = scene_sdf_2d(pixel + vec2<f32>( 1.0,  2.0)).color;
+    let r4_c4 = scene_sdf_2d(pixel + vec2<f32>( 2.0,  2.0)).color;
+
+    // Simple box blur of ALL 25 samples for MAXIMUM blur
+    let total = r2_c2 + r2_c1 + r2_c0 + r2_c3 + r2_c4 +
+                r1_c2 + r1_c1 + r1_c0 + r1_c3 + r1_c4 +
+                r0_c2 + r0_c1 + center_color + r0_c3 + r0_c4 +
+                r3_c2 + r3_c1 + r3_c0 + r3_c3 + r3_c4 +
+                r4_c2 + r4_c1 + r4_c0 + r4_c3 + r4_c4;
+
+    return total / 25.0;
+}
+
+// ============================================================================
 // Scene evaluation (2D with z-ordering)
 // ============================================================================
 
@@ -552,10 +667,21 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let uv = input.uv;
     let pixel = uv * uniforms.resolution;
 
-    // 2D SDF evaluation (no raymarching for flat UI)
+    // ========================================
+    // APPROACH 4: EXTREME BOX BLUR/CMAA (YELLOW indicator)
+    // Always applies 5x5 box blur for visible effect
+    // ========================================
     let result = scene_sdf_2d(pixel);
+    let center_color = result.color;
+    let final_color = cmaa_blend(pixel, center_color);
+
+    // Add YELLOW indicator bar at top (50px height)
+    var output_color = final_color;
+    if pixel.y < 50.0 {
+        output_color = vec3<f32>(1.0, 1.0, 0.0); // YELLOW for CMAA
+    }
 
     // Gamma correction
-    let gamma_color = pow(result.color, vec3<f32>(1.0 / 2.2));
+    let gamma_color = pow(output_color, vec3<f32>(1.0 / 2.2));
     return vec4<f32>(gamma_color, 1.0);
 }
