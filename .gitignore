@@ -28,6 +28,9 @@ renderers/*/web/pkg/
 /tmp/
 *.tmp
 
+# Chrome user data (for WebGPU testing)
+.chrome-data/
+
 # Python (old tools - will be deleted)
 __pycache__/
 *.pyc

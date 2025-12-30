@@ -8,12 +8,19 @@ use std::time::Instant;
 use crate::wasm_bindgen::{check_or_install_wasm_bindgen, run_wasm_bindgen};
 use crate::wasm_opt::{check_or_install_wasm_opt, run_wasm_opt};
 
+/// Build the default renderer (classic)
 pub fn run(release: bool) -> Result<()> {
+    run_for_package(release, "renderer")
+}
+
+/// Build a specific renderer package
+pub fn run_for_package(release: bool, package: &str) -> Result<()> {
     let start = Instant::now();
 
     println!(
-        "Building WASM renderer{}...",
-        if release { " (release)" } else { "" }
+        "Building WASM {} {}...",
+        package,
+        if release { "(release)" } else { "" }
     );
     println!();
 
@@ -28,13 +35,13 @@ pub fn run(release: bool) -> Result<()> {
 
     // Phase 2: Compile to WASM
     println!("[2/5] Compiling Rust to WASM...");
-    compile_to_wasm(release)?;
+    compile_to_wasm_package(release, package)?;
     println!("✓ Compilation complete");
     println!();
 
     // Phase 3: Run wasm-bindgen
     println!("[3/5] Generating JS bindings...");
-    generate_bindings(release)?;
+    generate_bindings_for_package(release, package)?;
     println!("✓ JS bindings generated");
     println!();
 
@@ -69,13 +76,13 @@ pub fn run(release: bool) -> Result<()> {
     Ok(())
 }
 
-fn compile_to_wasm(release: bool) -> Result<()> {
+fn compile_to_wasm_package(release: bool, package: &str) -> Result<()> {
     let mut cmd = Command::new("cargo");
     cmd.arg("build")
         .arg("--target")
         .arg("wasm32-unknown-unknown")
         .arg("--package")
-        .arg("renderer");
+        .arg(package);
 
     if release {
         cmd.arg("--release");
@@ -84,7 +91,7 @@ fn compile_to_wasm(release: bool) -> Result<()> {
     // Set RUSTFLAGS for WebGPU
     cmd.env("RUSTFLAGS", "--cfg=web_sys_unstable_apis");
 
-    log::info!("Running: cargo build --target wasm32-unknown-unknown --package renderer");
+    log::info!("Running: cargo build --target wasm32-unknown-unknown --package {}", package);
 
     let status = cmd.status().context("Failed to run cargo build")?;
 
@@ -95,12 +102,14 @@ fn compile_to_wasm(release: bool) -> Result<()> {
     Ok(())
 }
 
-fn generate_bindings(release: bool) -> Result<()> {
+fn generate_bindings_for_package(release: bool, package: &str) -> Result<()> {
     let profile = if release { "release" } else { "debug" };
+    // Package name uses hyphens but wasm file uses underscores
+    let wasm_file_name = format!("{}.wasm", package.replace('-', "_"));
     let wasm_path = Path::new("target")
         .join("wasm32-unknown-unknown")
         .join(profile)
-        .join("renderer.wasm");
+        .join(&wasm_file_name);
 
     if !wasm_path.exists() {
         anyhow::bail!("WASM file not found: {:?}", wasm_path);

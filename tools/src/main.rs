@@ -99,6 +99,10 @@ enum Commands {
         #[arg(long, default_value = "1080")]
         height: u32,
 
+        /// Connect to existing Chrome instance on this CDP port (e.g., 9333)
+        /// If not specified, launches a new Chrome instance
+        #[arg(long)]
+        cdp_port: Option<u16>,
     },
 
     /// Watch files and auto-rebuild
@@ -178,6 +182,10 @@ enum Commands {
         /// Port to listen on
         #[arg(short, long, default_value = "8000")]
         port: u16,
+
+        /// Renderer to build and watch (classic or emergent)
+        #[arg(long, default_value = "classic")]
+        renderer: String,
     },
 
     /// Run integration tests (cross-platform Rust implementation)
@@ -400,8 +408,9 @@ fn main() -> Result<()> {
             output,
             width,
             height,
+            cdp_port,
         } => {
-            commands::screenshot::run(&url, &output, width, height, true)?;
+            commands::screenshot::run(&url, &output, width, height, true, cdp_port)?;
         }
 
         Commands::Watch { directory, command } => {
@@ -499,8 +508,9 @@ fn main() -> Result<()> {
             release,
             open,
             port,
+            renderer,
         } => {
-            commands::wasm_start::run(release, open, port)?;
+            commands::wasm_start::run(release, open, port, &renderer)?;
         }
 
         Commands::IntegrationTest { url } => {

@@ -1,0 +1,7 @@
+{
+  "supervisor_prompt": "Work on the emergent renderer until `./compare_physical.sh` passes (exit code 0, SSIM ≥ 97%).\n\n  **Setup:**\n  - Server: `cargo run -p tools -- wasm-start --renderer emergent --port 8001`\n  - Test: `./compare_physical.sh`\n\n  **Key files:**\n  - Renderer: `renderers/emergent/src/` (lib.rs, scene.rs, pipeline.rs, shaders/)\n  - Reference: `reference/screenshots/screenshot.png`, `reference/layouts/layout.json`\n  - Screenshots: Save progress to `renderers/emergent/screenshots/screenshot.png`\n\n  **Workflow:**\n  1. Run `./compare_physical.sh` to see current diff\n  2. Identify largest visual difference from `/tmp/emergent_diff.png`\n  3. Fix it in renderer code\n  4. Repeat until PASS\n\n  Work autonomously. Take screenshots to verify changes. Don't ask for confirmation - iterate until the test passes. When done, say +completed+.",
+  "completion_condition": "+completed+",
+  "completion_command": "./compare_physical.sh",
+  "protected_patterns": [],
+  "command_timeout_mins": 10
+}

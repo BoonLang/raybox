@@ -8,13 +8,20 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::commands::wasm_build;
 
-pub fn run(release: bool, open_browser: bool, port: u16) -> Result<()> {
-    println!("Starting WASM development server...");
+pub fn run(release: bool, open_browser: bool, port: u16, renderer: &str) -> Result<()> {
+    // Validate renderer choice
+    let (package_name, watch_dir, html_page) = match renderer {
+        "classic" => ("renderer", "renderers/classic/src", "index.html"),
+        "emergent" => ("emergent-renderer", "renderers/emergent/src", "emergent_wasm.html"),
+        _ => anyhow::bail!("Unknown renderer '{}'. Use 'classic' or 'emergent'", renderer),
+    };
+
+    println!("Starting WASM development server ({} renderer)...", renderer);
     println!();
 
     // Initial build
     println!("=== Initial Build ===");
-    wasm_build::run(release)?;
+    wasm_build::run_for_package(release, package_name)?;
     println!();
 
     // Generate initial build ID
@@ -23,15 +30,17 @@ pub fn run(release: bool, open_browser: bool, port: u16) -> Result<()> {
 
     // Start file watcher
     let build_id_clone = Arc::clone(&build_id);
+    let watch_dir_owned = watch_dir.to_string();
+    let package_name_owned = package_name.to_string();
     let watcher_thread = thread::spawn(move || {
-        if let Err(e) = run_watcher(release, build_id_clone) {
+        if let Err(e) = run_watcher(release, build_id_clone, &watch_dir_owned, &package_name_owned) {
             eprintln!("Watcher error: {}", e);
         }
     });
 
     println!("=== Development Server ===");
-    println!("  URL: http://localhost:{}", port);
-    println!("  Watching: renderers/classic/src/");
+    println!("  URL: http://localhost:{}/{}", port, html_page);
+    println!("  Watching: {}/", watch_dir);
     println!("  Press Ctrl+C to stop");
     println!();
 
@@ -55,15 +64,17 @@ pub fn run(release: bool, open_browser: bool, port: u16) -> Result<()> {
         // Use Chrome explicitly on Linux to avoid opening Firefox
         #[cfg(target_os = "linux")]
         {
+            // Use port 9333 for raybox (9222 is used by boon tools)
             if let Err(e) = std::process::Command::new("google-chrome")
                 .arg(&url)
                 .arg("--new-window")
-                .arg("--remote-debugging-port=9222")
+                .arg("--remote-debugging-port=9333")
                 .arg("--enable-unsafe-webgpu")
                 .arg("--enable-webgpu-developer-features")
-                .arg("--enable-features=Vulkan")
-                .arg("--use-vulkan=native")
-                .arg("--enable-gpu-rasterization")
+                .arg("--enable-features=Vulkan,VulkanFromANGLE")
+                .arg("--enable-vulkan")
+                .arg("--use-angle=vulkan")
+                .arg("--disable-software-rasterizer")
                 .arg("--ignore-gpu-blocklist")
                 .spawn()
             {
@@ -91,7 +102,7 @@ pub fn run(release: bool, open_browser: bool, port: u16) -> Result<()> {
     Ok(())
 }
 
-fn run_watcher(release: bool, build_id: Arc<Mutex<String>>) -> Result<()> {
+fn run_watcher(release: bool, build_id: Arc<Mutex<String>>, watch_dir: &str, package_name: &str) -> Result<()> {
     let (tx, rx) = channel();
 
     let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
@@ -125,14 +136,15 @@ fn run_watcher(release: bool, build_id: Arc<Mutex<String>>) -> Result<()> {
         }
     })?;
 
-    // Watch classic renderer src directory (includes .rs and .wgsl files)
-    watcher.watch(Path::new("renderers/classic/src"), RecursiveMode::Recursive)?;
-    watcher.watch(
-        Path::new("renderers/classic/Cargo.toml"),
-        RecursiveMode::NonRecursive,
-    )?;
+    // Watch renderer src directory (includes .rs and .wgsl files)
+    watcher.watch(Path::new(watch_dir), RecursiveMode::Recursive)?;
+    // Watch Cargo.toml in parent directory
+    let cargo_toml = Path::new(watch_dir).parent().unwrap().join("Cargo.toml");
+    watcher.watch(&cargo_toml, RecursiveMode::NonRecursive)?;
     // Watch web directory (includes .html, .js, .css files)
     watcher.watch(Path::new("web"), RecursiveMode::Recursive)?;
+
+    let package_name = package_name.to_string();
 
     let mut last_rebuild = SystemTime::now();
 
@@ -160,7 +172,7 @@ fn run_watcher(release: bool, build_id: Arc<Mutex<String>>) -> Result<()> {
             println!("📝 File change detected, rebuilding...");
             println!();
 
-            match wasm_build::run(release) {
+            match wasm_build::run_for_package(release, &package_name) {
                 Ok(_) => {
                     let new_id = generate_build_id();
                     *build_id.lock().unwrap() = new_id.clone();

@@ -179,6 +179,30 @@ mod wasm_impl {
         // From layout.json: y=43.59, w=550, h=19.59, color rgb(184, 63, 69)
         // Rendered via text_pipeline.add_centered_text() in render_scene()
 
+        // Main todoapp card shadow (two layers per CSS: 0 2px 4px rgba(0,0,0,0.2), 0 25px 50px rgba(0,0,0,0.1))
+        // Card is at (350, 302.6) with half-size (275, 172.6)
+        // Background is rgb(245, 245, 245) = 0.96, so shadows blend toward that
+
+        // Layer 1: Large soft shadow (0 25px 50px rgba(0,0,0,0.1))
+        // 10% black on 0.96 gray = 0.96 * 0.9 = 0.864
+        scene.add_element(Element::new_rounded_box(
+            [350.0, 302.6 + 20.0, -0.2],  // offset down, behind card
+            [275.0 + 25.0, 172.6 + 25.0, 0.01],  // larger for blur effect
+            [0.90, 0.90, 0.90],  // light gray shadow
+            20.0,  // rounded corners for softer appearance
+            0.0,
+        ));
+
+        // Layer 2: Small sharp shadow (0 2px 4px rgba(0,0,0,0.2))
+        // 20% black on 0.96 gray = 0.96 * 0.8 = 0.768
+        scene.add_element(Element::new_rounded_box(
+            [350.0, 302.6 + 3.0, -0.1],  // 3px down, behind card
+            [275.0 + 2.0, 172.6 + 2.0, 0.01],  // slightly larger
+            [0.85, 0.85, 0.85],  // darker gray for closer shadow
+            3.0,  // slight rounding
+            0.0,
+        ));
+
         // Main todoapp card (white)
         // From layout.json: x=75, y=130, w=550, h=345.1875
         // Center: (350, 302.6)
@@ -208,15 +232,7 @@ mod wasm_impl {
             0.0,
         ));
 
-        // Input placeholder text bar - "What needs to be done?"
-        // Positioned after paddingLeft: 60px, so x starts at ~135
-        scene.add_element(Element::new_rounded_box(
-            [310.0, 162.5, 0.2],
-            [140.0, 8.0, 0.01],
-            [0.90, 0.90, 0.90], // #e6e6e6 placeholder color
-            3.0,
-            0.0,
-        ));
+        // Note: Input placeholder text "What needs to be done?" is rendered via text_pipeline
 
         // Todo items from layout.json
         // Checkboxes are 40x40, positioned at x=75
@@ -312,11 +328,21 @@ mod wasm_impl {
         ));
 
         // Filter buttons - positioned per layout.json
-        // "All" (selected): x=250.78, w=32.67 -> center x=267
+        // "All" (selected): x=250.78, w=32.67, h=25 -> center x=267, y=454.7
+        // Has border: 1px solid #ce4646 (rgb(206, 70, 70))
+        // First draw the border (red rounded box)
+        scene.add_element(Element::new_rounded_box(
+            [267.0, 454.7, 0.28],
+            [17.5, 13.5, 0.01],  // slightly larger for border
+            [0.808, 0.275, 0.275],  // #ce4646 red
+            4.0,
+            0.0,
+        ));
+        // Then draw the inner white background
         scene.add_element(Element::new_rounded_box(
             [267.0, 454.7, 0.3],
-            [16.0, 12.5, 0.01],
-            [0.95, 0.92, 0.92], // slight red tint for selected
+            [16.5, 12.5, 0.01],  // 1px smaller on each side
+            [1.0, 1.0, 1.0],  // white inner
             3.0,
             0.0,
         ));
@@ -401,6 +427,13 @@ mod wasm_impl {
 
         // "Clear completed" - x=500.78, y=445.19
         gpu.text_pipeline.add_text("Clear completed", 501.0, 445.0, 15.0, footer_color);
+
+        // 5. Info footer text (fontSize=11px, centered, color rgb(77, 77, 77))
+        // From layout.json: y=540.1875, 562.1875, 584.1875
+        let info_color = [0.30, 0.30, 0.30, 1.0]; // rgb(77, 77, 77) - dark gray
+        gpu.text_pipeline.add_centered_text("Double-click to edit a todo", 350.0, 550.0, 11.0, info_color);
+        gpu.text_pipeline.add_centered_text("Created by the TodoMVC Team", 350.0, 572.0, 11.0, info_color);
+        gpu.text_pipeline.add_centered_text("Part of TodoMVC", 350.0, 594.0, 11.0, info_color);
 
         // Upload all text to GPU
         gpu.text_pipeline.flush_batch(&gpu.queue);

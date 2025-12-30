@@ -7,7 +7,7 @@ use std::fs;
 use std::time::Duration;
 use crate::commands::screenshot_helpers::capture_full_page;
 
-pub fn run(url: &str, output: &str, width: u32, height: u32, _headed: bool) -> Result<()> {
+pub fn run(url: &str, output: &str, width: u32, height: u32, _headed: bool, cdp_port: Option<u16>) -> Result<()> {
     log::info!(
         "Taking screenshot of {} ({}x{}) -> {}",
         url,
@@ -18,42 +18,67 @@ pub fn run(url: &str, output: &str, width: u32, height: u32, _headed: bool) -> R
 
     // Use tokio runtime for async operations
     tokio::runtime::Runtime::new()?.block_on(async {
-        println!("✓ Launching Chrome...");
+        let browser = if let Some(port) = cdp_port {
+            // Connect to existing Chrome instance
+            println!("✓ Connecting to Chrome on port {}...", port);
+            let ws_url = format!("http://127.0.0.1:{}", port);
+            let (browser, mut handler) = Browser::connect(&ws_url)
+                .await
+                .context(format!("Failed to connect to Chrome on port {}. Is Chrome running with --remote-debugging-port={}?", port, port))?;
 
-        // Configure Chrome with WebGPU/headless-friendly flags (CRITICAL - see CLAUDE.md)
-        let webgpu_flags = vec![
-            "--disable-dev-shm-usage",
-            "--no-sandbox",
-            "--hide-scrollbars",
-            "--mute-audio",
-            "--enable-unsafe-webgpu",
-            "--enable-webgpu-developer-features",
-            "--enable-features=UseSkiaRenderer",
-            "--disable-session-crashed-bubble",
-            "--hide-crash-restore-bubble",
-        ];
+            // Spawn handler task
+            tokio::spawn(async move { while handler.next().await.is_some() {} });
 
-        let cfg = BrowserConfig::builder()
-            .with_head() // force headed for WebGPU
-            .window_size(width, height)
-            .args(webgpu_flags);
+            // Wait a bit for browser to be fully connected
+            tokio::time::sleep(Duration::from_millis(500)).await;
 
-        let (browser, mut handler) = Browser::launch(
-            cfg.build()
-                .map_err(|e| anyhow::anyhow!("Failed to build browser config: {}", e))?,
-        )
-        .await
-        .context("Failed to launch Chrome")?;
+            browser
+        } else {
+            // Launch new Chrome instance
+            println!("✓ Launching Chrome...");
 
-        // Spawn handler task
-        tokio::spawn(async move { while handler.next().await.is_some() {} });
+            // Configure Chrome with WebGPU/headless-friendly flags (CRITICAL - see CLAUDE.md)
+            let webgpu_flags = vec![
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+                "--hide-scrollbars",
+                "--mute-audio",
+                "--enable-unsafe-webgpu",
+                "--enable-webgpu-developer-features",
+                "--enable-features=Vulkan,VulkanFromANGLE",
+                "--enable-vulkan",
+                "--use-angle=vulkan",
+                "--disable-software-rasterizer",
+                "--disable-session-crashed-bubble",
+                "--hide-crash-restore-bubble",
+            ];
+
+            let cfg = BrowserConfig::builder()
+                .with_head() // force headed for WebGPU
+                .window_size(width, height)
+                .args(webgpu_flags);
+
+            let (browser, mut handler) = Browser::launch(
+                cfg.build()
+                    .map_err(|e| anyhow::anyhow!("Failed to build browser config: {}", e))?,
+            )
+            .await
+            .context("Failed to launch Chrome")?;
+
+            // Spawn handler task
+            tokio::spawn(async move { while handler.next().await.is_some() {} });
+
+            browser
+        };
 
         println!("  Navigating to: {}", url);
 
+        // When connecting to existing Chrome, create a new tab (more reliable than reusing)
         let page = browser
             .new_page(url)
             .await
             .context("Failed to create new page")?;
+        println!("  Page created");
 
         // Capture console output inside the page (log/warn/error)
         let _ = page

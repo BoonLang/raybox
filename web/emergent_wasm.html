@@ -15,20 +15,24 @@
         async function init() {
             const resp = await fetch('/reference/layouts/layout.json');
             const layoutJson = await resp.text();
-            const layout = JSON.parse(layoutJson);
 
             try {
-                const wasm = await import('./pkg/renderer.js');
+                // When built with wasm-start --renderer emergent, outputs emergent_renderer.js
+                const wasm = await import('./pkg/emergent_renderer.js');
                 await wasm.default();
-                // hint the browser to allow fallback adapters (headless)
-                if (navigator.gpu && navigator.gpu.requestAdapter) {
-                    try {
-                        await navigator.gpu.requestAdapter({ powerPreference: 'low-power', forceFallbackAdapter: true });
-                    } catch (_) {}
-                }
-                await wasm.start_emergent_renderer('canvas', layoutJson);
+
+                // Signal that WebGPU is initializing
+                window.__emergent_webgpu_ok = false;
+
+                // The emergent renderer exports start_renderer (not start_emergent_renderer)
+                await wasm.start_renderer('canvas');
+
+                // Signal successful initialization
+                window.__emergent_webgpu_ok = true;
+                console.log('Emergent renderer initialized successfully');
             } catch (err) {
                 console.error('Emergent WebGPU failed:', err);
+                window.__emergent_webgpu_ok = false;
             }
         }
         init();
