@@ -4,11 +4,14 @@ mod shader_bindings {
     include!(concat!(env!("OUT_DIR"), "/shader_bindings.rs"));
 }
 
+mod camera;
 #[cfg(not(feature = "windowed"))]
 mod capture;
 mod constants;
 #[cfg(not(feature = "windowed"))]
-mod renderer;
+mod sdf_renderer;
+#[cfg(not(feature = "windowed"))]
+mod screenshot_all;
 mod window_mode;
 
 use anyhow::Result;
@@ -34,10 +37,16 @@ fn main() -> Result<()> {
 
 #[cfg(not(feature = "windowed"))]
 async fn run_headless() -> Result<()> {
-    log::info!("Creating renderer...");
-    let renderer = renderer::Renderer::new().await?;
+    // Check for --all flag to screenshot all examples
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--all") {
+        return screenshot_all::screenshot_all().await;
+    }
 
-    log::info!("Rendering rectangle...");
+    log::info!("Creating SDF renderer...");
+    let renderer = sdf_renderer::SdfRenderer::new().await?;
+
+    log::info!("Rendering SDF scene...");
     let texture = renderer.render();
 
     log::info!("Capturing framebuffer to PNG...");

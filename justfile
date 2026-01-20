@@ -1,3 +1,19 @@
+# Default: run windowed mode
+default:
+    cargo run --features windowed
+
+# Run example by number: just ex 1, just ex 2, etc.
+ex num:
+    #!/usr/bin/env bash
+    case "{{num}}" in
+        1) cargo run --example demo_objects --features windowed ;;
+        2) cargo run --example demo_spheres --features windowed ;;
+        3) cargo run --example demo_towers --features windowed ;;
+        4) cargo run --example demo_text2d --features windowed ;;
+        5) cargo run --example demo_clay --features windowed ;;
+        *) echo "Unknown example {{num}}. Available: 1 (objects), 2 (spheres), 3 (towers), 4 (text2d), 5 (clay tablet)" ;;
+    esac
+
 # Build WASM and generate bindings
 build-web:
     RUSTFLAGS="--cfg=web_sys_unstable_apis" cargo build --lib --target wasm32-unknown-unknown --release

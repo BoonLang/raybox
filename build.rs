@@ -6,16 +6,12 @@ use std::process::Command;
 fn main() -> Result<()> {
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
-
     let shaders_dir = manifest_dir.join("shaders");
-    let slang_file = shaders_dir.join("rectangle.slang");
-    let wgsl_file = out_dir.join("rectangle.wgsl");
 
-    // Tell Cargo to rerun if shader changes
-    println!("cargo:rerun-if-changed={}", slang_file.display());
-
-    // Find slangc - check common locations
-    let slangc = find_slangc().context("Could not find slangc. Please install it from https://github.com/shader-slang/slang/releases")?;
+    // Find slangc
+    let slangc = find_slangc().context(
+        "Could not find slangc. Please install it from https://github.com/shader-slang/slang/releases",
+    )?;
 
     // Set LD_LIBRARY_PATH for slangc's shared libraries
     let slangc_dir = slangc.parent().unwrap();
@@ -26,75 +22,146 @@ fn main() -> Result<()> {
         lib_dir.display().to_string()
     };
 
-    // Temp files for shader compilation (slangc doesn't support stdout for WGSL)
-    let vs_temp = out_dir.join("vs_temp.wgsl");
-    let fs_temp = out_dir.join("fs_temp.wgsl");
+    // Compile all shaders
+    let shaders = [
+        ShaderConfig {
+            name: "rectangle",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
+        ShaderConfig {
+            name: "sdf_raymarch",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
+        ShaderConfig {
+            name: "sdf_spheres",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
+        ShaderConfig {
+            name: "sdf_towers",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
+        ShaderConfig {
+            name: "sdf_text2d",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
+        ShaderConfig {
+            name: "sdf_clay",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
+        ShaderConfig {
+            name: "sdf_msdf_relief",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
+    ];
 
-    // Compile vertex shader
-    let vs_status = Command::new(&slangc)
-        .env("LD_LIBRARY_PATH", &ld_library_path)
-        .args([
-            slang_file.to_str().unwrap(),
-            "-entry", "vs_main",
-            "-stage", "vertex",
-            "-target", "wgsl",
-            "-o", vs_temp.to_str().unwrap(),
-        ])
-        .status()
-        .context("Failed to run slangc for vertex shader")?;
-
-    if !vs_status.success() {
-        anyhow::bail!("slangc failed for vertex shader");
+    for shader in &shaders {
+        compile_shader(&shaders_dir, &out_dir, &slangc, &ld_library_path, shader)?;
     }
 
-    // Compile fragment shader
-    let fs_status = Command::new(&slangc)
-        .env("LD_LIBRARY_PATH", &ld_library_path)
-        .args([
-            slang_file.to_str().unwrap(),
-            "-entry", "fs_main",
-            "-stage", "fragment",
-            "-target", "wgsl",
-            "-o", fs_temp.to_str().unwrap(),
-        ])
-        .status()
-        .context("Failed to run slangc for fragment shader")?;
+    // Generate combined Rust bindings
+    generate_bindings(&out_dir, &shaders)?;
 
-    if !fs_status.success() {
-        anyhow::bail!("slangc failed for fragment shader");
-    }
+    Ok(())
+}
 
-    // Read compiled shaders
-    let vs_wgsl = std::fs::read_to_string(&vs_temp)
-        .context("Failed to read vertex shader output")?;
-    let fs_wgsl = std::fs::read_to_string(&fs_temp)
-        .context("Failed to read fragment shader output")?;
+struct ShaderConfig {
+    name: &'static str,
+    entries: Vec<(&'static str, &'static str)>, // (entry_point, stage)
+}
 
-    // Write combined WGSL
-    let combined_wgsl = format!(
-        "// Generated from rectangle.slang - DO NOT EDIT\n\n\
-        // Vertex shader\n{}\n\n\
-        // Fragment shader\n{}",
-        vs_wgsl.trim(),
-        fs_wgsl.trim()
+fn compile_shader(
+    shaders_dir: &PathBuf,
+    out_dir: &PathBuf,
+    slangc: &PathBuf,
+    ld_library_path: &str,
+    config: &ShaderConfig,
+) -> Result<()> {
+    let slang_file = shaders_dir.join(format!("{}.slang", config.name));
+    let wgsl_file = out_dir.join(format!("{}.wgsl", config.name));
+
+    // Tell Cargo to rerun if shader changes
+    println!("cargo:rerun-if-changed={}", slang_file.display());
+
+    let mut combined_wgsl = format!(
+        "// Generated from {}.slang - DO NOT EDIT\n\n",
+        config.name
     );
 
-    std::fs::write(&wgsl_file, &combined_wgsl)
-        .context("Failed to write combined WGSL file")?;
+    // Compile each entry point
+    for (entry_point, stage) in &config.entries {
+        let temp_file = out_dir.join(format!("{}_{}_temp.wgsl", config.name, entry_point));
 
-    // Generate Rust bindings using wgsl_bindgen
+        let status = Command::new(slangc)
+            .env("LD_LIBRARY_PATH", ld_library_path)
+            .args([
+                slang_file.to_str().unwrap(),
+                "-entry",
+                entry_point,
+                "-stage",
+                stage,
+                "-target",
+                "wgsl",
+                "-o",
+                temp_file.to_str().unwrap(),
+            ])
+            .status()
+            .with_context(|| format!("Failed to run slangc for {} {}", config.name, entry_point))?;
+
+        if !status.success() {
+            anyhow::bail!("slangc failed for {} {}", config.name, entry_point);
+        }
+
+        let wgsl = std::fs::read_to_string(&temp_file)
+            .with_context(|| format!("Failed to read {} output", entry_point))?;
+
+        combined_wgsl.push_str(&format!("// {} shader\n{}\n\n", stage, wgsl.trim()));
+    }
+
+    std::fs::write(&wgsl_file, &combined_wgsl)
+        .with_context(|| format!("Failed to write {}.wgsl", config.name))?;
+
+    Ok(())
+}
+
+fn generate_bindings(out_dir: &PathBuf, shaders: &[ShaderConfig]) -> Result<()> {
     let bindings_file = out_dir.join("shader_bindings.rs");
-    wgsl_bindgen::WgslBindgenOptionBuilder::default()
+
+    let mut builder = wgsl_bindgen::WgslBindgenOptionBuilder::default();
+    builder
         .workspace_root(out_dir.to_string_lossy().to_string())
-        .add_entry_point(wgsl_file.to_string_lossy().to_string())
         .serialization_strategy(wgsl_bindgen::WgslTypeSerializeStrategy::Bytemuck)
         .output(bindings_file.to_string_lossy().to_string())
-        .emit_rerun_if_change(false)  // We handle this manually
-        .build()?
-        .generate()?;
+        .emit_rerun_if_change(false);
+
+    for shader in shaders {
+        let wgsl_file = out_dir.join(format!("{}.wgsl", shader.name));
+        builder.add_entry_point(wgsl_file.to_string_lossy().to_string());
+    }
+
+    builder.build()?.generate()?;
 
     // Post-process: convert inner attributes (#![...]) to outer attributes (#[...])
-    // so the file can be used with include!()
     let bindings_content = std::fs::read_to_string(&bindings_file)
         .context("Failed to read generated bindings")?;
     let fixed_content = bindings_content.replace("#![allow(", "#[allow(");
