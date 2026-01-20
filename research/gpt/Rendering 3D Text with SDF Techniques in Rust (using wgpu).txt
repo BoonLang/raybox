@@ -1,0 +1,131 @@
+Rendering 3D Text with SDF Techniques in Rust (using wgpu)
+SDF Text Rendering vs. True 3D Geometry
+
+2D SDF Text in 3D Scenes: Libraries like cosmic-text, wgpu_glyph/wgpu_text, or SDF-based renderers (e.g. the kaku crate for SDF text) are primarily designed for flat text rendering. They generate text as textured quads (often using a signed distance field texture or a bitmap atlas) which can then be placed in a 3D scene. In practice, this means each glyph is drawn as a sprite (two triangles) with a transparent texture. This approach yields crisp text (especially with SDF or MSDF atlases) and is efficient for large amounts of text. For example, one Rust developer used fontdue to rasterize glyphs and rendered each glyph as an instanced quad, treating text “no different from general sprite rendering”. These text sprites can be positioned in 3D (with a transform per instance), and if you enable alpha testing for the texture, the text-shaped portions can even cast correctly shaped shadows (the transparent parts won’t cast shadows). However, the text remains flat – it has no depth/thickness, so lighting will treat it as a flat surface. You can still light the text (the quad will receive light and you can write a shader to modulate the text color), but you won’t get side faces or true volumetric self-shadowing from the text itself.
+
+Use Cases: The sprite/atlas approach is great for in-world labels, UI, or any case where you need lots of text and want to benefit from SDF’s crisp scaling. Crates like cosmic-text provide font shaping, layout, and atlas caching (via swash) – excellent for dynamic text and international scripts – but they render into pixel buffers or textures, not 3D geometry. Similarly, MSDF (multi-channel SDF) techniques can be used in shaders to render very sharp text on a plane. You could apply an MSDF texture to a quad in wgpu and get beautiful text that scales and rotates in 3D without aliasing. But again, this text will be a flat plane. In summary, SDF and MSDF text rendering libraries by themselves do not extrude or generate 3D meshes – they render 2D glyph shapes (albeit very crisply) onto surfaces.
+
+Lighting & Shadows for Flat Text: If you only need the visual appearance of depth (e.g. engraved or raised text) without actual geometry, a possible trick is to use normal mapping or parallax mapping. For instance, you can generate a height map from an SDF where the text shape is higher or lower, and map that onto a flat surface. This can simulate beveled or engraved text under lighting. However, this is a shading illusion – the geometry is still a flat plane (so silhouettes and deep shadows won’t be accurate). True volumetric effects require actual 3D geometry or ray-marching techniques, discussed next.
+Extruding Text into 3D Mesh Geometry
+
+To get actual 3D text (with thickness, sides, and backs) that can be lit from any angle and cast proper shadows, you’ll need to convert text into triangle meshes. The good news is that there are Rust libraries to do exactly this. For example, the fontmesh and meshtext crates can generate meshes from font outlines, including extruded 3D meshes, all in pure Rust. These libraries use font outline data (via ttf-parser) and tessellate it into triangles (using techniques from lyon for 2D curves) and then extrude the 2D shape to add depth.
+
+Example: The word “FONTMESH” extruded into a 3D mesh using the fontmesh crate. Each letter becomes a 3D model with front, back, and side faces, suitable for standard lighting and shadow casting.
+
+Using fontmesh: The API is straightforward. You load a font and then call, for example, font.glyph_to_mesh_3d('A', depth). This returns a mesh (vertices and indices) for the glyph with the specified depth extrusion. For instance:
+
+use fontmesh::Font;
+let font = Font::from_bytes(include_bytes!("path/to/font.ttf"))?;
+let mesh_3d = font.glyph_to_mesh_3d('A', 5.0)?;  // Extrude 'A' with depth 5.0 units
+
+The mesh_3d contains the triangulated front face of the letter, the back face, and the side wall triangles connecting them. Normals can be generated for you – in fact, fontmesh notes that it creates a smooth normal on the edges for better lighting. You would take this mesh data and create a wgpu::Buffer for vertices and indices, then render it with a standard 3D render pipeline (e.g. using a PBR material or any wgpu shader that does lighting). Since it’s real geometry, it will behave like any other model in your scene: lights will produce highlights and shadows on it, and it will cast shadows onto other objects (assuming your shadow pass shader considers the geometry).
+
+Using meshtext: The meshtext crate offers similar functionality. It can generate either flat 2D meshes or 3D extruded text. It also caches glyph meshes internally (so if you generate the same character twice, it reuses the earlier result). You can create text by string as well (it handles assembling multiple glyphs). For example, you could generate a whole word or sentence mesh at once with MeshGenerator::generate() by passing a text string and a depth/extrusion flag (in meshtext you specify a flat: bool for 2D vs 3D). Under the hood, it too uses ttf-parser and tessellation. Both meshtext and fontmesh allow adjusting tessellation quality (number of subdivisions on curves) to balance quality vs. poly count.
+
+Text Layout: If you need more than one glyph (likely!), you’ll have to position these glyph meshes to form words and lines. Typically, you’d use a text layout/shaping library (like Rustybuzz or cosmic-text) to get the correct placements (accounting for kerning, etc.). For example, fontmesh provides an integration where you can take a glyph ID from a shaping library and fetch the mesh for that glyph. The flow might be: use cosmic-text or rustybuzz to shape a string into glyph IDs and positions, then for each glyph use fontmesh/meshtext to get a mesh and apply a translation transform for its position. You can then either merge these into one big mesh or render them as separate objects. Merging into one mesh is more efficient if the text is static; if dynamic (changing each frame), you might keep them separate or use instancing. Either way, the heavy lifting of converting curves to geometry is done by these crates.
+
+Performance Considerations: Generating an extruded mesh is more expensive than rendering textured quads, of course. But for reasonably sized text (titles, logos, a few words) it’s fine to do at load time. Both fontmesh and meshtext cache results, so you wouldn’t repeatedly tessellate the same glyph every frame. Once you have the mesh, rendering it is like rendering any model – you can have hundreds or thousands of triangles per glyph and modern GPUs will handle a moderate amount of text just fine. If you need to display long paragraphs or lots of 3D text, consider that each character might be a few hundred triangles at high quality – so you might dial down curve subdivisions or limit the length of 3D text to keep performance reasonable. In a pinch, you can also generate a 2D mesh (flat glyph shape) and not extrude it, but still use it in a 3D scene. That gives you an outline of text as a single polygonal surface (like a paper-thin letter). You’d still have correct shape and can light it (it has a normal), and it will cast a letter-shaped shadow (essentially like a cookie-cutter shape) even without thickness. Extrusion gives thickness for side lighting and a sturdier appearance, but a flat polygonal text shape is another option if you only need the front face (it’s also less geometry than full extrusion).
+SDF Volume Techniques: Text Reliefs and Carvings
+
+Beyond mesh generation, you asked about integrating text with volumetric shapes like cubes for reliefs, carvings, or booleans. This is where signed distance fields shine conceptually: SDFs make it easy to do boolean operations (union, subtract, intersect) between shapes. The idea is to represent both the text and the cube as distance-field functions and then combine them. There are a couple of ways to implement this in Rust with wgpu:
+
+    Mesh-based CSG (Boolean on meshes): One approach is to perform a boolean operation on the triangle meshes – for example, take a cube mesh and subtract the text mesh from it (to carve engravings). There are crates like boolmesh and csgrs (Constructive Solid Geometry libraries) that implement mesh boolean operations in Rust. Using them, you could generate an extruded text mesh (as above) and then compute, say, Cube – Text as a new mesh. This is analogous to what one would do in modeling software (convert text to mesh and apply a boolean difference modifier). The downside is that robust mesh booleans can be complex and potentially heavy, and you’ll need to ensure the resulting mesh is cleaned up (no extra facets, etc.). If the crates meet your needs, this gives you a static triangle mesh of a cube with text carved out (or raised up). That mesh can then be used in wgpu like any other model, with full lighting and shadow support.
+
+    Pure SDF + Raymarching: Alternatively, you can use analytic SDFs and shader techniques. In this approach, you don’t convert to triangles up front – instead you write a shader that computes the signed distance to the combined shape and render it by ray marching. For example, define d_text(x,y,z) as the signed distance to your extruded text shape, and d_cube(x,y,z) for the cube. To carve text into the cube, you’d take the difference: the signed distance for “Cube minus Text” can be written as max(d_cube, -d_text). Intuitively, this says: inside the text volume make the distance field represent empty space (negative) so that area gets carved out. You can similarly do union (min) or intersection (max) for other effects. With a combined SDF, a fragment shader can ray-march through the volume: at each pixel, trace a ray into the scene, advancing by the distance field, until it hits the surface (distance ~0) or exits. This method can produce very high-detail text engravings with smooth edges, and it’s flexible (you can animate or modify SDFs on the fly, or apply smoothing to edges easily).
+
+    In Rust, writing a full SDF raymarcher means writing WGSL shader code for the distance function and the iterative march. Libraries won’t do the whole thing for you, but they can help with building the SDF. Notably, Embark Studios’ saft (Signed Approximate Field Toolkit) provides a framework to construct SDFs from basic shapes and combine them with CSG operations, and even to generate meshes from them via marching cubes. For instance, saft includes predefined SDFs for primitives (boxes, cylinders, etc.) and ops like sd_op_subtract and sd_op_union for boolean combinations. In theory you could feed saft a custom 2D shape (your text outline) as a distance function – but you’d likely have to implement that part (perhaps by sampling a high-res 2D SDF of the text). If you manage to define an SDF for the text, you could then use saft to combine it with a box SDF and call its mesh_from_sdf to generate a triangle mesh. That would give you a mesh similar to the mesh-based CSG approach above, but via an implicit field and marching cubes. This is quite advanced, however, and saft is a rather experimental toolkit (for example, it can even generate GLSL code to evaluate SDFs). A simpler route might be using a voxel field: you could create a 3D grid and mark distances (or inside/outside) for both shapes and then run a marching cubes algorithm (crates like marching_cubes or surface_nets exist for this). The resolution of the grid will limit the detail (unlike analytic SDF or direct tessellation which are high-res), so you’d need a dense grid for sharp text.
+
+    Yet another twist on SDF usage: you can perform real-time SDF rendering in a shader without meshing at all. This means writing a full screen (or object-local) raymarcher in WGSL. It’s feasible for simple scenes or small volumes – for example, one could raymarch just the cube-with-text shape by enclosing it in a bounding box cube and iterating a few steps. During the march, you compute distance = max(cubeDist, -textDist) to get the combined shape. This would give you pixel-perfect carved text, and you can compute lighting per pixel by taking the gradient of the SDF for normals. However, integrating that with a typical wgpu forward renderer is nontrivial – essentially you’re doing a mini pathtracer for that object. It can be done (you’d render a fullscreen quad and in the fragment shader do the raymarch, or use it in a material shader for that object), but performance might suffer if the SDF evaluation is complex. For static text and shapes, the mesh approach is usually easier and faster on the GPU.
+
+Summary of Tools & Workflows:
+
+    For real 3D text geometry: Use crates like fontmesh or meshtext to generate extruded glyph meshes. These integrate nicely with wgpu: you upload the mesh data and render with standard pipelines (e.g. a Phong or PBR shader). The text can then be lit and cast shadows exactly like a modeled object. This is ideal for titles, logos, or any text that needs depth. Active projects include custom engines and demos in Rust gamedev that use this technique (as seen in Reddit threads and the existence of the crates), and you can find examples in those crate docs.
+
+    For flat SDF/MSDF text: Use cosmic-text (for advanced text layout) or simpler wrappers like wgpu_text or kaku to render text on surfaces. This won’t give depth, but is easier for lots of text. Such text can be placed in 3D (e.g. as a floating label or on a billboard polygon). If you need it to cast a shadow, ensure to enable alpha masking in the shadow pass so the shape, not the quad, casts the shadow.
+
+    For text carvings / booleans: If you want to engrave or emboss text in another shape, you can either (a) precompute a boolean mesh (using mesh CSG crates or by generating a composite SDF and meshing it), or (b) implement SDF raymarching in a shader. (a) is more straightforward for static geometry – you’d end up with a single mesh that you load into wgpu. (b) is powerful for dynamic effects or smooth transitions, but requires custom GPU code. Tools like boolmesh and csgrs can perform mesh unions and subtractions, and Embark’s saft toolkit provides a higher-level SDF approach (with functions like sd_op_subtract for CSG) and even a way to convert to a triangle mesh.
+
+In conclusion, yes, you can render 3D text with depth in Rust using wgpu – but you’ll typically step outside the pure “text rendering libraries” and use either a font-to-mesh pipeline or an SDF modeling approach. Libraries like cosmic-text or MSDF-gen are great for drawing text as flat surfaces, but to extrude that text for lighting and shadows you’d use crates like fontmesh/meshtext (for mesh generation) or integrate the distance fields into a 3D technique (either via mesh extraction or shader logic). Each approach has its own complexity: mesh generation is upfront but then easy to render, while SDF boolean approaches may save some manual modeling but move complexity into shader or voxel processing. For most real-time applications, generating a mesh of the text and rendering it with normal lighting will be the most straightforward route. The ability to adjust tessellation quality and cache results means it’s practical even in-engine (e.g. generating 3D text dynamically at startup or on a background thread). With the tools above, you can achieve high-quality 3D text that fully participates in the scene’s lighting and shadow system.
+
+References:
+
+    Rust fontmesh crate – generate 2D/3D extruded glyph meshes
+
+    Rust meshtext crate – similar font triangulation for 3D text, with caching
+
+    Reddit discussion of 3D text in Rust (fontdue + instancing approach)
+
+    MapLibre RS notes on font rendering (mentions tessellation and SDF techniques)
+
+    Embark’s saft crate for signed distance fields and CSG meshing
+
+Citations
+
+Finally got bloom and 3d text rendering working in Rust + wgpu : r/rust_gamedev
+https://www.reddit.com/r/rust_gamedev/comments/18kp09q/finally_got_bloom_and_3d_text_rendering_working/
+
+Drawing Text in WebGPU Using Just the Font File – tchayen.com
+https://tchayen.com/drawing-text-in-webgpu-using-just-the-font-file
+
+Drawing Text in WebGPU Using Just the Font File – tchayen.com
+https://tchayen.com/drawing-text-in-webgpu-using-just-the-font-file
+
+fontmesh - Rust
+https://docs.rs/fontmesh/latest/fontmesh/
+
+meshtext - Rust
+https://docs.rs/meshtext/latest/meshtext/
+
+GitHub - PoHsuanLai/fontmesh: Rust library for converting TrueType font glyphs to 2D and 3D triangle meshes.
+https://github.com/PoHsuanLai/fontmesh
+
+fontmesh - Rust
+https://docs.rs/fontmesh/latest/fontmesh/
+
+fontmesh - Rust
+https://docs.rs/fontmesh/latest/fontmesh/
+
+meshtext - Rust
+https://docs.rs/meshtext/latest/meshtext/
+
+MeshText in meshtext - Rust
+https://docs.rs/meshtext/latest/meshtext/struct.MeshText.html
+
+fontmesh - Rust
+https://docs.rs/fontmesh/latest/fontmesh/
+
+fontmesh - Rust
+https://docs.rs/fontmesh/latest/fontmesh/
+
+meshtext - Rust
+https://docs.rs/meshtext/latest/meshtext/
+
+boolmesh - crates.io: Rust Package Registry
+https://crates.io/crates/boolmesh
+
+csgrs - Rust
+https://docs.rs/csgrs
+
+Is there any way to engrave text into a cube and keep the text editable? - Blender Stack Exchange
+https://blender.stackexchange.com/questions/319592/is-there-any-way-to-engrave-text-into-a-cube-and-keep-the-text-editable
+
+saft - Rust
+https://docs.rs/saft/latest/saft/
+
+saft - Rust
+https://docs.rs/saft/latest/saft/
+
+saft - Rust
+https://docs.rs/saft/latest/saft/
+
+Marching Cubes in Rust | Tristan Antonsen
+https://tristanantonsen.com/posts/Marching-Cubes-Rust/
+
+mcubes - Rust - Docs.rs
+https://docs.rs/mcubes
+
+Font Rendering - MapLibre Rust Documentation
+https://maplibre.org/maplibre-rs/docs/book/development-documents/font-rendering.html
+
+Font Rendering - MapLibre Rust Documentation
+https://maplibre.org/maplibre-rs/docs/book/development-documents/font-rendering.html

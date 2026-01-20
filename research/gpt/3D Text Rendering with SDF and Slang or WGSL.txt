@@ -1,0 +1,144 @@
+3D rendering of extruded text via signed-distance fields (SDFs) typically uses full “raymarching” (sphere-tracing) through the SDF volume, which can be very costly per pixel. In practice, hybrid and alternative techniques often give much better performance with comparable quality. Common approaches include:
+
+    Mesh extraction (Marching Cubes): Generate a triangle mesh from the SDF (using marching-cubes or similar) and render it via the normal rasterization pipeline. This leverages GPU hardware for geometry rasterization, so performance becomes largely independent of screen resolution. The generated mesh can be reused across frames, making this ideal for static or infrequently-changing text. Drawbacks include the cost of mesh generation and tessellation, and aliasing of sharp features unless the mesh is very high-res.
+
+    Impostors / SDF Textures: Bake each character or entire text line into a 2D (or cube) texture of distance values, and render as billboards/quads. For instance, one can use a multi-channel 2D SDF font atlas (MSDF) and render quads for each glyph, modulating by depth or extruding in the shader. This is extremely fast at runtime (just textured quads) and supports arbitrary transforms, but only approximates 3D depth (shadows must be faked or limited). Static views can use billboard impostors (pre-rendered images from key angles) for very high quality with almost zero per-frame cost. (Impostors are a classic LOD technique in games.)
+
+    Narrow-band (Shell) SDF: Limit raymarching to a thin “shell” around the surface (as in GPU-Gems SDF scan-conversion). GPU Gems describes a scan-conversion method that builds a signed-distance field in a limited band (tens of voxels thick) around the mesh. In principle one could raytrace against just this thin band (or extrude the text geometry by a shell) for faster steps. In practice this is more a preprocessing technique for building the SDF than a separate rendering mode.
+
+    Voxelized SDF: Represent the 3D text as a dense voxel grid (GPU texture or 3D texture) of distance values, then render by raymarching that (slicing/shading it). This can leverage hardware trilinear filtering and empty-space skipping, but still suffers per-pixel loops. Compared to analytic raymarching, a precomputed 3D SDF can be faster to sample (if you raytrace through a sparse volume with acceleration structures).
+
+    Hybrid Approaches: For example, render an outer “shell” of the text (as geometry or layered quads) and fill interior with flat shading, or use screen-space ambient occlusion on the SDF, etc. One could also combine a front-facing billboard (SDF texture) with actual side-wall geometry to approximate extrusion with fewer rays.
+
+Each method has tradeoffs. Full raymarching yields exact smooth silhouettes and arbitrary shape changes, but costs dozens of distance-evaluations per pixel (each step computes a min-distance over primitives). Mesh-based approaches offload that to preprocessing, giving millisecond-speed rasterization at the cost of meshing time and less flexibility. Impostors are cheapest at runtime but only work for fixed viewpoints or simple rotations. Voxel methods avoid complex shader math at runtime but use more memory. In general, if text is static or low-turnover, precompute a mesh or impostor. If text is highly dynamic (animated/growing) or must respond to complex shaders (lighting, shadows), a shader-based approach (raymarch or 3D SDF textures) may be warranted.
+
+    Performance: As one review noted, converting an SDF to a mesh (“polygonization”) allows you to rasterize at GPU speed and reuse it across frames. In contrast, raymarching must run per-pixel every frame, making it screen-resolution-dependent and usually much slower. (GPU Gems notes that mesh generation plus rasterization “suits 3D hardware” and decouples speed from resolution.) Impostors (pre-rendered or 2D SDF glyphs) reduce runtime work to a single texture lookup or quad draw, but cannot easily handle arbitrary rotation/depth. Shell/narrow-band methods improve on pure raymarching by limiting distance computations to near-surface regions, but still require iterating along rays. 
+
+Slang Shading Language for GPU Text Rendering
+
+Slang is a modern, cross-platform shading language (an evolution of HLSL/Cg) designed for large modular shader codebases. It adds features like modules, interfaces, generics, and automatic differentiation on top of familiar HLSL syntax. Crucially, Slang can target multiple backends (DirectX, Vulkan/SPIR-V, Metal, CUDA, and WGSL/WebGPU) from the same source. Slang is backed by Khronos and used in industry (Nvidia, EA, Valve), so it is production-proven.
+
+Why Slang for text? Slang’s module system and compiler-managed bindings make it easy to write reusable shader libraries (e.g. one module for SDF functions, one for lighting, etc.). Its cross-compilation means you can write in Slang once and generate WGSL for WebGPU. Slang also has a reflection API that can emit JSON describing all shader parameters and bindings, simplifying host-side setup. In short, Slang brings high-level language features (modules, generics, auto-layout) to shaders while still compiling to GPU code.
+Writing Slang Shaders and Cross-Compiling
+
+Slang code looks much like HLSL. For example:
+
+// slangsdf.slang
+
+// Simple signed-distance function (SDF) for a sphere
+float sdSphere(float3 p, float r) {
+    return length(p) - r;
+}
+
+struct VertexOut {
+    float4 position : SV_POSITION;
+};
+
+[shader("vertex")]
+VertexOut vs_main(float3 inPos : POSITION) {
+    VertexOut o;
+    o.position = float4(inPos, 1.0);
+    return o;
+}
+
+[shader("fragment")]
+float4 fs_main(VertexOut v) {
+    float3 p = v.position.xyz;
+    float d = sdSphere(p, 0.5);
+    // Color ramp: inside is white, outside fade
+    float c = smoothstep(0.0, 0.1, d);
+    return float4(c, c, c, 1.0);
+}
+
+Here we defined a small SDF (sdSphere) and used it in a fragment shader. Notice Slang attributes like [shader("vertex")] to mark entry points. We did not assign any :register or :location manually – Slang will automatically generate explicit binding/attribute layouts in the compiled output (so you get deterministic locations without writing them).
+
+To compile Slang to WGSL, use the slangc compiler targeting WGSL. For example (on command line or in a build script):
+
+slangc slangsdf.slang -target wgsl -profile webgpu -entry vs_main -entry fs_main -o slangsdf.wgsl
+
+This will emit WGSL code (the no_codegen example in the Slang-WebGPU repo simply does this). In practice you’d automate this in your Rust build.rs or CI build. Slang’s WGSL output will flatten nested structures, map semantics to WGSL builtins (e.g. SV_Position → @builtin(position)), and use @location for any user parameters. Note that not all features are supported in WGSL: Slang’s WGSL backend does not support mesh/geometry shaders or ray-tracing (those features are absent in WebGPU). However basic fragment/vertex (and compute) shaders work fine.
+Integrating Slang with Rust + wgpu + WASM
+
+In a Rust + wgpu project, you can embed the WGSL output and create a ShaderModule. A typical workflow is:
+
+    Precompile Slang to WGSL: In build.rs, invoke slangc on your .slang files to generate .wgsl text files.
+
+    Embed WGSL in Rust: Use wgpu::include_wgsl! macro to include the WGSL at compile time. For example:
+
+    let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+        label: Some("3D Text Shader"),
+        source: wgpu::include_wgsl!("slangsdf.wgsl"),  // The file produced by Slang
+    });
+
+    The include_wgsl! macro loads the WGSL code similarly to include_str!.
+
+    Pipeline and Bindings: Create render pipelines as usual. Thanks to Slang’s explicit layout output, you will know exactly which bind-group and location each uniform/texture uses (no surprises from optimization). For example, Slang will have auto-generated binding annotations like @group(0) @binding(2) in the WGSL, so your Rust BindGroupLayout must match that. You can use bytemuck or [encase] to pack your uniform structs with the right alignment (Slang and WGSL use std140/std430 rules).
+
+    WASM Support: In a wasm32-unknown-unknown target, wgpu (with wgpu-native or dawn) will consume WGSL via Naga. The pipeline setup is identical; you just need to include the compiled WGSL asset or embed it in your binary/JS bundle.
+
+By doing this, you effectively treat Slang as a higher-level shader source language whose output (WGSL) you feed into wgpu. You do not run the Slang compiler at runtime; it’s part of your build process. The Slang-WebGPU examples demonstrate using slangc under the hood and even use Slang’s reflection API to generate C++ boilerplate – a similar approach in Rust could use Slang’s JSON reflection to auto-generate BindGroup layouts, if desired.
+Slang Coding Practices for SDF Text Shaders
+
+    Modularity: Take advantage of Slang’s modules and interfaces. Put your SDF distance functions (e.g. for glyph outlines, extrusions, boolean ops) in separate .slang modules or libraries. Write lighting (Phong/PBR) functions in reusable modules. Slang’s generics and interfaces let you write, say, distance(p) abstractly for any shape.
+
+    Let Slang Manage Bindings: Do not hard-code :register or @location in your Slang code. Trust Slang to emit stable bindings. As the Slang guide notes, it will “always generate explicit binding locations” so you avoid conflicts between modules. This keeps code modular (different modules can be compiled independently without worrying about overlapping slots).
+
+    Minimize Dynamic Flow: WGSL and WebGPU shaders still perform best with simple loops and no recursion. Unroll small loops if possible. For raymarching, use a fixed number of iterations or a while-loop with a hard iteration cap.
+
+    Workgroup Memory: If performing expensive SDF computations (e.g. many glyphs), consider using compute shaders with workgroups to precompute glyph SDFs or cache intermediate results. Slang supports [shader("compute")] and numthreads for compute passes.
+
+    Lighting and Shadows: You can implement standard lighting/shadow models in Slang. For example, a simple Phong lighting in Slang:
+
+    float3 phongShading(float3 P, float3 N, float3 V, float3 lightPos) {
+        float3 L = normalize(lightPos - P);
+        float diff = max(dot(N, L), 0);
+        float3 R = reflect(-L, N);
+        float spec = pow(max(dot(R, V), 0), 16);
+        return diff * float3(1,1,1) + spec * float3(1,1,1) * 0.2; 
+    }
+
+    In your fragment shader you’d compute the normal (by SDF gradient via auto-diff or finite difference) and call such a function. For shadows, you could raymarch from the surface point toward the light (a second mini raymarch, or use PCF with a shadow map from an earlier pass). Using mesh geometry instead of pure SDF would allow standard shadow maps directly.
+
+    Shadow Maps (Alternative): If you convert text to geometry, you can draw depth from the light’s POV into a shadow map, then do lighting in Slang using that map. For full raymarching, you might approximate shadows by sampling a pre-rendered distance field of the scene, but that’s complex.
+
+    Precision: Use float (32-bit) for speed and because WGSL requires it in shaders. Slang will map its floats to WGSL f32. (WGSL has no fast 64-bit floats in fragment shaders.)
+
+    Example Structure: A common pattern is to have one Slang module define the mathematical scene (text SDF, transforms, material parameters) and another module define the rendering kernel (raymarch loop, shading). Then an entry-point function ties them together.
+
+In summary, a Slang + WGSL pipeline might look like this: write SDF and lighting code in Slang modules; compile them into WGSL; in Rust use include_wgsl! and create pipelines; rely on Slang-generated bindings; and run the shaders in wgpu. This leverages Slang’s modern features (modules, auto-layout) while targeting the WebGPU execution environment.
+
+References: Discussions of SDF rendering alternatives; Slang language features and WGSL support; and examples of Slang-to-WGSL compilation. These cover performance tradeoffs, Slang/WGSL guidelines, and integration strategies.
+Citations
+
+PowerPoint Presentation
+https://directtovideo.wordpress.com/wp-content/uploads/2012/03/gdc_2012_released.pdf
+
+"Super Imposter" shader: my journey to make a high quality imposter ...
+https://www.landontownsend.com/single-post/super-imposter-shader-my-journey-to-make-a-high-quality-imposter-shader
+
+Chapter 34. Signed Distance Fields Using Single-Pass GPU Scan Conversion of Tetrahedra | NVIDIA Developer
+https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-34-signed-distance-fields-using-single-pass-gpu
+
+Khronos Group adopts the Slang shading language | Hacker News
+https://news.ycombinator.com/item?id=42220122
+
+Khronos Group adopts the Slang shading language | Hacker News
+https://news.ycombinator.com/item?id=42220122
+
+Shadertoys Ported to Rust GPU | Hacker News
+https://news.ycombinator.com/item?id=43667693
+
+Getting Started with Slang | slang
+http://shader-slang.org/slang/user-guide/get-started
+
+GitHub - eliemichel/SlangWebGPU: A possible use of Slang shader compiler together with WebGPU in C++ (both in native and Web contexts), using CMake.
+https://github.com/eliemichel/SlangWebGPU
+
+WGSL-Specific Functionalities | slang
+http://shader-slang.org/slang/user-guide/wgsl-target-specific
+
+WGSL-Specific Functionalities | slang
+http://shader-slang.org/slang/user-guide/wgsl-target-specific
+
+include_wgsl in wgpu - Rust
+https://docs.rs/wgpu/latest/wgpu/macro.include_wgsl.html
