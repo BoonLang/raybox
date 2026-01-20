@@ -21,20 +21,32 @@ open-browser:
         --use-angle=vulkan \
         http://localhost:8000
 
-# Take screenshot with headless Chromium
+# Take screenshot with headed Chromium via CDP
 screenshot:
+    #!/usr/bin/env bash
+    set -e
     mkdir -p output
     chromium \
-        --headless=new \
         --user-data-dir=./chromium_data \
         --no-first-run \
         --test-type \
         --enable-unsafe-webgpu \
         --enable-features=Vulkan,WebGPU,UseSkiaRenderer \
         --use-angle=vulkan \
-        --screenshot=output/web_screenshot.png \
         --window-size=800,600 \
-        http://localhost:8000
+        --remote-debugging-port=9222 \
+        http://localhost:8000 &
+    PID=$!
+    sleep 3
+    # Get WebSocket URL and take screenshot via CDP
+    WS_URL=$(curl -s http://localhost:9222/json | jq -r '.[0].webSocketDebuggerUrl')
+    # Use websocat to send CDP command and capture screenshot
+    echo '{"id":1,"method":"Page.captureScreenshot","params":{"format":"png"}}' | \
+        websocat -n1 -B 10485760 "$WS_URL" | \
+        jq -r '.result.data' | \
+        base64 -d > output/web_screenshot.png
+    kill $PID 2>/dev/null || true
+    xdg-open output/web_screenshot.png
 
 # Build, serve, and open browser
 web: build-web
