@@ -74,6 +74,7 @@ float sampleMsdf(float2 uv) {
 
 // Get UV for a character in the atlas
 // Atlas is 10x10 grid of 64x64 glyphs (for ASCII 32-126)
+// 640x640 total size, yOrigin is bottom
 float2 getGlyphUV(int charCode, float2 localUV) {
     // Map ASCII to atlas position
     // Space (32) is at position 0, so subtract 32
@@ -89,9 +90,10 @@ float2 getGlyphUV(int charCode, float2 localUV) {
     float cellSize = 1.0 / glyphsPerRow;
 
     // Map local UV [0,1] to glyph cell in atlas
+    // yOrigin is bottom, so row 0 is at top of texture (flip Y)
     float2 atlasUV;
     atlasUV.x = (col + localUV.x) * cellSize;
-    atlasUV.y = (row + localUV.y) * cellSize;
+    atlasUV.y = 1.0 - (row + 1.0 - localUV.y) * cellSize;
 
     return atlasUV;
 }

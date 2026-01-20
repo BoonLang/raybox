@@ -73,6 +73,13 @@ fn main() -> Result<()> {
                 ("fs_main", "fragment"),
             ],
         },
+        ShaderConfig {
+            name: "sdf_text_shadow",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
     ];
 
     for shader in &shaders {

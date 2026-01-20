@@ -111,8 +111,8 @@ fn run_windowed() -> Result<()> {
 
             let atlas_png = Path::new("assets/fonts/atlas.png");
             let atlas_image = image::open(atlas_png).context("Failed to load atlas image")?;
-            let atlas_rgb = atlas_image.to_rgb8();
-            let atlas_data = atlas_rgb.as_raw();
+            let atlas_rgba = atlas_image.to_rgba8();
+            let atlas_data = atlas_rgba.as_raw();
 
             let text_renderer =
                 TextRenderer::new(&device, &queue, surface_format, atlas, atlas_data)?;
@@ -298,8 +298,8 @@ fn run_headless_screenshot() -> Result<()> {
 
     let atlas_png = Path::new("assets/fonts/atlas.png");
     let atlas_image = image::open(atlas_png).context("Failed to load atlas image")?;
-    let atlas_rgb = atlas_image.to_rgb8();
-    let atlas_data = atlas_rgb.as_raw();
+    let atlas_rgba = atlas_image.to_rgba8();
+    let atlas_data = atlas_rgba.as_raw();
 
     let text_renderer = TextRenderer::new(&device, &queue, texture_format, atlas, atlas_data)?;
     text_renderer.update_screen_size(&queue, width as f32, height as f32);

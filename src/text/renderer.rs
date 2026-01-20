@@ -119,6 +119,8 @@ pub struct TextRenderer {
     vertex_buffer: wgpu::Buffer,
     instance_buffer: wgpu::Buffer,
     max_instances: u32,
+    /// Distance field range in pixels (from atlas)
+    distance_range: f32,
 }
 
 impl TextRenderer {
@@ -130,6 +132,11 @@ impl TextRenderer {
         atlas: MsdfAtlas,
         atlas_data: &[u8],
     ) -> Result<Self> {
+        // Determine if input is RGB or RGBA based on data length
+        let expected_rgb = (atlas.width * atlas.height * 3) as usize;
+        let expected_rgba = (atlas.width * atlas.height * 4) as usize;
+        let is_rgba = atlas_data.len() == expected_rgba;
+
         // Create atlas texture
         let atlas_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("MSDF Atlas Texture"),
@@ -146,14 +153,26 @@ impl TextRenderer {
             view_formats: &[],
         });
 
-        // Convert RGB to RGBA
-        let mut rgba_data = Vec::with_capacity((atlas.width * atlas.height * 4) as usize);
-        for i in 0..(atlas.width * atlas.height) as usize {
-            rgba_data.push(atlas_data[i * 3]);
-            rgba_data.push(atlas_data[i * 3 + 1]);
-            rgba_data.push(atlas_data[i * 3 + 2]);
-            rgba_data.push(255);
-        }
+        // Convert to RGBA if needed
+        let rgba_data: Vec<u8> = if is_rgba {
+            atlas_data.to_vec()
+        } else if atlas_data.len() == expected_rgb {
+            let mut rgba = Vec::with_capacity(expected_rgba);
+            for i in 0..(atlas.width * atlas.height) as usize {
+                rgba.push(atlas_data[i * 3]);
+                rgba.push(atlas_data[i * 3 + 1]);
+                rgba.push(atlas_data[i * 3 + 2]);
+                rgba.push(255);
+            }
+            rgba
+        } else {
+            anyhow::bail!(
+                "Invalid atlas data length: {} (expected {} for RGB or {} for RGBA)",
+                atlas_data.len(),
+                expected_rgb,
+                expected_rgba
+            );
+        };
 
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -188,10 +207,13 @@ impl TextRenderer {
             ..Default::default()
         });
 
+        // Store distance range from atlas
+        let distance_range = atlas.distance_range;
+
         // Create uniform buffer
         let uniforms = TextUniforms {
             screen_size: [800.0, 600.0],
-            sdf_params: [4.0, 0.0], // px_range = 4.0
+            sdf_params: [distance_range, 0.0],
         };
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -353,6 +375,7 @@ impl TextRenderer {
             vertex_buffer,
             instance_buffer,
             max_instances,
+            distance_range,
         })
     }
 
@@ -360,14 +383,14 @@ impl TextRenderer {
     pub fn update_screen_size(&self, queue: &wgpu::Queue, width: f32, height: f32) {
         let uniforms = TextUniforms {
             screen_size: [width, height],
-            sdf_params: [4.0, 0.0],
+            sdf_params: [self.distance_range, 0.0],
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
     /// Layout text and return glyph instances
-    /// x, y: top-left position of the text block
-    /// font_size: height of the text in pixels
+    /// x, y: top-left position of the text block (baseline at y + ascender * font_size)
+    /// font_size: height of the text in em units (pixels)
     pub fn layout_text(
         &self,
         text: &str,
@@ -379,33 +402,49 @@ impl TextRenderer {
         let mut instances = Vec::new();
         let mut cursor_x = x;
 
-        // Scale factor: font_size is the desired line height
+        // Scale factor: font_size is the em height
         let scale = font_size;
 
-        for ch in text.chars() {
+        // Get font metrics for baseline calculation
+        let ascender = self.atlas.metrics.ascender;
+
+        // Baseline position (y is top of line, baseline is y + ascender * scale)
+        let baseline_y = y + ascender * scale;
+
+        let chars: Vec<char> = text.chars().collect();
+        for (i, &ch) in chars.iter().enumerate() {
             if ch == '\n' {
                 continue;
             }
 
             if let Some(glyph) = self.atlas.get_glyph(ch) {
-                if let Some((uv_min_x, uv_min_y, uv_max_x, uv_max_y)) = self.atlas.get_glyph_uvs(ch)
-                {
-                    // Position glyph cell at cursor position
-                    // The glyph cell is square (scale x scale) and contains the centered glyph
-                    instances.push(GlyphInstance {
-                        offset: [cursor_x, y],
-                        size: [scale, scale],
-                        uv_min: [uv_min_x, uv_min_y],
-                        uv_max: [uv_max_x, uv_max_y],
-                        color,
-                    });
-
-                    // Advance cursor by glyph width (advance is normalized to em)
-                    cursor_x += glyph.advance * scale;
+                // Apply kerning if there's a next character
+                if i > 0 {
+                    let kern = self.atlas.get_kerning(chars[i - 1], ch);
+                    cursor_x += kern * scale;
                 }
-            } else if ch == ' ' {
-                // Space character - use standard width
-                cursor_x += 0.25 * scale;
+
+                if let Some((uv_min_x, uv_min_y, uv_max_x, uv_max_y)) = glyph.uvs {
+                    if let Some((pb_left, pb_bottom, pb_right, pb_top)) = glyph.plane_bounds {
+                        // Calculate glyph quad position using plane bounds
+                        // plane_bounds are in em units relative to the baseline
+                        let glyph_x = cursor_x + pb_left * scale;
+                        let glyph_y = baseline_y - pb_top * scale; // Y is flipped for screen coords
+                        let glyph_w = (pb_right - pb_left) * scale;
+                        let glyph_h = (pb_top - pb_bottom) * scale;
+
+                        instances.push(GlyphInstance {
+                            offset: [glyph_x, glyph_y],
+                            size: [glyph_w, glyph_h],
+                            uv_min: [uv_min_x, uv_min_y],
+                            uv_max: [uv_max_x, uv_max_y],
+                            color,
+                        });
+                    }
+                }
+
+                // Advance cursor by glyph advance width
+                cursor_x += glyph.advance * scale;
             }
         }
 

@@ -11,7 +11,8 @@ ex num:
         3) cargo run --example demo_towers --features windowed ;;
         4) cargo run --example demo_text2d --features windowed ;;
         5) cargo run --example demo_clay --features windowed ;;
-        *) echo "Unknown example {{num}}. Available: 1 (objects), 2 (spheres), 3 (towers), 4 (text2d), 5 (clay tablet)" ;;
+        6) cargo run --example demo_text_shadow --features windowed ;;
+        *) echo "Unknown example {{num}}. Available: 1 (objects), 2 (spheres), 3 (towers), 4 (text2d), 5 (clay tablet), 6 (text shadow)" ;;
     esac
 
 # Run example screenshot by number: just ex_screenshot 4
@@ -106,3 +107,16 @@ setup:
     cargo install wasm-bindgen-cli
     cargo install miniserve
     rustup target add wasm32-unknown-unknown
+
+# Generate MSDF atlas from font file (grid layout for shader compatibility)
+gen-atlas font="assets/fonts/DejaVuSans.ttf":
+    ./tools/msdf-atlas-gen \
+        -font {{font}} \
+        -type msdf \
+        -uniformgrid \
+        -uniformcols 10 \
+        -uniformcell 64 64 \
+        -size 48 \
+        -pxrange 4 \
+        -imageout assets/fonts/atlas.png \
+        -json assets/fonts/atlas.json

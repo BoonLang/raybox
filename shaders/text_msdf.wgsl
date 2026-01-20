@@ -43,9 +43,8 @@ fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
     out.position = vec4<f32>(ndc.x, -ndc.y, 0.0, 1.0);
 
     // Interpolate UVs within glyph cell
-    // Flip V to correct vertical orientation from msdfgen bitmap coordinate system
-    let corrected_uv = vec2<f32>(vertex.uv.x, 1.0 - vertex.uv.y);
-    out.uv = mix(instance.uv_min, instance.uv_max, corrected_uv);
+    // UVs are already correctly oriented by the atlas loader
+    out.uv = mix(instance.uv_min, instance.uv_max, vertex.uv);
     out.color = instance.color;
 
     return out;

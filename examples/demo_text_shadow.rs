@@ -1,5 +1,5 @@
-//! Demo: MSDF 3D Relief Text
-//! Clay tablet with text carved using MSDF atlas
+//! Demo: 3D Text with Shadows
+//! Floating 3D letters casting soft shadows on a ground plane
 
 #[path = "../src/camera.rs"]
 mod camera;
@@ -13,7 +13,7 @@ mod shader_bindings {
 
 use camera::OrbitalCamera;
 use constants::{HEIGHT, WIDTH};
-use shader_bindings::sdf_msdf_relief;
+use shader_bindings::sdf_text_shadow;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -44,7 +44,7 @@ impl Default for Uniforms {
         Self {
             inv_view_proj: [[0.0; 4]; 4],
             camera_pos_time: [0.0, 2.0, 5.0, 0.0],
-            light_dir_intensity: [0.5, 0.8, 0.3, 1.2],
+            light_dir_intensity: [0.6, 0.9, 0.4, 1.3],  // Higher, more angled light for shadows
             render_params: [WIDTH as f32, HEIGHT as f32, 0.15, 16.0],
             atlas_params: [640.0, 640.0, 48.0, 4.0], // atlas size, font size, sdf range
         }
@@ -127,7 +127,7 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
-        // Load MSDF atlas texture (RGBA format from msdf-atlas-gen)
+        // Load MSDF atlas texture
         let atlas_png = Path::new("assets/fonts/atlas.png");
         let atlas_image = image::open(atlas_png).context("Failed to load atlas image")?;
         let atlas_rgba = atlas_image.to_rgba8();
@@ -165,16 +165,16 @@ impl Renderer {
             ..Default::default()
         });
 
-        let shader_module = sdf_msdf_relief::create_shader_module_embed_source(&device);
+        let shader_module = sdf_text_shadow::create_shader_module_embed_source(&device);
 
         // Camera
         let mut camera = OrbitalCamera::default();
-        camera.distance = 6.0;
-        camera.elevation = 0.8;
-        camera.azimuth = 0.2;
+        camera.distance = 4.0;
+        camera.elevation = 0.4;
+        camera.azimuth = 0.1;
 
         let mut uniforms = Uniforms::default();
-        uniforms.atlas_params = [atlas_size.0 as f32, atlas_size.1 as f32, 64.0, 4.0];
+        uniforms.atlas_params = [atlas_size.0 as f32, atlas_size.1 as f32, 48.0, 4.0];
         uniforms.update_from_camera(&camera, config.width, config.height, 0.0);
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -242,7 +242,7 @@ impl Renderer {
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("MSDF Relief Pipeline"),
+            label: Some("Text Shadow Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader_module,
@@ -377,7 +377,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.renderer.is_none() {
             let window_attrs = Window::default_attributes()
-                .with_title("MSDF 3D Relief (A/D: rotate, W/S: zoom, Q/E: tilt, ESC: quit)")
+                .with_title("3D Text Shadows (A/D: rotate, W/S: zoom, Q/E: tilt, ESC: quit)")
                 .with_inner_size(winit::dpi::PhysicalSize::new(WIDTH, HEIGHT));
 
             let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
