@@ -5,7 +5,7 @@
 mod constants;
 
 use constants::{HEIGHT, WIDTH};
-use raybox::text::{MsdfAtlas, TextRenderer, GlyphInstance};
+use raybox::text::{GlyphInstance, MsdfAtlas, TextRenderer};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -18,6 +18,12 @@ use winit::{
     window::{Window, WindowId},
 };
 
+// ~200 words per paragraph, need 5+ paragraphs for 1000+ words
+const LOREM: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Curabitur pretium tincidunt lacus. Nulla gravida orci a odio. Nullam varius, turpis et commodo pharetra, est eros bibendum elit, nec luctus magna felis sollicitudin mauris. Integer in mauris eu nibh euismod gravida. Duis ac tellus et risus vulputate vehicula. Donec lobortis risus a elit. Etiam tempor. Ut ullamcorper, ligula eu tempor congue, eros est euismod turpis, id tincidunt sapien risus a quam. Maecenas fermentum consequat mi. Donec fermentum. Pellentesque malesuada nulla a mi. Duis sapien sem, aliquet sed, vulputate eget, feugiat non, orci. Sed neque. Sed eget lacus. Mauris non dui nec urna suscipit nonummy. Fusce fermentum fermentum arcu. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae. Proin ut est. Aliquam odio. Pellentesque massa turpis, cursus eu, euismod nec, tempor congue, nulla. Duis viverra gravida mauris. Cras tincidunt. Curabitur eros ligula, varius sit amet, nunc. Vivamus aliquet, orci nec malesuada elementum, justo mi convallis eros, eu commodo diam mi a enim.";
+
+// Window height for 1000+ words at 16px with proper line height
+const TEXT_WINDOW_HEIGHT: u32 = 1200;
+
 struct Renderer {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
@@ -25,7 +31,6 @@ struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     text_renderer: TextRenderer,
-    start_time: std::time::Instant,
 }
 
 impl Renderer {
@@ -79,13 +84,11 @@ impl Renderer {
         let atlas_json = Path::new("assets/fonts/atlas.json");
         let atlas = MsdfAtlas::load(atlas_json).context("Failed to load MSDF atlas")?;
 
-        // Load atlas image
         let atlas_png = Path::new("assets/fonts/atlas.png");
         let atlas_image = image::open(atlas_png).context("Failed to load atlas image")?;
         let atlas_rgb = atlas_image.to_rgb8();
         let atlas_data = atlas_rgb.as_raw();
 
-        // Create text renderer
         let text_renderer =
             TextRenderer::new(&device, &queue, surface_format, atlas, atlas_data)?;
 
@@ -96,83 +99,80 @@ impl Renderer {
             queue,
             config,
             text_renderer,
-            start_time: std::time::Instant::now(),
         })
     }
 
     fn render(&self) -> Result<(), wgpu::SurfaceError> {
-        let _time = self.start_time.elapsed().as_secs_f32();
-
-        // Update screen size
         self.text_renderer.update_screen_size(
             &self.queue,
             self.config.width as f32,
             self.config.height as f32,
         );
 
-        // Layout text
         let mut instances: Vec<GlyphInstance> = Vec::new();
 
-        // Title
-        let title_instances = self.text_renderer.layout_text(
-            "RAYBOX",
-            50.0,
-            80.0,
-            64.0,
-            [0.2, 0.3, 0.8, 1.0], // Blue
-        );
-        instances.extend(title_instances);
+        // Title - large
+        instances.extend(self.text_renderer.layout_text(
+            "RAYBOX SDF TEXT ENGINE",
+            20.0,
+            20.0,
+            48.0,
+            [0.1, 0.2, 0.5, 1.0],
+        ));
 
         // Subtitle
-        let subtitle_instances = self.text_renderer.layout_text(
-            "Multi-channel Signed Distance Field Text",
-            50.0,
-            140.0,
-            24.0,
-            [0.3, 0.3, 0.3, 1.0], // Gray
-        );
-        instances.extend(subtitle_instances);
+        instances.extend(self.text_renderer.layout_text(
+            "Multi-channel Signed Distance Field Rendering",
+            20.0,
+            75.0,
+            20.0,
+            [0.4, 0.4, 0.4, 1.0],
+        ));
 
-        // Body text
-        let body_text = "MSDF text rendering provides crisp, resolution-independent
-text at any size. Unlike traditional bitmap fonts, MSDF
-preserves sharp corners and fine details even when scaled.
+        // Body text - 16px, wrapped manually
+        let wrap_width = 90; // characters per line
+        let mut y = 110.0;
+        let font_size = 16.0;
+        let line_height = 22.0;
 
-The quick brown fox jumps over the lazy dog.
-ABCDEFGHIJKLMNOPQRSTUVWXYZ
-abcdefghijklmnopqrstuvwxyz
-0123456789 !@#$%^&*()";
+        // Generate 1000+ words by repeating lorem ipsum 6 times (~1050 words)
+        let full_text = format!("{} {} {} {} {} {}", LOREM, LOREM, LOREM, LOREM, LOREM, LOREM);
 
-        let mut y = 200.0;
-        for line in body_text.lines() {
-            let line_instances = self.text_renderer.layout_text(
-                line,
-                50.0,
-                y,
+        let words: Vec<&str> = full_text.split_whitespace().collect();
+        let mut line = String::new();
+
+        for word in words {
+            if line.len() + word.len() + 1 > wrap_width {
+                instances.extend(self.text_renderer.layout_text(
+                    &line,
+                    20.0,
+                    y,
+                    font_size,
+                    [0.15, 0.15, 0.15, 1.0],
+                ));
+                y += line_height;
+                line.clear();
+
+                if y > self.config.height as f32 - 30.0 {
+                    break;
+                }
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+
+        if !line.is_empty() && y <= self.config.height as f32 - 30.0 {
+            instances.extend(self.text_renderer.layout_text(
+                &line,
                 20.0,
-                [0.1, 0.1, 0.1, 1.0], // Dark gray
-            );
-            instances.extend(line_instances);
-            y += 28.0;
-        }
-
-        // Different sizes demo
-        let sizes = [(12.0, "12px"), (16.0, "16px"), (24.0, "24px"), (32.0, "32px"), (48.0, "48px")];
-        let mut x = 50.0;
-        let y = 450.0;
-        for (size, label) in sizes {
-            let size_instances = self.text_renderer.layout_text(
-                label,
-                x,
                 y,
-                size,
-                [0.6, 0.2, 0.2, 1.0], // Red
-            );
-            instances.extend(size_instances);
-            x += size * 4.0;
+                font_size,
+                [0.15, 0.15, 0.15, 1.0],
+            ));
         }
 
-        // Render
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -188,9 +188,9 @@ abcdefghijklmnopqrstuvwxyz
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.95,
-                            g: 0.95,
-                            b: 0.95,
+                            r: 0.98,
+                            g: 0.98,
+                            b: 0.96,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -227,8 +227,8 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.renderer.is_none() {
             let window_attrs = Window::default_attributes()
-                .with_title("MSDF Text Rendering Demo (ESC to quit)")
-                .with_inner_size(winit::dpi::PhysicalSize::new(WIDTH, HEIGHT));
+                .with_title("MSDF Text Demo (ESC to quit)")
+                .with_inner_size(winit::dpi::PhysicalSize::new(WIDTH, TEXT_WINDOW_HEIGHT));
 
             let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
 

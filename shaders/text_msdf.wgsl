@@ -43,7 +43,9 @@ fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
     out.position = vec4<f32>(ndc.x, -ndc.y, 0.0, 1.0);
 
     // Interpolate UVs within glyph cell
-    out.uv = mix(instance.uv_min, instance.uv_max, vertex.uv);
+    // Flip V to correct vertical orientation from msdfgen bitmap coordinate system
+    let corrected_uv = vec2<f32>(vertex.uv.x, 1.0 - vertex.uv.y);
+    out.uv = mix(instance.uv_min, instance.uv_max, corrected_uv);
     out.color = instance.color;
 
     return out;
@@ -60,26 +62,33 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let msdf = textureSample(atlas_texture, atlas_sampler, in.uv);
 
     // Reconstruct signed distance from MSDF channels
-    // Values are stored as [0,1], convert to [-0.5, 0.5] range
-    let sd = median(msdf.r, msdf.g, msdf.b) - 0.5;
+    // Values stored as [0,1] where 0.5 = glyph edge
+    let sd = median(msdf.r, msdf.g, msdf.b);
 
-    // Calculate screen-space distance field gradient for anti-aliasing
-    let px_range = uniforms.sdf_params.x;
-
-    // Use screen-space derivatives for resolution-independent AA
-    let dxuv = dpdx(in.uv);
-    let dyuv = dpdy(in.uv);
-
-    // Approximate pixel size in UV space
+    // Screen-space anti-aliasing using UV derivatives
+    // This approach works better than fwidth(sd) which can be unstable
+    let uv_grad = fwidth(in.uv);
     let tex_size = vec2<f32>(textureDimensions(atlas_texture));
-    let px_size = sqrt(dot(dxuv, dxuv) + dot(dyuv, dyuv)) * length(tex_size);
 
-    // Scale the distance by the pixel range
-    let screen_px_distance = sd * px_range / max(px_size, 0.001);
+    // How many texels per screen pixel
+    let texels_per_pixel = max(uv_grad.x * tex_size.x, uv_grad.y * tex_size.y);
 
-    // Smooth step for anti-aliased edge
-    let alpha = clamp(screen_px_distance + 0.5, 0.0, 1.0);
+    // SDF range in texture is 4 pixels, so the edge transition in normalized units
+    // is approximately 1/(4*2) = 0.125 per texel
+    // Scale anti-aliasing width by texels per pixel
+    let aa_width = 0.5 * texels_per_pixel / uniforms.sdf_params.x;
 
-    // Output with premultiplied alpha
-    return vec4<f32>(in.color.rgb * alpha, alpha * in.color.a);
+    // Clamp aa_width to reasonable range to prevent artifacts
+    let clamped_aa = clamp(aa_width, 0.01, 0.25);
+
+    // MSDF convention: values > 0.5 = inside glyph, values < 0.5 = outside
+    // Smoothstep gives 0 when sd < 0.5-aa (outside) and 1 when sd > 0.5+aa (inside)
+    let alpha = smoothstep(0.5 - clamped_aa, 0.5 + clamped_aa, sd);
+
+    // Discard fully transparent pixels
+    if (alpha < 0.01) {
+        discard;
+    }
+
+    return vec4<f32>(in.color.rgb, alpha * in.color.a);
 }

@@ -14,6 +14,18 @@ ex num:
         *) echo "Unknown example {{num}}. Available: 1 (objects), 2 (spheres), 3 (towers), 4 (text2d), 5 (clay tablet)" ;;
     esac
 
+# Run example screenshot by number: just ex_screenshot 4
+ex_screenshot num:
+    #!/usr/bin/env bash
+    case "{{num}}" in
+        1) cargo run --example demo_objects ;;
+        2) cargo run --example demo_spheres ;;
+        3) cargo run --example demo_towers ;;
+        4) cargo run --example demo_text2d ;;
+        5) cargo run --example demo_clay ;;
+        *) echo "Unknown example {{num}}. Available: 1 (objects), 2 (spheres), 3 (towers), 4 (text2d), 5 (clay tablet)" ;;
+    esac
+
 # Build WASM and generate bindings
 build-web:
     RUSTFLAGS="--cfg=web_sys_unstable_apis" cargo build --lib --target wasm32-unknown-unknown --release

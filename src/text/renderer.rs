@@ -366,6 +366,8 @@ impl TextRenderer {
     }
 
     /// Layout text and return glyph instances
+    /// x, y: top-left position of the text block
+    /// font_size: height of the text in pixels
     pub fn layout_text(
         &self,
         text: &str,
@@ -376,37 +378,57 @@ impl TextRenderer {
     ) -> Vec<GlyphInstance> {
         let mut instances = Vec::new();
         let mut cursor_x = x;
-        let cursor_y = y;
 
+        // Scale factor: font_size is the desired line height
         let scale = font_size;
 
         for ch in text.chars() {
             if ch == '\n' {
-                // Skip newlines for now (single line)
                 continue;
             }
 
             if let Some(glyph) = self.atlas.get_glyph(ch) {
                 if let Some((uv_min_x, uv_min_y, uv_max_x, uv_max_y)) = self.atlas.get_glyph_uvs(ch)
                 {
-                    // Position glyph
-                    let glyph_x = cursor_x + glyph.bearing_x * scale;
-                    let glyph_y = cursor_y - glyph.bearing_y * scale;
-
+                    // Position glyph cell at cursor position
+                    // The glyph cell is square (scale x scale) and contains the centered glyph
                     instances.push(GlyphInstance {
-                        offset: [glyph_x, glyph_y],
-                        size: [scale, scale], // Use uniform size for cell
+                        offset: [cursor_x, y],
+                        size: [scale, scale],
                         uv_min: [uv_min_x, uv_min_y],
                         uv_max: [uv_max_x, uv_max_y],
                         color,
                     });
 
+                    // Advance cursor by glyph width (advance is normalized to em)
                     cursor_x += glyph.advance * scale;
                 }
             } else if ch == ' ' {
-                // Space character
-                cursor_x += 0.3 * scale;
+                // Space character - use standard width
+                cursor_x += 0.25 * scale;
             }
+        }
+
+        instances
+    }
+
+    /// Layout multi-line text with automatic line wrapping
+    pub fn layout_text_block(
+        &self,
+        text: &str,
+        x: f32,
+        y: f32,
+        font_size: f32,
+        line_height: f32,
+        color: [f32; 4],
+    ) -> Vec<GlyphInstance> {
+        let mut instances = Vec::new();
+        let mut current_y = y;
+
+        for line in text.lines() {
+            let line_instances = self.layout_text(line, x, current_y, font_size, color);
+            instances.extend(line_instances);
+            current_y += line_height;
         }
 
         instances

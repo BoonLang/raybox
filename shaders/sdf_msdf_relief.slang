@@ -55,16 +55,21 @@ float median(float r, float g, float b) {
     return max(min(r, g), min(max(r, g), b));
 }
 
-// Sample MSDF atlas and return signed distance
+// Sample MSDF atlas and return signed distance in range units
+// For SDF operations: negative = inside shape, positive = outside shape
 float sampleMsdf(float2 uv) {
     // Clamp UVs to valid range
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-        return 1.0; // Outside atlas
+        return 1.0; // Outside atlas = positive distance
     }
 
     float4 msdf = msdfAtlas.Sample(atlasSampler, uv);
-    float sd = median(msdf.r, msdf.g, msdf.b) - 0.5;
-    return sd * uniforms.atlasParams.w; // Scale by SDF range
+    // MSDF convention: values > 0.5 = inside glyph, values < 0.5 = outside
+    // We need standard SDF: negative inside, positive outside
+    // So: (0.5 - median) gives negative when median > 0.5 (inside)
+    float sd = 0.5 - median(msdf.r, msdf.g, msdf.b);
+    // Scale by 2*range to convert from normalized to texture pixel distance
+    return sd * 2.0 * uniforms.atlasParams.w;
 }
 
 // Get UV for a character in the atlas
@@ -129,8 +134,9 @@ float sdText2D(float2 p) {
         float2 atlasUV = getGlyphUV(charCode, localUV);
         if (atlasUV.x >= 0.0) {
             float charDist = sampleMsdf(atlasUV);
-            // Scale distance back to world space
-            charDist *= charHeight / uniforms.atlasParams.z * uniforms.atlasParams.x;
+            // Scale distance from pixel space to world space
+            // glyphSize is 64 pixels, charHeight is world units
+            charDist *= charHeight / uniforms.atlasParams.z;
             d = min(d, charDist);
         }
 
@@ -160,7 +166,7 @@ float sdLine2(float2 p) {
         float2 atlasUV = getGlyphUV(charCode, localUV);
         if (atlasUV.x >= 0.0) {
             float charDist = sampleMsdf(atlasUV);
-            charDist *= charHeight / uniforms.atlasParams.z * uniforms.atlasParams.x;
+            charDist *= charHeight / uniforms.atlasParams.z;
             d = min(d, charDist);
         }
 
@@ -190,11 +196,101 @@ float sdLine3(float2 p) {
         float2 atlasUV = getGlyphUV(charCode, localUV);
         if (atlasUV.x >= 0.0) {
             float charDist = sampleMsdf(atlasUV);
-            charDist *= charHeight / uniforms.atlasParams.z * uniforms.atlasParams.x;
+            charDist *= charHeight / uniforms.atlasParams.z;
             d = min(d, charDist);
         }
 
         xPos += charWidth + 0.03;
+    }
+
+    return d;
+}
+
+// Fourth line: "SLANG WGPU RUST"
+static const int LINE4_LEN = 15;
+static const int LINE4_CHARS[15] = {83, 76, 65, 78, 71, 32, 87, 71, 80, 85, 32, 82, 85, 83, 84}; // S L A N G   W G P U   R U S T
+
+float sdLine4(float2 p) {
+    float d = 1e10;
+    float charHeight = 0.18;
+    float startX = -0.75;
+    float xPos = startX;
+
+    for (int i = 0; i < LINE4_LEN; i++) {
+        int charCode = LINE4_CHARS[i];
+        float charWidth = getCharWidth(charCode) * charHeight;
+
+        float2 localP = p - float2(xPos + charWidth * 0.5, charHeight * 0.5);
+        float2 localUV = localP / float2(charWidth, charHeight) + 0.5;
+
+        float2 atlasUV = getGlyphUV(charCode, localUV);
+        if (atlasUV.x >= 0.0) {
+            float charDist = sampleMsdf(atlasUV);
+            charDist *= charHeight / uniforms.atlasParams.z;
+            d = min(d, charDist);
+        }
+
+        xPos += charWidth + 0.02;
+    }
+
+    return d;
+}
+
+// Fifth line: "SDF PRIMITIVES"
+static const int LINE5_LEN = 14;
+static const int LINE5_CHARS[14] = {83, 68, 70, 32, 80, 82, 73, 77, 73, 84, 73, 86, 69, 83}; // S D F   P R I M I T I V E S
+
+float sdLine5(float2 p) {
+    float d = 1e10;
+    float charHeight = 0.18;
+    float startX = -0.75;
+    float xPos = startX;
+
+    for (int i = 0; i < LINE5_LEN; i++) {
+        int charCode = LINE5_CHARS[i];
+        float charWidth = getCharWidth(charCode) * charHeight;
+
+        float2 localP = p - float2(xPos + charWidth * 0.5, charHeight * 0.5);
+        float2 localUV = localP / float2(charWidth, charHeight) + 0.5;
+
+        float2 atlasUV = getGlyphUV(charCode, localUV);
+        if (atlasUV.x >= 0.0) {
+            float charDist = sampleMsdf(atlasUV);
+            charDist *= charHeight / uniforms.atlasParams.z;
+            d = min(d, charDist);
+        }
+
+        xPos += charWidth + 0.02;
+    }
+
+    return d;
+}
+
+// Sixth line: "SOFT SHADOWS AO"
+static const int LINE6_LEN = 15;
+static const int LINE6_CHARS[15] = {83, 79, 70, 84, 32, 83, 72, 65, 68, 79, 87, 83, 32, 65, 79}; // S O F T   S H A D O W S   A O
+
+float sdLine6(float2 p) {
+    float d = 1e10;
+    float charHeight = 0.18;
+    float startX = -0.75;
+    float xPos = startX;
+
+    for (int i = 0; i < LINE6_LEN; i++) {
+        int charCode = LINE6_CHARS[i];
+        float charWidth = getCharWidth(charCode) * charHeight;
+
+        float2 localP = p - float2(xPos + charWidth * 0.5, charHeight * 0.5);
+        float2 localUV = localP / float2(charWidth, charHeight) + 0.5;
+
+        float2 atlasUV = getGlyphUV(charCode, localUV);
+        if (atlasUV.x >= 0.0) {
+            float charDist = sampleMsdf(atlasUV);
+            charDist *= charHeight / uniforms.atlasParams.z;
+            d = min(d, charDist);
+        }
+
+        xPos += charWidth + 0.02;
     }
 
     return d;
@@ -205,13 +301,22 @@ float sdAllText2D(float2 p) {
     float d = 1e10;
 
     // Title "RAYBOX" centered at top
-    d = min(d, sdText2D(p - float2(0.0, 0.4)));
+    d = min(d, sdText2D(p - float2(0.0, 0.5)));
 
     // "MSDF TEXT" below
-    d = min(d, sdLine2(p - float2(0.0, -0.1)));
+    d = min(d, sdLine2(p - float2(0.0, 0.1)));
 
     // "RENDERING" below that
-    d = min(d, sdLine3(p - float2(0.0, -0.45)));
+    d = min(d, sdLine3(p - float2(0.0, -0.2)));
+
+    // "SLANG WGPU RUST"
+    d = min(d, sdLine4(p - float2(0.0, -0.5)));
+
+    // "SDF PRIMITIVES"
+    d = min(d, sdLine5(p - float2(0.0, -0.75)));
+
+    // "SOFT SHADOWS AO"
+    d = min(d, sdLine6(p - float2(0.0, -1.0)));
 
     return d;
 }
@@ -246,14 +351,14 @@ Hit mapScene(float3 p) {
     ground.materialId = 1;
     result = opUnionHit(result, ground);
 
-    // Clay tablet (rounded box)
+    // Clay tablet (rounded box) - taller to fit more text
     Hit tablet;
     float3 tabletP = p - float3(0, 0.3, 0);
-    tablet.dist = sdRoundBox(tabletP, float3(2.0, 0.25, 1.4), 0.08);
+    tablet.dist = sdRoundBox(tabletP, float3(2.0, 0.25, 1.8), 0.08);
     tablet.materialId = 2;
 
     // Carve text into tablet (subtract relief from tablet)
-    float3 textP = p - float3(0, 0.50, 0);
+    float3 textP = p - float3(0, 0.50, 0.15);
     float textRelief = sdTextRelief(textP, 0.06);
     tablet.dist = max(tablet.dist, -textRelief);
 

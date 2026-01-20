@@ -159,12 +159,13 @@ impl MsdfAtlas {
                     let atlas_idx = atlas_idx as usize;
 
                     // Convert from [-range, range] to [0, 255]
-                    let r =
-                        ((pixel.r / SDF_RANGE as f32 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
-                    let g =
-                        ((pixel.g / SDF_RANGE as f32 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
-                    let b =
-                        ((pixel.b / SDF_RANGE as f32 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
+                    // Map -range -> 0, 0 -> 0.5, +range -> 1
+                    let r = ((pixel.r / (2.0 * SDF_RANGE as f32) + 0.5) * 255.0).clamp(0.0, 255.0)
+                        as u8;
+                    let g = ((pixel.g / (2.0 * SDF_RANGE as f32) + 0.5) * 255.0).clamp(0.0, 255.0)
+                        as u8;
+                    let b = ((pixel.b / (2.0 * SDF_RANGE as f32) + 0.5) * 255.0).clamp(0.0, 255.0)
+                        as u8;
 
                     atlas_data[atlas_idx] = r;
                     atlas_data[atlas_idx + 1] = g;
