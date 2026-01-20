@@ -21,8 +21,22 @@ open-browser:
         --use-angle=vulkan \
         http://localhost:8000
 
-# Take screenshot with headed Chromium via CDP
+# Build, serve, and open browser
+web: build-web
+    pkill miniserve || true
+    (sleep 1 && just open-browser) &
+    miniserve . --port 8000 --index index.html
+
+# Native screenshot (headless render to PNG)
 screenshot:
+    cargo run
+
+# Native screenshot and open
+screenshot-open: screenshot
+    xdg-open output/screenshot.png
+
+# Internal: capture web screenshot via CDP
+_web-screenshot-capture:
     #!/usr/bin/env bash
     set -e
     mkdir -p output
@@ -46,21 +60,18 @@ screenshot:
         jq -r '.result.data' | \
         base64 -d > output/web_screenshot.png
     kill $PID 2>/dev/null || true
-    xdg-open output/web_screenshot.png
 
-# Build, serve, and open browser
-web: build-web
-    pkill miniserve || true
-    (sleep 1 && just open-browser) &
-    miniserve . --port 8000 --index index.html
-
-# Build, serve, take screenshot (for verification)
+# Web screenshot (build, serve, capture)
 web-screenshot: build-web
     pkill miniserve || true
     miniserve . --port 8000 --index index.html &
     sleep 2
-    just screenshot
+    just _web-screenshot-capture
     pkill miniserve || true
+
+# Web screenshot and open
+web-screenshot-open: web-screenshot
+    xdg-open output/web_screenshot.png
 
 # Install required tools
 setup:
