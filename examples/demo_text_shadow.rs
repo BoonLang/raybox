@@ -10,6 +10,9 @@ mod camera;
 mod constants;
 #[path = "../src/text/mod.rs"]
 mod text;
+#[cfg(feature = "windowed")]
+#[path = "../src/input.rs"]
+mod input;
 
 #[allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals)]
 mod shader_bindings {
@@ -19,6 +22,8 @@ mod shader_bindings {
 use camera::FlyCamera;
 use constants::{HEIGHT, WIDTH};
 use text::{VectorFont, VectorFontAtlas};
+#[cfg(feature = "windowed")]
+use input::{CameraConfig, InputAction, InputHandler};
 
 use anyhow::{Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -191,14 +196,16 @@ fn main() -> Result<()> {
 // ============================================================================
 
 #[cfg(feature = "windowed")]
+const DEMO_TITLE: &str = "Demo 6: 3D Text Shadow";
+
+#[cfg(feature = "windowed")]
 fn run_windowed() -> Result<()> {
-    use std::collections::HashSet;
     use std::sync::Arc;
     use winit::{
         application::ApplicationHandler,
-        event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent},
+        event::{DeviceEvent, WindowEvent},
         event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-        keyboard::{KeyCode, PhysicalKey},
+        keyboard::PhysicalKey,
         window::{Window, WindowId},
     };
 
@@ -212,11 +219,10 @@ fn run_windowed() -> Result<()> {
         uniform_buffer: wgpu::Buffer,
         bind_group: wgpu::BindGroup,
         camera: FlyCamera,
-        pressed_keys: HashSet<KeyCode>,
+        input: InputHandler,
         start_time: std::time::Instant,
         last_frame_time: std::time::Instant,
         char_count: u32,
-        mouse_captured: bool,
     }
 
     impl Renderer {
@@ -324,9 +330,15 @@ fn run_windowed() -> Result<()> {
                 })
                 .collect();
 
-            // Create buffers - fly camera starts in front of text
+            // Camera config: positioned in front of text, looking at it
+            let camera_config = CameraConfig {
+                initial_position: glam::Vec3::new(0.0, 0.0, 3.5),
+                look_at_target: glam::Vec3::new(0.0, 0.0, 0.0),
+            };
+            let input = InputHandler::new(camera_config);
+
             let mut camera = FlyCamera::default();
-            camera.position = glam::Vec3::new(0.0, 0.0, 3.5);
+            input.setup_camera(&mut camera);
 
             let mut uniforms = Uniforms::default();
             uniforms.update_from_camera(&camera, WIDTH, HEIGHT, 0.0);
@@ -540,44 +552,11 @@ fn run_windowed() -> Result<()> {
                 uniform_buffer,
                 bind_group,
                 camera,
-                pressed_keys: HashSet::new(),
+                input,
                 start_time: std::time::Instant::now(),
                 last_frame_time: std::time::Instant::now(),
                 char_count,
-                mouse_captured: false,
             })
-        }
-
-        fn toggle_mouse_capture(&mut self) {
-            use winit::window::CursorGrabMode;
-            self.mouse_captured = !self.mouse_captured;
-            if self.mouse_captured {
-                // Try Locked first (best for FPS), fall back to Confined
-                if self.window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
-                    let _ = self.window.set_cursor_grab(CursorGrabMode::Confined);
-                }
-                self.window.set_cursor_visible(false);
-            } else {
-                let _ = self.window.set_cursor_grab(CursorGrabMode::None);
-                self.window.set_cursor_visible(true);
-            }
-        }
-
-        fn handle_device_event(&mut self, event: &winit::event::DeviceEvent) {
-            use winit::event::DeviceEvent;
-            if self.mouse_captured {
-                if let DeviceEvent::MouseMotion { delta } = event {
-                    self.camera.look(delta.0 as f32, delta.1 as f32);
-                }
-            }
-        }
-
-        fn handle_scroll(&mut self, delta: MouseScrollDelta) {
-            let scroll = match delta {
-                MouseScrollDelta::LineDelta(_, y) => y,
-                MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.02,
-            };
-            self.camera.adjust_speed(scroll);
         }
 
         fn update(&mut self) {
@@ -585,37 +564,9 @@ fn run_windowed() -> Result<()> {
             let dt = (now - self.last_frame_time).as_secs_f32();
             self.last_frame_time = now;
 
-            // WASD movement
-            if self.pressed_keys.contains(&KeyCode::KeyW) {
-                self.camera.move_forward(dt, true);
-            }
-            if self.pressed_keys.contains(&KeyCode::KeyS) {
-                self.camera.move_forward(dt, false);
-            }
-            if self.pressed_keys.contains(&KeyCode::KeyA) {
-                self.camera.move_right(dt, false);
-            }
-            if self.pressed_keys.contains(&KeyCode::KeyD) {
-                self.camera.move_right(dt, true);
-            }
-
-            // Up/Down movement (Space/Ctrl or C)
-            if self.pressed_keys.contains(&KeyCode::Space) {
-                self.camera.move_up(dt, true);
-            }
-            if self.pressed_keys.contains(&KeyCode::ControlLeft)
-                || self.pressed_keys.contains(&KeyCode::ControlRight)
-                || self.pressed_keys.contains(&KeyCode::KeyC) {
-                self.camera.move_up(dt, false);
-            }
-
-            // Roll (Q/E)
-            if self.pressed_keys.contains(&KeyCode::KeyQ) {
-                self.camera.roll_camera(-dt * 2.0);
-            }
-            if self.pressed_keys.contains(&KeyCode::KeyE) {
-                self.camera.roll_camera(dt * 2.0);
-            }
+            self.input.update_frame_time(dt);
+            self.input.update_camera(&mut self.camera, dt);
+            self.input.update_window_title(&self.window, DEMO_TITLE, &self.camera);
         }
 
         fn render(&self) -> Result<(), wgpu::SurfaceError> {
@@ -667,15 +618,6 @@ fn run_windowed() -> Result<()> {
                 self.surface.configure(&self.device, &self.config);
             }
         }
-
-        fn handle_key(&mut self, event: KeyEvent) {
-            if let PhysicalKey::Code(key_code) = event.physical_key {
-                match event.state {
-                    ElementState::Pressed => { self.pressed_keys.insert(key_code); }
-                    ElementState::Released => { self.pressed_keys.remove(&key_code); }
-                }
-            }
-        }
     }
 
     struct App {
@@ -686,7 +628,7 @@ fn run_windowed() -> Result<()> {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             if self.renderer.is_none() {
                 let window_attrs = Window::default_attributes()
-                    .with_title("Demo 6: 3D Text | WASD: move, Space/C: up/down, Mouse: look, Tab: capture, R: reset")
+                    .with_title(input::demo_title(6, "3D Text Shadow"))
                     .with_inner_size(winit::dpi::PhysicalSize::new(WIDTH, HEIGHT));
 
                 let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
@@ -709,10 +651,12 @@ fn run_windowed() -> Result<()> {
             &mut self,
             _event_loop: &ActiveEventLoop,
             _device_id: winit::event::DeviceId,
-            event: winit::event::DeviceEvent,
+            event: DeviceEvent,
         ) {
             if let Some(renderer) = self.renderer.as_mut() {
-                renderer.handle_device_event(&event);
+                if let DeviceEvent::MouseMotion { delta } = event {
+                    renderer.input.handle_mouse_motion(&mut renderer.camera, delta);
+                }
             }
         }
 
@@ -722,32 +666,28 @@ fn run_windowed() -> Result<()> {
             match event {
                 WindowEvent::CloseRequested => event_loop.exit(),
                 WindowEvent::KeyboardInput { event, .. } => {
-                    if let PhysicalKey::Code(key_code) = event.physical_key {
-                        if event.state == ElementState::Pressed {
-                            match key_code {
-                                KeyCode::Escape => {
-                                    // Release mouse if captured, otherwise exit
-                                    if renderer.mouse_captured {
-                                        renderer.toggle_mouse_capture();
-                                    } else {
-                                        event_loop.exit();
-                                    }
-                                    return;
+                    if let PhysicalKey::Code(_) = event.physical_key {
+                        if let Some(action) = renderer.input.handle_key(event) {
+                            match action {
+                                InputAction::Exit => event_loop.exit(),
+                                InputAction::ToggleCapture => {
+                                    renderer.input.toggle_capture(&renderer.window);
                                 }
-                                KeyCode::Tab => {
-                                    renderer.toggle_mouse_capture();
+                                InputAction::ToggleDebugOverlay => {
+                                    renderer.input.toggle_debug_overlay();
                                 }
-                                KeyCode::Home | KeyCode::KeyR => {
-                                    renderer.camera.reset();
+                                InputAction::ResetRoll => {
+                                    renderer.input.reset_roll(&mut renderer.camera);
                                 }
-                                _ => {}
+                                InputAction::ResetCamera => {
+                                    renderer.input.reset_camera(&mut renderer.camera);
+                                }
                             }
                         }
                     }
-                    renderer.handle_key(event);
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
-                    renderer.handle_scroll(delta);
+                    renderer.input.handle_scroll(&mut renderer.camera, delta);
                 }
                 WindowEvent::Resized(size) => renderer.resize(size),
                 WindowEvent::RedrawRequested => {

@@ -564,7 +564,7 @@ fn run_windowed() -> Result<()> {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             if self.renderer.is_none() {
                 let window_attrs = Window::default_attributes()
-                    .with_title("Demo 4: 2D Vector SDF Text (ESC to quit)")
+                    .with_title("Demo 4: 2D Vector SDF Text | Esc to quit")
                     .with_inner_size(winit::dpi::PhysicalSize::new(WIDTH, TEXT_WINDOW_HEIGHT));
 
                 let window = Arc::new(event_loop.create_window(window_attrs).unwrap());

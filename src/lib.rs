@@ -8,5 +8,8 @@ pub mod camera;
 pub mod constants;
 pub mod text;
 
+#[cfg(feature = "windowed")]
+pub mod input;
+
 #[cfg(target_arch = "wasm32")]
 mod web;

@@ -55,12 +55,18 @@ impl FlyCamera {
         .normalize()
     }
 
-    /// Compute right direction vector
+    /// Compute right direction vector (respects roll)
     pub fn right(&self) -> Vec3 {
-        self.forward().cross(Vec3::Y).normalize()
+        let base_right = self.forward().cross(Vec3::Y).normalize();
+        if self.roll.abs() > 0.0001 {
+            let roll_rotation = Mat4::from_axis_angle(self.forward(), self.roll);
+            roll_rotation.transform_vector3(base_right).normalize()
+        } else {
+            base_right
+        }
     }
 
-    /// Compute up direction vector (camera-relative)
+    /// Compute up direction vector (camera-relative, respects roll)
     pub fn up(&self) -> Vec3 {
         self.right().cross(self.forward()).normalize()
     }
@@ -73,7 +79,7 @@ impl FlyCamera {
     /// Compute view matrix (world -> camera space)
     pub fn view_matrix(&self) -> Mat4 {
         let target = self.position + self.forward();
-        Mat4::look_at_rh(self.position, target, Vec3::Y)
+        Mat4::look_at_rh(self.position, target, self.up())
     }
 
     /// Compute projection matrix
@@ -104,6 +110,11 @@ impl FlyCamera {
         self.roll += delta;
     }
 
+    /// Reset roll to horizontal
+    pub fn reset_roll(&mut self) {
+        self.roll = 0.0;
+    }
+
     /// Move forward/backward (W/S keys)
     pub fn move_forward(&mut self, delta_time: f32, forward: bool) {
         let dir = if forward { 1.0 } else { -1.0 };
@@ -116,10 +127,10 @@ impl FlyCamera {
         self.position += self.right() * dir * self.move_speed * delta_time;
     }
 
-    /// Move up/down (Space/Ctrl keys) - world Y axis
+    /// Move up/down (Space/Ctrl keys) - camera-relative
     pub fn move_up(&mut self, delta_time: f32, up: bool) {
         let dir = if up { 1.0 } else { -1.0 };
-        self.position.y += dir * self.move_speed * delta_time;
+        self.position += self.up() * dir * self.move_speed * delta_time;
     }
 
     /// Adjust movement speed (scroll wheel)
@@ -134,6 +145,13 @@ impl FlyCamera {
         self.pitch = 0.0;
         self.roll = 0.0;
         self.move_speed = 3.0;
+    }
+
+    /// Point the camera at a target position
+    pub fn look_at(&mut self, target: Vec3) {
+        let dir = (target - self.position).normalize();
+        self.yaw = dir.x.atan2(-dir.z);
+        self.pitch = dir.y.asin().clamp(-1.553, 1.553);
     }
 }
 
