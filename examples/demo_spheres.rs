@@ -354,8 +354,11 @@ fn run_windowed() -> anyhow::Result<()> {
                                 InputAction::ToggleCapture => {
                                     renderer.input.toggle_capture(&renderer.window);
                                 }
-                                InputAction::ToggleDebugOverlay => {
-                                    renderer.input.toggle_debug_overlay();
+                                InputAction::ToggleOverlayApp => {
+                                    renderer.input.toggle_overlay_app();
+                                }
+                                InputAction::ToggleOverlayFull => {
+                                    renderer.input.toggle_overlay_full();
                                 }
                                 InputAction::ResetRoll => {
                                     renderer.input.reset_roll(&mut renderer.camera);
@@ -369,6 +372,13 @@ fn run_windowed() -> anyhow::Result<()> {
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
                     renderer.input.handle_scroll(&mut renderer.camera, delta);
+                }
+                WindowEvent::MouseInput {
+                    state: winit::event::ElementState::Pressed,
+                    button: winit::event::MouseButton::Left,
+                    ..
+                } => {
+                    renderer.input.capture(&renderer.window);
                 }
                 WindowEvent::Resized(size) => renderer.resize(size),
                 WindowEvent::RedrawRequested => {

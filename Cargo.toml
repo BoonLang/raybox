@@ -23,6 +23,12 @@ glam = { version = "0.29", features = ["bytemuck"] }
 # Optional: windowed mode
 winit = { version = "0.30", optional = true }
 
+# System info for debug overlay (CPU/RAM usage)
+sysinfo = { version = "0.37", optional = true }
+
+# NVIDIA GPU monitoring (Linux/Windows)
+nvml-wrapper = { version = "0.11", optional = true }
+
 # Font parsing for vector text
 ttf-parser = "0.24"
 
@@ -32,7 +38,7 @@ anyhow = "1.0"
 
 [features]
 default = []
-windowed = ["dep:winit"]
+windowed = ["dep:winit", "dep:sysinfo", "dep:nvml-wrapper"]
 web = []
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

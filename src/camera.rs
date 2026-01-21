@@ -1,15 +1,12 @@
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 
 /// Fly camera with game-style WASD + mouse look controls
+/// Uses quaternion for orientation - all rotations are camera-relative
 pub struct FlyCamera {
     /// World position
     pub position: Vec3,
-    /// Horizontal angle (radians, 0 = looking along -Z)
-    pub yaw: f32,
-    /// Vertical angle (radians, clamped to ±89°)
-    pub pitch: f32,
-    /// Roll angle (radians, optional tilt)
-    pub roll: f32,
+    /// Camera orientation (quaternion)
+    pub orientation: Quat,
     /// Field of view (radians)
     pub fov: f32,
     /// Near clip plane
@@ -26,9 +23,7 @@ impl Default for FlyCamera {
     fn default() -> Self {
         Self {
             position: Vec3::new(0.0, 0.0, 4.0),
-            yaw: 0.0,
-            pitch: 0.0,
-            roll: 0.0,
+            orientation: Quat::IDENTITY,
             fov: std::f32::consts::FRAC_PI_4, // 45 degrees
             near: 0.1,
             far: 100.0,
@@ -45,30 +40,19 @@ impl FlyCamera {
         Self::default()
     }
 
-    /// Compute forward direction vector (where camera is looking)
+    /// Forward direction (where camera looks)
     pub fn forward(&self) -> Vec3 {
-        Vec3::new(
-            self.yaw.sin() * self.pitch.cos(),
-            self.pitch.sin(),
-            -self.yaw.cos() * self.pitch.cos(),
-        )
-        .normalize()
+        self.orientation * -Vec3::Z
     }
 
-    /// Compute right direction vector (respects roll)
+    /// Right direction
     pub fn right(&self) -> Vec3 {
-        let base_right = self.forward().cross(Vec3::Y).normalize();
-        if self.roll.abs() > 0.0001 {
-            let roll_rotation = Mat4::from_axis_angle(self.forward(), self.roll);
-            roll_rotation.transform_vector3(base_right).normalize()
-        } else {
-            base_right
-        }
+        self.orientation * Vec3::X
     }
 
-    /// Compute up direction vector (camera-relative, respects roll)
+    /// Up direction
     pub fn up(&self) -> Vec3 {
-        self.right().cross(self.forward()).normalize()
+        self.orientation * Vec3::Y
     }
 
     /// Get current position
@@ -78,8 +62,7 @@ impl FlyCamera {
 
     /// Compute view matrix (world -> camera space)
     pub fn view_matrix(&self) -> Mat4 {
-        let target = self.position + self.forward();
-        Mat4::look_at_rh(self.position, target, self.up())
+        Mat4::look_at_rh(self.position, self.position + self.forward(), self.up())
     }
 
     /// Compute projection matrix
@@ -97,22 +80,29 @@ impl FlyCamera {
         self.view_projection_matrix(aspect_ratio).inverse()
     }
 
-    /// Handle mouse look (raw delta, no button required)
+    /// Handle mouse look - yaw around world Y, pitch around local right
     pub fn look(&mut self, dx: f32, dy: f32) {
-        self.yaw += dx * self.look_sensitivity;
-        self.pitch -= dy * self.look_sensitivity;
-        // Clamp pitch to avoid gimbal lock (±89 degrees)
-        self.pitch = self.pitch.clamp(-1.553, 1.553);
+        // Yaw: rotate around WORLD up (keeps horizon level, no roll drift)
+        let yaw_rot = Quat::from_axis_angle(Vec3::Y, -dx * self.look_sensitivity);
+        // Pitch: rotate around camera's local right axis
+        let pitch_rot = Quat::from_axis_angle(self.right(), -dy * self.look_sensitivity);
+
+        self.orientation = (yaw_rot * pitch_rot * self.orientation).normalize();
     }
 
-    /// Roll camera (Q/E keys)
+    /// Roll camera (Q/E keys) - rotates around forward axis
     pub fn roll_camera(&mut self, delta: f32) {
-        self.roll += delta;
+        let roll_rot = Quat::from_axis_angle(self.forward(), delta);
+        self.orientation = (roll_rot * self.orientation).normalize();
     }
 
-    /// Reset roll to horizontal
+    /// Reset roll to horizontal (aligns up with world Y)
     pub fn reset_roll(&mut self) {
-        self.roll = 0.0;
+        // Extract yaw and pitch from current orientation, reset roll
+        let forward = self.forward();
+        let yaw = forward.x.atan2(-forward.z);
+        let pitch = forward.y.asin();
+        self.orientation = Quat::from_rotation_y(-yaw) * Quat::from_rotation_x(pitch);
     }
 
     /// Move forward/backward (W/S keys)
@@ -121,10 +111,13 @@ impl FlyCamera {
         self.position += self.forward() * dir * self.move_speed * delta_time;
     }
 
-    /// Strafe left/right (A/D keys)
+    /// Strafe left/right (A/D keys) - always horizontal
     pub fn move_right(&mut self, delta_time: f32, right: bool) {
         let dir = if right { 1.0 } else { -1.0 };
-        self.position += self.right() * dir * self.move_speed * delta_time;
+        // Project right vector onto horizontal plane for strafing
+        let r = self.right();
+        let horiz_right = Vec3::new(r.x, 0.0, r.z).normalize_or_zero();
+        self.position += horiz_right * dir * self.move_speed * delta_time;
     }
 
     /// Move up/down (Space/Ctrl keys) - camera-relative
@@ -138,20 +131,30 @@ impl FlyCamera {
         self.move_speed = (self.move_speed + delta * 0.5).clamp(0.5, 50.0);
     }
 
-    /// Reset camera to default position
+    /// Reset camera to default position and orientation
     pub fn reset(&mut self) {
         self.position = Vec3::new(0.0, 0.0, 4.0);
-        self.yaw = 0.0;
-        self.pitch = 0.0;
-        self.roll = 0.0;
+        self.orientation = Quat::IDENTITY;
         self.move_speed = 3.0;
     }
 
     /// Point the camera at a target position
     pub fn look_at(&mut self, target: Vec3) {
         let dir = (target - self.position).normalize();
-        self.yaw = dir.x.atan2(-dir.z);
-        self.pitch = dir.y.asin().clamp(-1.553, 1.553);
+        let yaw = dir.x.atan2(-dir.z);
+        let pitch = dir.y.asin();
+        self.orientation = Quat::from_rotation_y(-yaw) * Quat::from_rotation_x(pitch);
+    }
+
+    /// Get yaw angle (for debug display)
+    pub fn yaw(&self) -> f32 {
+        let forward = self.forward();
+        forward.x.atan2(-forward.z)
+    }
+
+    /// Get pitch angle (for debug display)
+    pub fn pitch(&self) -> f32 {
+        self.forward().y.asin()
     }
 }
 

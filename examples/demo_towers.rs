@@ -116,9 +116,10 @@ fn run_windowed() -> anyhow::Result<()> {
             let shader_module = sdf_towers::create_shader_module_embed_source(&device);
 
             // Camera config: positioned higher and further back for cityscape view
+            // Looking at ground-level center of city (towers are 7x7 grid from -3 to 3)
             let camera_config = CameraConfig {
                 initial_position: glam::Vec3::new(4.0, 6.0, 10.0),
-                look_at_target: glam::Vec3::new(0.0, 2.0, 0.0),
+                look_at_target: glam::Vec3::new(0.0, 0.0, 0.0),
             };
             let input = InputHandler::new(camera_config);
 
@@ -318,8 +319,11 @@ fn run_windowed() -> anyhow::Result<()> {
                                 InputAction::ToggleCapture => {
                                     renderer.input.toggle_capture(&renderer.window);
                                 }
-                                InputAction::ToggleDebugOverlay => {
-                                    renderer.input.toggle_debug_overlay();
+                                InputAction::ToggleOverlayApp => {
+                                    renderer.input.toggle_overlay_app();
+                                }
+                                InputAction::ToggleOverlayFull => {
+                                    renderer.input.toggle_overlay_full();
                                 }
                                 InputAction::ResetRoll => {
                                     renderer.input.reset_roll(&mut renderer.camera);
@@ -333,6 +337,13 @@ fn run_windowed() -> anyhow::Result<()> {
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
                     renderer.input.handle_scroll(&mut renderer.camera, delta);
+                }
+                WindowEvent::MouseInput {
+                    state: winit::event::ElementState::Pressed,
+                    button: winit::event::MouseButton::Left,
+                    ..
+                } => {
+                    renderer.input.capture(&renderer.window);
                 }
                 WindowEvent::Resized(size) => renderer.resize(size),
                 WindowEvent::RedrawRequested => {

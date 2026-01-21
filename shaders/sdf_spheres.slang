@@ -59,15 +59,17 @@ Hit mapScene(float3 p) {
     result = opUnionHit(result, ground);
 
     // Animated spheres in a grid pattern
+    float sphereRadius = 0.4;
     for (int i = -2; i <= 2; i++) {
         for (int j = -2; j <= 2; j++) {
             float3 offset = float3(i * 1.2, 0.0, j * 1.2);
             // Bounce uses abs(sin) so spheres only go UP, never below ground
-            float bounce = abs(sin(time * 2.0 + float(i + j) * 0.5)) * 0.5;
-            float3 spherePos = p - offset - float3(0, bounce + 0.4, 0);  // +0.4 keeps sphere above ground
+            // Ground is at y = -0.5, so sphere center at rest should be at -0.5 + radius = -0.1
+            float bounce = abs(sin(time * 2.0 + float(i + j) * 0.5)) * 0.8;
+            float3 spherePos = p - offset - float3(0, bounce - 0.1, 0);
 
             Hit sphere;
-            sphere.dist = sdSphere(spherePos, 0.4);
+            sphere.dist = sdSphere(spherePos, sphereRadius);
             sphere.materialId = 2 + ((i + 2) * 5 + (j + 2)) % 6;
             result = opUnionHit(result, sphere);
         }
