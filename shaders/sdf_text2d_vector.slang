@@ -3,8 +3,8 @@
 
 struct Uniforms {
     float2 screenSize;
-    float2 padding;
-    float4 textParams;   // x = charCount, y = scale, z = offsetY, w = reserved
+    float2 offset;       // pan offset in pixels (x, y)
+    float4 textParams;   // x = charCount, y = scale, z = unused, w = unused
 };
 
 // Grid cell structure
@@ -298,11 +298,19 @@ float4 fs_main(VertexOutput input) : SV_Target {
     // Convert UV to pixel coordinates, flip Y to match font coordinate system
     float2 pixelPos = float2(input.uv.x, 1.0 - input.uv.y) * uniforms.screenSize;
 
+    // Apply pan/zoom transform around screen center
+    float2 center = uniforms.screenSize * 0.5;
+    float scale = uniforms.textParams.y;
+    float2 offset = uniforms.offset;
+
+    // Transform: zoom around center, then apply offset
+    pixelPos = (pixelPos - center) / scale + center + offset;
+
     // Compute SDF
     float d = sdText(pixelPos);
 
-    // Anti-aliasing
-    float aa = 1.0; // 1 pixel anti-alias
+    // Anti-aliasing (scale-aware for sharper text when zoomed in)
+    float aa = 1.0 / scale;
     float alpha = smoothstep(aa, -aa, d);
 
     // Text color (white on dark background)

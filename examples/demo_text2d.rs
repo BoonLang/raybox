@@ -19,6 +19,7 @@ use text::{VectorFont, VectorFontAtlas};
 
 use anyhow::{Context, Result};
 use bytemuck::{Pod, Zeroable};
+use std::collections::HashSet;
 use wgpu::util::DeviceExt;
 
 // ~175 words per paragraph
@@ -179,6 +180,11 @@ fn run_windowed() -> Result<()> {
         uniform_buffer: wgpu::Buffer,
         bind_group: wgpu::BindGroup,
         char_count: u32,
+        // Pan/zoom state
+        pressed_keys: HashSet<KeyCode>,
+        offset: [f32; 2],
+        scale: f32,
+        last_frame: std::time::Instant,
     }
 
     impl Renderer {
@@ -501,6 +507,10 @@ fn run_windowed() -> Result<()> {
                 uniform_buffer,
                 bind_group,
                 char_count,
+                pressed_keys: HashSet::new(),
+                offset: [0.0, 0.0],
+                scale: 1.0,
+                last_frame: std::time::Instant::now(),
             })
         }
 
@@ -544,15 +554,59 @@ fn run_windowed() -> Result<()> {
                 self.config.width = new_size.width;
                 self.config.height = new_size.height;
                 self.surface.configure(&self.device, &self.config);
-
-                // Update screen size uniform
-                let uniforms = Uniforms {
-                    screen_size: [new_size.width as f32, new_size.height as f32],
-                    padding: [0.0, 0.0],
-                    text_params: [self.char_count as f32, 1.0, 0.0, 0.0],
-                };
-                self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+                self.update_uniforms();
             }
+        }
+
+        fn update(&mut self) {
+            let now = std::time::Instant::now();
+            let dt = now.duration_since(self.last_frame).as_secs_f32();
+            self.last_frame = now;
+
+            let pan_speed = 200.0 * dt * self.scale;
+            let zoom_speed = 1.5 * dt;
+
+            // W/S = zoom in/out
+            if self.pressed_keys.contains(&KeyCode::KeyW) {
+                self.scale *= 1.0 + zoom_speed;
+            }
+            if self.pressed_keys.contains(&KeyCode::KeyS) {
+                self.scale *= 1.0 - zoom_speed;
+            }
+            self.scale = self.scale.clamp(0.1, 10.0);
+
+            // A/D = pan left/right
+            if self.pressed_keys.contains(&KeyCode::KeyA) {
+                self.offset[0] += pan_speed;
+            }
+            if self.pressed_keys.contains(&KeyCode::KeyD) {
+                self.offset[0] -= pan_speed;
+            }
+
+            // Space/Ctrl = pan up/down
+            if self.pressed_keys.contains(&KeyCode::Space) {
+                self.offset[1] += pan_speed;
+            }
+            if self.pressed_keys.contains(&KeyCode::ControlLeft) || self.pressed_keys.contains(&KeyCode::ControlRight) {
+                self.offset[1] -= pan_speed;
+            }
+
+            self.update_uniforms();
+        }
+
+        fn update_uniforms(&self) {
+            let uniforms = Uniforms {
+                screen_size: [self.config.width as f32, self.config.height as f32],
+                padding: self.offset,
+                text_params: [self.char_count as f32, self.scale, 0.0, 0.0],
+            };
+            self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        }
+
+        fn reset(&mut self) {
+            self.offset = [0.0, 0.0];
+            self.scale = 1.0;
+            self.update_uniforms();
         }
     }
 
@@ -564,7 +618,7 @@ fn run_windowed() -> Result<()> {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             if self.renderer.is_none() {
                 let window_attrs = Window::default_attributes()
-                    .with_title("Demo 4: 2D Vector SDF Text | Esc to quit")
+                    .with_title("Demo 4: 2D Vector SDF Text | W/S zoom, A/D pan X, Space/Ctrl pan Y, R reset, Esc quit")
                     .with_inner_size(winit::dpi::PhysicalSize::new(WIDTH, TEXT_WINDOW_HEIGHT));
 
                 let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
@@ -589,15 +643,33 @@ fn run_windowed() -> Result<()> {
             match event {
                 WindowEvent::CloseRequested => event_loop.exit(),
                 WindowEvent::KeyboardInput { event, .. } => {
-                    if let PhysicalKey::Code(KeyCode::Escape) = event.physical_key {
+                    if let PhysicalKey::Code(code) = event.physical_key {
+                        // Track pressed/released keys
+                        match event.state {
+                            ElementState::Pressed => {
+                                renderer.pressed_keys.insert(code);
+                            }
+                            ElementState::Released => {
+                                renderer.pressed_keys.remove(&code);
+                            }
+                        }
+
+                        // Handle single-press actions
                         if event.state == ElementState::Pressed {
-                            event_loop.exit();
-                            return;
+                            match code {
+                                KeyCode::KeyR | KeyCode::KeyT => renderer.reset(),
+                                KeyCode::Escape => {
+                                    event_loop.exit();
+                                    return;
+                                }
+                                _ => {}
+                            }
                         }
                     }
                 }
                 WindowEvent::Resized(size) => renderer.resize(size),
                 WindowEvent::RedrawRequested => {
+                    renderer.update();
                     if let Err(e) = renderer.render() {
                         eprintln!("Render error: {:?}", e);
                     }

@@ -80,13 +80,21 @@ impl FlyCamera {
         self.view_projection_matrix(aspect_ratio).inverse()
     }
 
-    /// Handle mouse look - yaw around world Y, pitch around local right
+    /// Handle mouse look - screen-relative using local axis rotations
+    ///
+    /// Uses pure local axis rotations which naturally produce screen-relative
+    /// controls regardless of roll angle. No complex compensation needed.
+    ///
+    /// Note: Continuous circular mouse movements can accumulate small roll drift.
+    /// Press R to reset roll if needed.
     pub fn look(&mut self, dx: f32, dy: f32) {
-        // Yaw: rotate around WORLD up (keeps horizon level, no roll drift)
-        let yaw_rot = Quat::from_axis_angle(Vec3::Y, -dx * self.look_sensitivity);
-        // Pitch: rotate around camera's local right axis
+        // Yaw: rotate around camera's LOCAL up axis
+        let yaw_rot = Quat::from_axis_angle(self.up(), -dx * self.look_sensitivity);
+
+        // Pitch: rotate around camera's LOCAL right axis
         let pitch_rot = Quat::from_axis_angle(self.right(), -dy * self.look_sensitivity);
 
+        // Apply both rotations
         self.orientation = (yaw_rot * pitch_rot * self.orientation).normalize();
     }
 
