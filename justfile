@@ -12,7 +12,8 @@ ex num:
         4) cargo run --example demo_text2d --features windowed ;;
         5) cargo run --example demo_clay --features windowed ;;
         6) cargo run --example demo_text_shadow --features windowed ;;
-        *) echo "Unknown example {{num}}. Available: 1 (objects), 2 (spheres), 3 (towers), 4 (text2d), 5 (clay tablet), 6 (text shadow)" ;;
+        7) echo "Windowed mode not available for demo_text_vector_3d" ;;
+        *) echo "Unknown example {{num}}. Available: 1-6 (windowed), 7 (vector 3D, screenshot only)" ;;
     esac
 
 # Run example screenshot by number: just ex_screenshot 4
@@ -24,7 +25,9 @@ ex_screenshot num:
         3) cargo run --example demo_towers ;;
         4) cargo run --example demo_text2d ;;
         5) cargo run --example demo_clay ;;
-        *) echo "Unknown example {{num}}. Available: 1 (objects), 2 (spheres), 3 (towers), 4 (text2d), 5 (clay tablet)" ;;
+        6) cargo run --example demo_text_shadow ;;
+        7) cargo run --example demo_text_vector_3d ;;
+        *) echo "Unknown example {{num}}. Available: 1-7 (screenshot mode)" ;;
     esac
 
 # Build WASM and generate bindings

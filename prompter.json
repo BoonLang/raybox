@@ -1,10 +1,11 @@
 {
-  "instance_label": null,
+  "instance_label": "RayBox",
   "port": 4666,
   "command": [
     "cl"
   ],
-  "supervisor_prompt": "",
+  "store_prompts": null,
+  "supervisor_prompt": "Do not stop until plan is complete and examples 4 (2d text), 5 (3d relief), 6 (3d text) works and text is readable (honestly review their screenshots with a subagents). Use long texr and title from example 4 for examples 5 and 6. Update justfile to have command 'just ex_screenshot [0-6]' working similarly to 'just screenshot'. All text examples have to use new architecture and have title and long text (1000 words)",
   "completion_condition": "+completed+",
   "completion_command": null,
   "protected_patterns": [],

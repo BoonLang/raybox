@@ -80,6 +80,41 @@ fn main() -> Result<()> {
                 ("fs_main", "fragment"),
             ],
         },
+        ShaderConfig {
+            name: "sdf_text_vector",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
+        ShaderConfig {
+            name: "sdf_text_vector_3d",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
+        ShaderConfig {
+            name: "sdf_clay_vector",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
+        ShaderConfig {
+            name: "sdf_text_shadow_vector",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
+        ShaderConfig {
+            name: "sdf_text2d_vector",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
     ];
 
     for shader in &shaders {

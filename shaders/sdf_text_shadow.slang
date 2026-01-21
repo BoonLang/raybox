@@ -62,25 +62,40 @@ float sampleMsdf(float2 uv) {
 }
 
 // Get UV for a character in the atlas
-// Atlas is 10x10 grid of 64x64 glyphs (for ASCII 32-126)
-// 640x640 total size, yOrigin is bottom
+// Atlas coordinates from atlas.json with yOrigin=bottom, 640x640 texture
+// For "RAYBOX" characters, using actual atlasBounds from JSON
 float2 getGlyphUV(int charCode, float2 localUV) {
-    int glyphIndex = charCode - 32;
-    if (glyphIndex < 0 || glyphIndex >= 95) {
+    // Atlas bounds (in pixels) for each character
+    // Format: float4(left, bottom, right, top) where y=0 is at bottom of image
+    float4 bounds;
+    if (charCode == 82) { // R
+        bounds = float4(576.5, 320.5, 639.5, 383.5);
+    } else if (charCode == 65) { // A
+        bounds = float4(128.5, 384.5, 191.5, 447.5);
+    } else if (charCode == 89) { // Y
+        bounds = float4(384.5, 256.5, 447.5, 319.5);
+    } else if (charCode == 66) { // B
+        bounds = float4(192.5, 384.5, 255.5, 447.5);
+    } else if (charCode == 79) { // O
+        bounds = float4(384.5, 320.5, 447.5, 383.5);
+    } else if (charCode == 88) { // X
+        bounds = float4(320.5, 256.5, 383.5, 319.5);
+    } else {
         return float2(-1, -1);
     }
 
-    float glyphsPerRow = 10.0;
-    float col = float(glyphIndex % 10);
-    float row = float(glyphIndex / 10);
+    // Convert to normalized UV (0-1)
+    float atlasSize = 640.0;
+    float2 uvMin = bounds.xy / atlasSize;
+    float2 uvMax = bounds.zw / atlasSize;
 
-    float cellSize = 1.0 / glyphsPerRow;
-
-    // Map local UV [0,1] to glyph cell in atlas
-    // yOrigin is bottom, so row 0 is at top of texture (flip Y)
+    // Map local UV [0,1] to glyph bounds
+    // wgpu has y=0 at TOP, atlas has y=0 at BOTTOM, so flip Y
     float2 atlasUV;
-    atlasUV.x = (col + localUV.x) * cellSize;
-    atlasUV.y = 1.0 - (row + 1.0 - localUV.y) * cellSize;
+    atlasUV.x = lerp(uvMin.x, uvMax.x, localUV.x);
+    // localUV.y=0 is bottom of our text, should map to bottom of glyph (uvMin.y)
+    // After flipping for wgpu: bottom of glyph is at 1.0 - uvMin.y
+    atlasUV.y = 1.0 - lerp(uvMin.y, uvMax.y, 1.0 - localUV.y);
 
     return atlasUV;
 }
@@ -118,11 +133,14 @@ float sdText2D(float2 p) {
         float2 localP = p - float2(xPos + charWidth * 0.5, charHeight * 0.5);
         float2 localUV = localP / float2(charWidth, charHeight) + 0.5;
 
-        float2 atlasUV = getGlyphUV(charCode, localUV);
-        if (atlasUV.x >= 0.0) {
-            float charDist = sampleMsdf(atlasUV);
-            charDist *= charHeight / uniforms.atlasParams.z;
-            d = min(d, charDist);
+        // Only sample if within character bounding box
+        if (localUV.x >= 0.0 && localUV.x <= 1.0 && localUV.y >= 0.0 && localUV.y <= 1.0) {
+            float2 atlasUV = getGlyphUV(charCode, localUV);
+            if (atlasUV.x >= 0.0) {
+                float charDist = sampleMsdf(atlasUV);
+                charDist *= charHeight / uniforms.atlasParams.z;
+                d = min(d, charDist);
+            }
         }
 
         xPos += charWidth + 0.05;
@@ -133,11 +151,11 @@ float sdText2D(float2 p) {
 
 // 3D extruded text
 float sdText3D(float3 p, float depth) {
-    // Text is on XZ plane, Y is up
-    float d2d = sdText2D(float2(p.x, -p.z));
+    // Text is on XY plane (vertical), facing camera, Z is depth
+    float d2d = sdText2D(float2(p.x, -p.y));
 
-    // Extrusion with rounded edges
-    float extrusion = abs(p.y - depth * 0.5) - depth * 0.5;
+    // Extrusion along Z axis
+    float extrusion = abs(p.z) - depth * 0.5;
 
     // Combine 2D shape with extrusion
     return max(d2d, extrusion);
@@ -164,9 +182,9 @@ Hit mapScene(float3 p) {
     ground.materialId = 1;
     result = opUnionHit(result, ground);
 
-    // Floating 3D text
+    // Floating 3D text (vertical, facing camera)
     Hit text;
-    float3 textP = p - float3(0, 0.6, 0.3);  // Float above ground
+    float3 textP = p - float3(0, 0.25, 0);  // Centered at origin, slightly raised
     text.dist = sdText3D(textP, 0.15);
     text.materialId = 2;
     result = opUnionHit(result, text);
