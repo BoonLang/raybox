@@ -310,12 +310,52 @@ float opExtrusion(float sdf2d, float zDist, float depth) {
     return min(max(w.x, w.y), 0.0) + length(max(w, 0.0));
 }
 
-// 3D extruded text for relief carving
+// 3D extruded text for relief carving with per-character extrusion
+// Each character is extruded independently, then all are unioned (fixes "cut" artifacts)
 float sdTextRelief(float3 p, float depth) {
-    // Text on XZ plane (horizontal tablet surface)
-    // Negate Z so text reads correctly when viewed from +Z direction
-    float d2d = sdText2D(float2(p.x, -p.z));
-    return opExtrusion(d2d, p.y, depth * 0.5);
+    float minDist = 1e10;
+    float minBoxDist = 1e10;
+    uint charCount = uint(uniforms.textParams.x);
+    float halfDepth = depth * 0.5;
+
+    for (uint i = 0; i < charCount && i < MAX_CHARS; i++) {
+        CharInstance ch = charInstances[i];
+        float2 charPos = ch.posAndChar.xy;
+        float charScale = ch.posAndChar.z;
+        uint glyphIdx = uint(ch.posAndChar.w);
+
+        GlyphData glyph = glyphData[glyphIdx];
+        float4 bounds = glyph.bounds;
+
+        // Compute distance to character's 3D bounding box (on XZ plane)
+        // Text on XZ plane: X is horizontal, Z is vertical (negated), Y is depth
+        float2 glyphMin2D = charPos + float2(bounds.x, bounds.y) * charScale;
+        float2 glyphMax2D = charPos + float2(bounds.z, bounds.w) * charScale;
+        float3 boxMin = float3(glyphMin2D.x, -halfDepth, -glyphMax2D.y);
+        float3 boxMax = float3(glyphMax2D.x, halfDepth, -glyphMin2D.y);
+        float3 boxCenter = (boxMin + boxMax) * 0.5;
+        float3 boxHalf = (boxMax - boxMin) * 0.5;
+        float boxDist = sdBox(p - boxCenter, boxHalf);
+
+        minBoxDist = min(minBoxDist, boxDist);
+
+        if (boxDist > minDist + 0.1) continue;
+
+        // Transform to glyph local 2D coordinates (text on XZ plane, Z negated)
+        float2 localP = (float2(p.x, -p.z) - charPos) / charScale;
+
+        if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
+            localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
+            float d2d = sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScale;
+            float d3d = opExtrusion(d2d, p.y, halfDepth);
+            minDist = min(minDist, d3d);
+        }
+    }
+
+    if (minDist < 1e9) {
+        return minDist;
+    }
+    return minBoxDist;
 }
 
 struct Hit {

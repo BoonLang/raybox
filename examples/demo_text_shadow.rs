@@ -16,7 +16,7 @@ mod shader_bindings {
     include!(concat!(env!("OUT_DIR"), "/shader_bindings.rs"));
 }
 
-use camera::OrbitalCamera;
+use camera::FlyCamera;
 use constants::{HEIGHT, WIDTH};
 use text::{VectorFont, VectorFontAtlas};
 
@@ -43,21 +43,16 @@ impl Default for Uniforms {
             inv_view_proj: [[0.0; 4]; 4],
             camera_pos_time: [0.0, 0.5, 3.0, 0.0],
             light_dir_intensity: [0.4, 0.8, 0.5, 1.3], // Light from upper-right
-            render_params: [WIDTH as f32, HEIGHT as f32, 0.15, 1.0], // depth = 0.15 for thicker text
+            render_params: [WIDTH as f32, HEIGHT as f32, 0.15, 1.0], // depth = 0.15 for text extrusion
             text_params: [0.0, 0.0, 0.4, 0.0],
         }
     }
 }
 
 impl Uniforms {
-    fn update_from_camera(&mut self, camera: &OrbitalCamera, width: u32, height: u32, time: f32) {
+    fn update_from_camera(&mut self, camera: &FlyCamera, width: u32, height: u32, time: f32) {
         let aspect = width as f32 / height as f32;
-        let view = camera.view_matrix();
-        let proj = glam::Mat4::perspective_rh(45.0_f32.to_radians(), aspect, 0.1, 100.0);
-        let view_proj = proj * view;
-        let inv_view_proj = view_proj.inverse();
-
-        self.inv_view_proj = inv_view_proj.to_cols_array_2d();
+        self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
         self.camera_pos_time = [
             camera.position().x,
             camera.position().y,
@@ -105,13 +100,13 @@ struct GpuCharInstance {
 fn build_shadow_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstance> {
     let mut instances = Vec::new();
 
-    // Generate text content
+    // Generate text content with title and Lorem ipsum
     let full_text = format!(
         "VECTOR SDF TEXT\n\n{}",
         format!("{} {} {}", LOREM, LOREM, LOREM)
     );
 
-    let scale = 0.12; // Larger character scale for cleaner rendering
+    let scale = 0.12; // Character scale for cleaner rendering
     let line_height = 0.18;
     let margin = 0.1;
 
@@ -201,7 +196,7 @@ fn run_windowed() -> Result<()> {
     use std::sync::Arc;
     use winit::{
         application::ApplicationHandler,
-        event::{ElementState, KeyEvent, WindowEvent},
+        event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent},
         event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
         keyboard::{KeyCode, PhysicalKey},
         window::{Window, WindowId},
@@ -216,10 +211,12 @@ fn run_windowed() -> Result<()> {
         pipeline: wgpu::RenderPipeline,
         uniform_buffer: wgpu::Buffer,
         bind_group: wgpu::BindGroup,
-        camera: OrbitalCamera,
+        camera: FlyCamera,
         pressed_keys: HashSet<KeyCode>,
         start_time: std::time::Instant,
+        last_frame_time: std::time::Instant,
         char_count: u32,
+        mouse_captured: bool,
     }
 
     impl Renderer {
@@ -327,11 +324,9 @@ fn run_windowed() -> Result<()> {
                 })
                 .collect();
 
-            // Create buffers - camera looks straight at text from front
-            let mut camera = OrbitalCamera::default();
-            camera.distance = 3.5;
-            camera.elevation = 0.0; // No vertical angle - look straight ahead
-            camera.azimuth = 0.0;
+            // Create buffers - fly camera starts in front of text
+            let mut camera = FlyCamera::default();
+            camera.position = glam::Vec3::new(0.0, 0.0, 3.5);
 
             let mut uniforms = Uniforms::default();
             uniforms.update_from_camera(&camera, WIDTH, HEIGHT, 0.0);
@@ -547,31 +542,79 @@ fn run_windowed() -> Result<()> {
                 camera,
                 pressed_keys: HashSet::new(),
                 start_time: std::time::Instant::now(),
+                last_frame_time: std::time::Instant::now(),
                 char_count,
+                mouse_captured: false,
             })
         }
 
-        fn update(&mut self) {
-            const ROTATION_SPEED: f32 = 0.03;
-            const ZOOM_SPEED: f32 = 0.1;
+        fn toggle_mouse_capture(&mut self) {
+            use winit::window::CursorGrabMode;
+            self.mouse_captured = !self.mouse_captured;
+            if self.mouse_captured {
+                // Try Locked first (best for FPS), fall back to Confined
+                if self.window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
+                    let _ = self.window.set_cursor_grab(CursorGrabMode::Confined);
+                }
+                self.window.set_cursor_visible(false);
+            } else {
+                let _ = self.window.set_cursor_grab(CursorGrabMode::None);
+                self.window.set_cursor_visible(true);
+            }
+        }
 
-            if self.pressed_keys.contains(&KeyCode::KeyA) {
-                self.camera.rotate_horizontal(-ROTATION_SPEED);
+        fn handle_device_event(&mut self, event: &winit::event::DeviceEvent) {
+            use winit::event::DeviceEvent;
+            if self.mouse_captured {
+                if let DeviceEvent::MouseMotion { delta } = event {
+                    self.camera.look(delta.0 as f32, delta.1 as f32);
+                }
             }
-            if self.pressed_keys.contains(&KeyCode::KeyD) {
-                self.camera.rotate_horizontal(ROTATION_SPEED);
-            }
+        }
+
+        fn handle_scroll(&mut self, delta: MouseScrollDelta) {
+            let scroll = match delta {
+                MouseScrollDelta::LineDelta(_, y) => y,
+                MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.02,
+            };
+            self.camera.adjust_speed(scroll);
+        }
+
+        fn update(&mut self) {
+            let now = std::time::Instant::now();
+            let dt = (now - self.last_frame_time).as_secs_f32();
+            self.last_frame_time = now;
+
+            // WASD movement
             if self.pressed_keys.contains(&KeyCode::KeyW) {
-                self.camera.zoom(ZOOM_SPEED);
+                self.camera.move_forward(dt, true);
             }
             if self.pressed_keys.contains(&KeyCode::KeyS) {
-                self.camera.zoom(-ZOOM_SPEED);
+                self.camera.move_forward(dt, false);
             }
+            if self.pressed_keys.contains(&KeyCode::KeyA) {
+                self.camera.move_right(dt, false);
+            }
+            if self.pressed_keys.contains(&KeyCode::KeyD) {
+                self.camera.move_right(dt, true);
+            }
+
+            // Up/Down movement (Space/Ctrl or C)
+            if self.pressed_keys.contains(&KeyCode::Space) {
+                self.camera.move_up(dt, true);
+            }
+            if self.pressed_keys.contains(&KeyCode::ControlLeft)
+                || self.pressed_keys.contains(&KeyCode::ControlRight)
+                || self.pressed_keys.contains(&KeyCode::KeyC) {
+                self.camera.move_up(dt, false);
+            }
+
+            // Roll (Q/E)
             if self.pressed_keys.contains(&KeyCode::KeyQ) {
-                self.camera.rotate_vertical(ROTATION_SPEED);
+                self.camera.roll_camera(-dt * 2.0);
             }
             if self.pressed_keys.contains(&KeyCode::KeyE) {
-                self.camera.rotate_vertical(-ROTATION_SPEED);
+                self.camera.roll_camera(dt * 2.0);
             }
         }
 
@@ -643,7 +686,7 @@ fn run_windowed() -> Result<()> {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             if self.renderer.is_none() {
                 let window_attrs = Window::default_attributes()
-                    .with_title("Demo 6: Floating 3D Text with Shadows (A/D: rotate, W/S: zoom, Q/E: tilt)")
+                    .with_title("Demo 6: 3D Text | WASD: move, Space/C: up/down, Mouse: look, Tab: capture, R: reset")
                     .with_inner_size(winit::dpi::PhysicalSize::new(WIDTH, HEIGHT));
 
                 let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
@@ -662,19 +705,49 @@ fn run_windowed() -> Result<()> {
             self.renderer.take();
         }
 
+        fn device_event(
+            &mut self,
+            _event_loop: &ActiveEventLoop,
+            _device_id: winit::event::DeviceId,
+            event: winit::event::DeviceEvent,
+        ) {
+            if let Some(renderer) = self.renderer.as_mut() {
+                renderer.handle_device_event(&event);
+            }
+        }
+
         fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
             let Some(renderer) = self.renderer.as_mut() else { return };
 
             match event {
                 WindowEvent::CloseRequested => event_loop.exit(),
                 WindowEvent::KeyboardInput { event, .. } => {
-                    if let PhysicalKey::Code(KeyCode::Escape) = event.physical_key {
+                    if let PhysicalKey::Code(key_code) = event.physical_key {
                         if event.state == ElementState::Pressed {
-                            event_loop.exit();
-                            return;
+                            match key_code {
+                                KeyCode::Escape => {
+                                    // Release mouse if captured, otherwise exit
+                                    if renderer.mouse_captured {
+                                        renderer.toggle_mouse_capture();
+                                    } else {
+                                        event_loop.exit();
+                                    }
+                                    return;
+                                }
+                                KeyCode::Tab => {
+                                    renderer.toggle_mouse_capture();
+                                }
+                                KeyCode::Home | KeyCode::KeyR => {
+                                    renderer.camera.reset();
+                                }
+                                _ => {}
+                            }
                         }
                     }
                     renderer.handle_key(event);
+                }
+                WindowEvent::MouseWheel { delta, .. } => {
+                    renderer.handle_scroll(delta);
                 }
                 WindowEvent::Resized(size) => renderer.resize(size),
                 WindowEvent::RedrawRequested => {
@@ -814,11 +887,9 @@ fn run_headless_screenshot() -> Result<()> {
         })
         .collect();
 
-    // Create buffers - camera looks straight at text from front
-    let mut camera = OrbitalCamera::default();
-    camera.distance = 2.5;
-    camera.elevation = 0.0; // No vertical angle - look straight ahead
-    camera.azimuth = 0.0;
+    // Create buffers - fly camera starts in front of text
+    let mut camera = FlyCamera::default();
+    camera.position = glam::Vec3::new(0.0, 0.0, 2.5);
 
     let mut uniforms = Uniforms::default();
     uniforms.update_from_camera(&camera, width, height, 0.0);

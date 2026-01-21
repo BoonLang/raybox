@@ -304,11 +304,60 @@ float opExtrusion(float sdf2d, float zDist, float depth) {
     return min(max(w.x, w.y), 0.0) + length(max(w, 0.0));
 }
 
-// 3D extruded text (vertical, on XY plane)
+// 3D extruded text with per-character extrusion (fixes "cut" artifacts)
+// Each character is extruded independently, then all are unioned
 float sdText3D(float3 p, float depth) {
-    // Text is on XY plane (vertical), facing camera, Z is depth
-    float d2d = sdText2D(float2(p.x, p.y));
-    return opExtrusion(d2d, p.z, depth * 0.5);
+    float minDist = 1e10;
+    float minBoxDist = 1e10;  // Track minimum 3D bounding box distance as fallback
+    uint charCount = uint(uniforms.textParams.x);
+    float halfDepth = depth * 0.5;
+
+    for (uint i = 0; i < charCount && i < MAX_CHARS; i++) {
+        CharInstance ch = charInstances[i];
+        float2 charPos = ch.posAndChar.xy;
+        float charScale = ch.posAndChar.z;
+        uint glyphIdx = uint(ch.posAndChar.w);
+
+        GlyphData glyph = glyphData[glyphIdx];
+        float4 bounds = glyph.bounds;
+
+        // Compute distance to character's 3D bounding box
+        float2 glyphMin2D = charPos + float2(bounds.x, bounds.y) * charScale;
+        float2 glyphMax2D = charPos + float2(bounds.z, bounds.w) * charScale;
+        float3 boxMin = float3(glyphMin2D, -halfDepth);
+        float3 boxMax = float3(glyphMax2D, halfDepth);
+        float3 boxCenter = (boxMin + boxMax) * 0.5;
+        float3 boxHalf = (boxMax - boxMin) * 0.5;
+        float boxDist = sdBox(p - boxCenter, boxHalf);
+
+        // Always track minimum box distance as fallback
+        minBoxDist = min(minBoxDist, boxDist);
+
+        // Skip expensive SDF if bounding box is farther than current best + margin
+        if (boxDist > minDist + 0.1) continue;
+
+        // Transform to glyph local 2D coordinates
+        float2 localP = (float2(p.x, p.y) - charPos) / charScale;
+
+        // Only compute expensive SDF if within bounds margin
+        if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
+            localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
+            // Compute 2D SDF for THIS character only
+            float d2d = sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScale;
+
+            // Extrude THIS character to 3D
+            float d3d = opExtrusion(d2d, p.z, halfDepth);
+
+            // Union with other characters
+            minDist = min(minDist, d3d);
+        }
+    }
+
+    // If we computed detailed SDF for any character, use it; otherwise use box distance
+    if (minDist < 1e9) {
+        return minDist;
+    }
+    return minBoxDist;
 }
 
 struct Hit {
@@ -447,8 +496,9 @@ float3 render(float3 ro, float3 rd) {
 
     float diff = max(dot(nor, lightDir), 0.0);
 
-    // Soft shadows with higher softness for smoother shadows
-    float shadow = calcSoftShadow(pos + nor * 0.01, lightDir, 0.02, 10.0, 16.0);
+    // Soft shadows - start further from surface to avoid self-intersection artifacts
+    float shadowBias = (hit.materialId == 2) ? 0.05 : 0.01; // Larger bias for text
+    float shadow = calcSoftShadow(pos + nor * shadowBias, lightDir, 0.02, 10.0, 16.0);
     float ao = calcAO(pos, nor);
 
     // Specular for text

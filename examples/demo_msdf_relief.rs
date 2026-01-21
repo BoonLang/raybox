@@ -11,7 +11,7 @@ mod shader_bindings {
     include!(concat!(env!("OUT_DIR"), "/shader_bindings.rs"));
 }
 
-use camera::OrbitalCamera;
+use camera::FlyCamera;
 use constants::{HEIGHT, WIDTH};
 use shader_bindings::sdf_msdf_relief;
 use std::collections::HashSet;
@@ -52,15 +52,15 @@ impl Default for Uniforms {
 }
 
 impl Uniforms {
-    fn update_from_camera(&mut self, camera: &OrbitalCamera, width: u32, height: u32, time: f32) {
+    fn update_from_camera(&mut self, camera: &FlyCamera, width: u32, height: u32, time: f32) {
         let aspect = width as f32 / height as f32;
-        let view = camera.view_matrix();
-        let proj = glam::Mat4::perspective_rh(45.0_f32.to_radians(), aspect, 0.1, 100.0);
-        let view_proj = proj * view;
-        let inv_view_proj = view_proj.inverse();
-
-        self.inv_view_proj = inv_view_proj.to_cols_array_2d();
-        self.camera_pos_time = [camera.position().x, camera.position().y, camera.position().z, time];
+        self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
+        self.camera_pos_time = [
+            camera.position().x,
+            camera.position().y,
+            camera.position().z,
+            time,
+        ];
         self.render_params[0] = width as f32;
         self.render_params[1] = height as f32;
     }
@@ -75,9 +75,11 @@ struct Renderer {
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
-    camera: OrbitalCamera,
+    camera: FlyCamera,
     pressed_keys: HashSet<KeyCode>,
     start_time: std::time::Instant,
+    last_frame_time: std::time::Instant,
+    mouse_captured: bool,
 }
 
 impl Renderer {
@@ -167,11 +169,10 @@ impl Renderer {
 
         let shader_module = sdf_msdf_relief::create_shader_module_embed_source(&device);
 
-        // Camera
-        let mut camera = OrbitalCamera::default();
-        camera.distance = 6.0;
-        camera.elevation = 0.8;
-        camera.azimuth = 0.2;
+        // Camera - fly camera positioned to view the relief
+        let mut camera = FlyCamera::default();
+        camera.position = glam::Vec3::new(1.2, 4.5, 5.0);
+        camera.pitch = -0.8; // Looking down at the relief
 
         let mut uniforms = Uniforms::default();
         uniforms.atlas_params = [atlas_size.0 as f32, atlas_size.1 as f32, 64.0, 4.0];
@@ -279,30 +280,65 @@ impl Renderer {
             camera,
             pressed_keys: HashSet::new(),
             start_time: std::time::Instant::now(),
+            last_frame_time: std::time::Instant::now(),
+            mouse_captured: false,
         })
     }
 
-    fn update(&mut self) {
-        const ROTATION_SPEED: f32 = 0.03;
-        const ZOOM_SPEED: f32 = 0.1;
+    fn toggle_mouse_capture(&mut self) {
+        use winit::window::CursorGrabMode;
+        self.mouse_captured = !self.mouse_captured;
+        if self.mouse_captured {
+            if self.window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
+                let _ = self.window.set_cursor_grab(CursorGrabMode::Confined);
+            }
+            self.window.set_cursor_visible(false);
+        } else {
+            let _ = self.window.set_cursor_grab(CursorGrabMode::None);
+            self.window.set_cursor_visible(true);
+        }
+    }
 
-        if self.pressed_keys.contains(&KeyCode::KeyA) {
-            self.camera.rotate_horizontal(-ROTATION_SPEED);
+    fn handle_device_event(&mut self, event: &winit::event::DeviceEvent) {
+        use winit::event::DeviceEvent;
+        if self.mouse_captured {
+            if let DeviceEvent::MouseMotion { delta } = event {
+                self.camera.look(delta.0 as f32, delta.1 as f32);
+            }
         }
-        if self.pressed_keys.contains(&KeyCode::KeyD) {
-            self.camera.rotate_horizontal(ROTATION_SPEED);
-        }
+    }
+
+    fn update(&mut self) {
+        let now = std::time::Instant::now();
+        let dt = (now - self.last_frame_time).as_secs_f32();
+        self.last_frame_time = now;
+
         if self.pressed_keys.contains(&KeyCode::KeyW) {
-            self.camera.zoom(ZOOM_SPEED);
+            self.camera.move_forward(dt, true);
         }
         if self.pressed_keys.contains(&KeyCode::KeyS) {
-            self.camera.zoom(-ZOOM_SPEED);
+            self.camera.move_forward(dt, false);
+        }
+        if self.pressed_keys.contains(&KeyCode::KeyA) {
+            self.camera.move_right(dt, false);
+        }
+        if self.pressed_keys.contains(&KeyCode::KeyD) {
+            self.camera.move_right(dt, true);
+        }
+        if self.pressed_keys.contains(&KeyCode::Space) {
+            self.camera.move_up(dt, true);
+        }
+        if self.pressed_keys.contains(&KeyCode::ControlLeft)
+            || self.pressed_keys.contains(&KeyCode::ControlRight)
+            || self.pressed_keys.contains(&KeyCode::KeyC)
+        {
+            self.camera.move_up(dt, false);
         }
         if self.pressed_keys.contains(&KeyCode::KeyQ) {
-            self.camera.rotate_vertical(ROTATION_SPEED);
+            self.camera.roll_camera(-dt * 2.0);
         }
         if self.pressed_keys.contains(&KeyCode::KeyE) {
-            self.camera.rotate_vertical(-ROTATION_SPEED);
+            self.camera.roll_camera(dt * 2.0);
         }
     }
 
@@ -377,7 +413,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.renderer.is_none() {
             let window_attrs = Window::default_attributes()
-                .with_title("MSDF 3D Relief (A/D: rotate, W/S: zoom, Q/E: tilt, ESC: quit)")
+                .with_title("MSDF 3D Relief | WASD: move, Space/C: up/down, Mouse: look, Tab: capture, R: reset")
                 .with_inner_size(winit::dpi::PhysicalSize::new(WIDTH, HEIGHT));
 
             let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
@@ -396,16 +432,44 @@ impl ApplicationHandler for App {
         self.renderer.take();
     }
 
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.handle_device_event(&event);
+        }
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         let Some(renderer) = self.renderer.as_mut() else { return };
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::KeyboardInput { event, .. } => {
-                if let PhysicalKey::Code(KeyCode::Escape) = event.physical_key {
+                if let PhysicalKey::Code(key_code) = event.physical_key {
                     if event.state == ElementState::Pressed {
-                        event_loop.exit();
-                        return;
+                        match key_code {
+                            KeyCode::Escape => {
+                                if renderer.mouse_captured {
+                                    renderer.toggle_mouse_capture();
+                                } else {
+                                    event_loop.exit();
+                                }
+                                return;
+                            }
+                            KeyCode::Tab => {
+                                renderer.toggle_mouse_capture();
+                            }
+                            KeyCode::Home | KeyCode::KeyR => {
+                                renderer.camera.reset();
+                                renderer.camera.position = glam::Vec3::new(1.2, 4.5, 5.0);
+                                renderer.camera.pitch = -0.8;
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 renderer.handle_key(event);
