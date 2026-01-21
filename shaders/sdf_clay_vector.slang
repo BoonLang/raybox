@@ -29,7 +29,8 @@ struct CharInstance {
 // Glyph metadata
 struct GlyphData {
     float4 bounds;      // left, bottom, right, top in em units
-    uint4 gridInfo;     // gridOffset, gridSizeX, gridSizeY, curveCount
+    uint4 gridInfo;     // gridOffset, gridSizeX, gridSizeY, unused
+    uint4 curveInfo;    // curveOffset, curveCount, unused, unused
 };
 
 [[vk::binding(0, 0)]]
@@ -136,16 +137,19 @@ float sdQuadraticBezier(float2 p, float2 p0, float2 p1, float2 p2) {
 }
 
 // Compute winding contribution
+// Uses epsilon to avoid boundary issues at curve junctions
 int curveWindingContribution(float2 point, float2 p0, float2 p1, float2 p2) {
+    const float EPS = 1e-6;
+
     float px = point.x;
     float py = point.y;
 
     float y_min = min(min(p0.y, p1.y), p2.y);
     float y_max = max(max(p0.y, p1.y), p2.y);
-    if (py < y_min || py >= y_max) return 0;
+    if (py < y_min - EPS || py >= y_max - EPS) return 0;
 
     float x_max = max(max(p0.x, p1.x), p2.x);
-    if (px > x_max) return 0;
+    if (px > x_max + EPS) return 0;
 
     float a_coef = p0.y - 2.0 * p1.y + p2.y;
     float b_coef = 2.0 * (p1.y - p0.y);
@@ -153,10 +157,10 @@ int curveWindingContribution(float2 point, float2 p0, float2 p1, float2 p2) {
 
     int crossings = 0;
 
-    if (abs(a_coef) < 1e-10) {
-        if (abs(b_coef) > 1e-10) {
+    if (abs(a_coef) < 1e-7) {
+        if (abs(b_coef) > 1e-7) {
             float t = -c_coef / b_coef;
-            if (t >= 0.0 && t < 1.0) {
+            if (t > -EPS && t < 1.0 - EPS) {
                 float x = (1.0 - t) * (1.0 - t) * p0.x + 2.0 * (1.0 - t) * t * p1.x + t * t * p2.x;
                 if (x > px) {
                     crossings = (p2.y - p0.y > 0.0) ? 1 : -1;
@@ -172,7 +176,7 @@ int curveWindingContribution(float2 point, float2 p0, float2 p1, float2 p2) {
 
             for (int i = 0; i < 2; i++) {
                 float t = (i == 0) ? t1 : t2;
-                if (t >= 0.0 && t < 1.0) {
+                if (t > EPS && t < 1.0 - EPS) {
                     float x = (1.0 - t) * (1.0 - t) * p0.x + 2.0 * (1.0 - t) * t * p1.x + t * t * p2.x;
                     if (x > px) {
                         float dy_dt = 2.0 * ((p1.y - p0.y) * (1.0 - t) + (p2.y - p1.y) * t);
@@ -187,10 +191,12 @@ int curveWindingContribution(float2 point, float2 p0, float2 p1, float2 p2) {
 }
 
 // Compute SDF for a single glyph at local coordinates
-float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo) {
+float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
     uint gridOffset = gridInfo.x;
     uint gridSizeX = gridInfo.y;
     uint gridSizeY = gridInfo.z;
+    uint glyphCurveOffset = curveInfo.x;
+    uint glyphCurveCount = curveInfo.y;
 
     float2 glyphSize = bounds.zw - bounds.xy;
     float2 gridUV = (localPos - bounds.xy) / glyphSize;
@@ -200,25 +206,30 @@ float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo) {
         return length(max(d, 0.0)) + 0.01;
     }
 
-    gridUV = clamp(gridUV, 0.0, 0.9999);
-
-    int cellX = int(gridUV.x * float(gridSizeX));
-    int cellY = int(gridUV.y * float(gridSizeY));
-    uint cellIdx = gridOffset + cellY * gridSizeX + cellX;
+    // Fix: clamp to [0,1] and use min() to avoid out-of-bounds
+    gridUV = clamp(gridUV, 0.0, 1.0);
+    int cellX = min(int(gridUV.x * float(gridSizeX)), int(gridSizeX) - 1);
+    int cellY = min(int(gridUV.y * float(gridSizeY)), int(gridSizeY) - 1);
+    uint cellIdx = gridOffset + uint(cellY) * gridSizeX + uint(cellX);
 
     GridCell cell = gridCells[cellIdx];
-    uint curveStart = cell.curveStartAndCount & 0xFFFF;
-    uint curveCount = (cell.curveStartAndCount >> 16) & 0xFF;
+    uint cellCurveStart = cell.curveStartAndCount & 0xFFFF;
+    uint cellCurveCount = (cell.curveStartAndCount >> 16) & 0xFF;
     uint flags = (cell.curveStartAndCount >> 24) & 0xFF;
 
-    if ((flags & 0x01) != 0) return -0.05;
-    if ((flags & 0x02) != 0) return 0.05;
+    // Flag interpretation: bit 0 = inside, bit 1 = uniform
+    bool cellIsInside = (flags & 0x01u) != 0u;
+    bool isUniform = (flags & 0x02u) != 0u;
 
+    // Early out for uniform cells with no curves
+    if (isUniform && cellCurveCount == 0u) {
+        return cellIsInside ? -1.0 : 1.0;
+    }
+
+    // Compute minimum distance to curves in this cell
     float minDist = 1e10;
-    int winding = 0;
-
-    for (uint i = 0; i < curveCount && i < 16; i++) {
-        uint globalCurveIdx = curveIndices[curveStart + i];
+    for (uint i = 0u; i < cellCurveCount && i < 16u; i++) {
+        uint globalCurveIdx = curveIndices[cellCurveStart + i];
         BezierCurve curve = curves[globalCurveIdx];
 
         float2 p0 = curve.points01.xy;
@@ -232,7 +243,15 @@ float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo) {
 
         float dist = sdQuadraticBezier(localPos, p0, p1, p2);
         minDist = min(minDist, dist);
+    }
 
+    // Compute winding using ALL glyph curves (not just cell curves)
+    int winding = 0;
+    for (uint i = 0u; i < glyphCurveCount && i < 256u; i++) {
+        BezierCurve curve = curves[glyphCurveOffset + i];
+        float2 p0 = curve.points01.xy;
+        float2 p1 = curve.points01.zw;
+        float2 p2 = curve.points2bbox.xy;
         winding += curveWindingContribution(localPos, p0, p1, p2);
     }
 
@@ -244,7 +263,8 @@ static const uint MAX_CHARS = 512;
 
 // Compute 2D SDF for all text
 float sdText2D(float2 p) {
-    float minDist = 1e10;
+    float minSdfDist = 1e10;  // Full SDF distance (signed)
+    float minBoxDist = 1e10;  // Minimum distance to any glyph's bounding box (unsigned)
     uint charCount = uint(uniforms.textParams.x);
 
     for (uint i = 0; i < charCount && i < MAX_CHARS; i++) {
@@ -254,24 +274,48 @@ float sdText2D(float2 p) {
         uint glyphIdx = uint(ch.posAndChar.w);
 
         GlyphData glyph = glyphData[glyphIdx];
+        float4 bounds = glyph.bounds;
 
+        // Compute world-space bounding box
+        float2 glyphMin = charPos + float2(bounds.x, bounds.y) * charScale;
+        float2 glyphMax = charPos + float2(bounds.z, bounds.w) * charScale;
+
+        // Distance to this glyph's bounding box
+        float2 d = max(glyphMin - p, p - glyphMax);
+        float boxDist = length(max(d, 0.0));
+        minBoxDist = min(minBoxDist, boxDist);
+
+        // Transform to glyph local coordinates
         float2 localP = (p - charPos) / charScale;
-        float d = sdGlyph(localP, glyph.bounds, glyph.gridInfo);
-        d *= charScale;
 
-        minDist = min(minDist, d);
+        // Compute full SDF if within bounds margin
+        if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
+            localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
+            float d = sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo);
+            minSdfDist = min(minSdfDist, d * charScale);
+        }
     }
 
-    return minDist;
+    // If we computed an SDF for any glyph, use it; otherwise use box distance
+    if (minSdfDist < 1e9) {
+        return minSdfDist;
+    }
+    return minBoxDist;
+}
+
+// Exact extrusion operation (from Inigo Quilez)
+// Produces mathematically exact 3D SDF from exact 2D SDF
+float opExtrusion(float sdf2d, float zDist, float depth) {
+    float2 w = float2(sdf2d, abs(zDist) - depth);
+    return min(max(w.x, w.y), 0.0) + length(max(w, 0.0));
 }
 
 // 3D extruded text for relief carving
 float sdTextRelief(float3 p, float depth) {
     // Text on XZ plane (horizontal tablet surface)
-    // Text layout uses +z for front of tablet, shader uses +z for same direction
-    float d2d = sdText2D(float2(p.x, p.z));
-    float extrusion = abs(p.y) - depth * 0.5;
-    return max(d2d, extrusion);
+    // Negate Z so text reads correctly when viewed from +Z direction
+    float d2d = sdText2D(float2(p.x, -p.z));
+    return opExtrusion(d2d, p.y, depth * 0.5);
 }
 
 struct Hit {
@@ -325,7 +369,7 @@ float3 getMaterialColor(int id) {
 }
 
 float3 calcNormal(float3 p) {
-    const float eps = 0.001;
+    const float eps = 0.0002; // Smaller epsilon for text detail
     float3 n;
     n.x = mapScene(p + float3(eps, 0, 0)).dist - mapScene(p - float3(eps, 0, 0)).dist;
     n.y = mapScene(p + float3(0, eps, 0)).dist - mapScene(p - float3(0, eps, 0)).dist;
@@ -370,16 +414,32 @@ RayHit raymarch(float3 ro, float3 rd) {
     result.hit = false;
 
     float t = 0.0;
+    float omega = 1.6;  // Over-relaxation factor
+    float prevRadius = 0.0;
+
     for (int i = 0; i < 128 && t < 50.0; i++) {
         float3 p = ro + rd * t;
         Hit h = mapScene(p);
+        float radius = abs(h.dist);
+
+        // Over-relaxation with fallback: check if spheres don't overlap
+        bool sorFail = omega > 1.0 && radius < (omega - 1.0) * prevRadius;
+        if (sorFail) {
+            t -= (omega - 1.0) * prevRadius;  // Revert overstep
+            omega = 1.0;                       // Fall back to conservative
+            prevRadius = radius;
+            continue;
+        }
+
         if (h.dist < 0.001) {
             result.t = t;
             result.materialId = h.materialId;
             result.hit = true;
             return result;
         }
-        t += h.dist * 0.8;
+
+        t += h.dist * omega;
+        prevRadius = radius;
     }
     return result;
 }

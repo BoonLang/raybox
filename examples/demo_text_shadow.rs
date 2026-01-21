@@ -41,9 +41,9 @@ impl Default for Uniforms {
     fn default() -> Self {
         Self {
             inv_view_proj: [[0.0; 4]; 4],
-            camera_pos_time: [0.0, 2.0, 5.0, 0.0],
-            light_dir_intensity: [0.6, 0.9, 0.4, 1.3], // Higher, angled light for shadows
-            render_params: [WIDTH as f32, HEIGHT as f32, 0.1, 0.5], // depth, scale
+            camera_pos_time: [0.0, 0.5, 3.0, 0.0],
+            light_dir_intensity: [0.4, 0.8, 0.5, 1.3], // Light from upper-right
+            render_params: [WIDTH as f32, HEIGHT as f32, 0.12, 1.0], // depth = 0.12 for thicker text
             text_params: [0.0, 0.0, 0.4, 0.0],
         }
     }
@@ -90,7 +90,8 @@ struct GpuBezierCurve {
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct GpuGlyphData {
     bounds: [f32; 4],
-    grid_info: [u32; 4],
+    grid_info: [u32; 4],  // gridOffset, gridSizeX, gridSizeY, unused
+    curve_info: [u32; 4], // curveOffset, curveCount, unused, unused
 }
 
 /// Character instance for text layout
@@ -104,26 +105,27 @@ struct GpuCharInstance {
 fn build_shadow_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstance> {
     let mut instances = Vec::new();
 
-    // Generate 1000+ words by repeating lorem ipsum
+    // Generate text content
     let full_text = format!(
         "VECTOR SDF TEXT\n\n{}",
-        format!("{} {} {} {} {} {}", LOREM, LOREM, LOREM, LOREM, LOREM, LOREM)
+        format!("{} {} {}", LOREM, LOREM, LOREM)
     );
 
-    let scale = 0.08; // Character scale for floating text
-    let line_height = 0.12;
-    let margin = 0.1;
+    let scale = 0.10; // Larger character scale for cleaner rendering
+    let line_height = 0.15;
+    let margin = 0.08;
 
-    // Text panel centered in scene
+    // Text panel centered around origin
     let panel_width = 2.0;
+    let panel_height = 1.5;
     let start_x = -panel_width / 2.0 + margin;
-    let start_y = 1.5; // Start from top
+    let start_y = panel_height / 2.0 - margin; // Start from top
     let max_x = panel_width / 2.0 - margin;
 
     let mut x = start_x;
     let mut y = start_y;
     let mut line_num = 0;
-    let max_lines = 24; // More lines for vertical layout
+    let max_lines = 20;
 
     for ch in full_text.chars() {
         if line_num >= max_lines {
@@ -163,7 +165,7 @@ fn build_shadow_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstance> {
 
             x += advance;
         } else if ch == ' ' {
-            x += 0.08 * scale;
+            x += 0.3 * scale;
             if x > max_x {
                 x = start_x;
                 y -= line_height;
@@ -314,15 +316,21 @@ fn run_windowed() -> Result<()> {
                         entry.grid_offset,
                         entry.grid_size[0],
                         entry.grid_size[1],
+                        0,
+                    ],
+                    curve_info: [
+                        entry.curve_offset,
                         entry.curve_count,
+                        0,
+                        0,
                     ],
                 })
                 .collect();
 
-            // Create buffers
+            // Create buffers - camera looks straight at text from front
             let mut camera = OrbitalCamera::default();
-            camera.distance = 3.5;
-            camera.elevation = 0.4;
+            camera.distance = 3.0;
+            camera.elevation = 0.0; // No vertical angle - look straight ahead
             camera.azimuth = 0.0;
 
             let mut uniforms = Uniforms::default();
@@ -375,6 +383,7 @@ fn run_windowed() -> Result<()> {
                     &[GpuGlyphData {
                         bounds: [0.0; 4],
                         grid_info: [0; 4],
+                        curve_info: [0; 4],
                     }]
                 } else {
                     &gpu_glyph_data
@@ -794,15 +803,21 @@ fn run_headless_screenshot() -> Result<()> {
                 entry.grid_offset,
                 entry.grid_size[0],
                 entry.grid_size[1],
+                0,
+            ],
+            curve_info: [
+                entry.curve_offset,
                 entry.curve_count,
+                0,
+                0,
             ],
         })
         .collect();
 
-    // Create buffers
+    // Create buffers - camera looks straight at text from front
     let mut camera = OrbitalCamera::default();
-    camera.distance = 3.5;
-    camera.elevation = 0.4;
+    camera.distance = 2.5;
+    camera.elevation = 0.0; // No vertical angle - look straight ahead
     camera.azimuth = 0.0;
 
     let mut uniforms = Uniforms::default();
@@ -855,6 +870,7 @@ fn run_headless_screenshot() -> Result<()> {
             &[GpuGlyphData {
                 bounds: [0.0; 4],
                 grid_info: [0; 4],
+                curve_info: [0; 4],
             }]
         } else {
             &gpu_glyph_data

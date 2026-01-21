@@ -90,7 +90,8 @@ struct GpuBezierCurve {
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct GpuGlyphData {
     bounds: [f32; 4],
-    grid_info: [u32; 4],
+    grid_info: [u32; 4],  // gridOffset, gridSizeX, gridSizeY, unused
+    curve_info: [u32; 4], // curveOffset, curveCount, unused, unused
 }
 
 /// Character instance for text layout
@@ -316,15 +317,21 @@ fn run_windowed() -> Result<()> {
                         entry.grid_offset,
                         entry.grid_size[0],
                         entry.grid_size[1],
+                        0,
+                    ],
+                    curve_info: [
+                        entry.curve_offset,
                         entry.curve_count,
+                        0,
+                        0,
                     ],
                 })
                 .collect();
 
             // Create buffers
             let mut camera = OrbitalCamera::default();
-            camera.distance = 6.0;
-            camera.elevation = 0.6;
+            camera.distance = 5.0;
+            camera.elevation = 1.4; // Look almost straight down at the tablet
             camera.azimuth = 0.0;
 
             let mut uniforms = Uniforms::default();
@@ -377,6 +384,7 @@ fn run_windowed() -> Result<()> {
                     &[GpuGlyphData {
                         bounds: [0.0; 4],
                         grid_info: [0; 4],
+                        curve_info: [0; 4],
                     }]
                 } else {
                     &gpu_glyph_data
@@ -796,15 +804,21 @@ fn run_headless_screenshot() -> Result<()> {
                 entry.grid_offset,
                 entry.grid_size[0],
                 entry.grid_size[1],
+                0,
+            ],
+            curve_info: [
+                entry.curve_offset,
                 entry.curve_count,
+                0,
+                0,
             ],
         })
         .collect();
 
     // Create buffers
     let mut camera = OrbitalCamera::default();
-    camera.distance = 6.0;
-    camera.elevation = 0.6;
+    camera.distance = 5.0;
+    camera.elevation = 1.4; // Look almost straight down at the tablet
     camera.azimuth = 0.0;
 
     let mut uniforms = Uniforms::default();
@@ -857,6 +871,7 @@ fn run_headless_screenshot() -> Result<()> {
             &[GpuGlyphData {
                 bounds: [0.0; 4],
                 grid_info: [0; 4],
+                curve_info: [0; 4],
             }]
         } else {
             &gpu_glyph_data
