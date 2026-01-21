@@ -43,7 +43,7 @@ impl Default for Uniforms {
             inv_view_proj: [[0.0; 4]; 4],
             camera_pos_time: [0.0, 0.5, 3.0, 0.0],
             light_dir_intensity: [0.4, 0.8, 0.5, 1.3], // Light from upper-right
-            render_params: [WIDTH as f32, HEIGHT as f32, 0.12, 1.0], // depth = 0.12 for thicker text
+            render_params: [WIDTH as f32, HEIGHT as f32, 0.15, 1.0], // depth = 0.15 for thicker text
             text_params: [0.0, 0.0, 0.4, 0.0],
         }
     }
@@ -111,13 +111,13 @@ fn build_shadow_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstance> {
         format!("{} {} {}", LOREM, LOREM, LOREM)
     );
 
-    let scale = 0.10; // Larger character scale for cleaner rendering
-    let line_height = 0.15;
-    let margin = 0.08;
+    let scale = 0.12; // Larger character scale for cleaner rendering
+    let line_height = 0.18;
+    let margin = 0.1;
 
     // Text panel centered around origin
-    let panel_width = 2.0;
-    let panel_height = 1.5;
+    let panel_width = 2.4;
+    let panel_height = 1.8;
     let start_x = -panel_width / 2.0 + margin;
     let start_y = panel_height / 2.0 - margin; // Start from top
     let max_x = panel_width / 2.0 - margin;
@@ -329,7 +329,7 @@ fn run_windowed() -> Result<()> {
 
             // Create buffers - camera looks straight at text from front
             let mut camera = OrbitalCamera::default();
-            camera.distance = 3.0;
+            camera.distance = 3.5;
             camera.elevation = 0.0; // No vertical angle - look straight ahead
             camera.azimuth = 0.0;
 

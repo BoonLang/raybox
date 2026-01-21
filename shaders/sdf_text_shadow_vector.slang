@@ -298,8 +298,7 @@ float sdText2D(float2 p) {
     return minBoxDist;
 }
 
-// Exact extrusion operation (from Inigo Quilez)
-// Produces mathematically exact 3D SDF from exact 2D SDF
+// Exact extrusion operation (from Inigo Quilez) - same as clay shader
 float opExtrusion(float sdf2d, float zDist, float depth) {
     float2 w = float2(sdf2d, abs(zDist) - depth);
     return min(max(w.x, w.y), 0.0) + length(max(w, 0.0));
@@ -308,7 +307,6 @@ float opExtrusion(float sdf2d, float zDist, float depth) {
 // 3D extruded text (vertical, on XY plane)
 float sdText3D(float3 p, float depth) {
     // Text is on XY plane (vertical), facing camera, Z is depth
-    // Text layout uses positive y for top of text, shader uses same direction
     float d2d = sdText2D(float2(p.x, p.y));
     return opExtrusion(d2d, p.z, depth * 0.5);
 }
@@ -354,8 +352,9 @@ float3 getMaterialColor(int id) {
     }
 }
 
+// Same normal calculation as clay shader
 float3 calcNormal(float3 p) {
-    const float eps = 0.0002; // Smaller epsilon for text detail
+    const float eps = 0.0002;
     float3 n;
     n.x = mapScene(p + float3(eps, 0, 0)).dist - mapScene(p - float3(eps, 0, 0)).dist;
     n.y = mapScene(p + float3(0, eps, 0)).dist - mapScene(p - float3(0, eps, 0)).dist;
@@ -400,10 +399,10 @@ RayHit raymarch(float3 ro, float3 rd) {
     result.hit = false;
 
     float t = 0.0;
-    float omega = 1.2;  // Reduced over-relaxation for cleaner results
+    float omega = 1.6;  // Same as clay shader
     float prevRadius = 0.0;
 
-    for (int i = 0; i < 200 && t < 50.0; i++) {
+    for (int i = 0; i < 128 && t < 50.0; i++) {
         float3 p = ro + rd * t;
         Hit h = mapScene(p);
         float radius = abs(h.dist);
@@ -417,7 +416,7 @@ RayHit raymarch(float3 ro, float3 rd) {
             continue;
         }
 
-        if (h.dist < 0.0005) {
+        if (h.dist < 0.001) {
             result.t = t;
             result.materialId = h.materialId;
             result.hit = true;

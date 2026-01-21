@@ -120,7 +120,7 @@ fn build_clay_text_layout(
     let margin = 0.15;
 
     let start_x = -tablet_width + margin;
-    let start_z = -tablet_depth + margin; // Start at bottom (closest to camera)
+    let start_z = tablet_depth - margin; // Start at top (far from camera)
     let max_x = tablet_width - margin;
 
     let mut x = start_x;
@@ -135,7 +135,7 @@ fn build_clay_text_layout(
 
         if ch == '\n' {
             x = start_x;
-            z += line_height; // Move away from camera (up the tablet)
+            z -= line_height; // Move toward camera (down the tablet)
             line_num += 1;
             continue;
         }
@@ -153,7 +153,7 @@ fn build_clay_text_layout(
             // Word wrap
             if x + advance > max_x {
                 x = start_x;
-                z += line_height;
+                z -= line_height;
                 line_num += 1;
                 if line_num >= max_lines {
                     break;
@@ -169,7 +169,7 @@ fn build_clay_text_layout(
             x += 0.08 * scale;
             if x > max_x {
                 x = start_x;
-                z += line_height;
+                z -= line_height;
                 line_num += 1;
             }
         }
