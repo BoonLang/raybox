@@ -283,6 +283,7 @@ impl Default for Uniforms {
 
 impl Uniforms {
     /// Update uniforms from orbital camera state
+    #[allow(dead_code)]
     pub fn update_from_camera(&mut self, camera: &OrbitalCamera, width: u32, height: u32, time: f32) {
         let aspect = width as f32 / height as f32;
         self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
@@ -293,6 +294,7 @@ impl Uniforms {
     }
 
     /// Update uniforms from fly camera state
+    #[allow(dead_code)]
     pub fn update_from_fly_camera(&mut self, camera: &FlyCamera, width: u32, height: u32, time: f32) {
         let aspect = width as f32 / height as f32;
         self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();

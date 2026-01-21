@@ -53,42 +53,7 @@ fn main() -> Result<()> {
             ],
         },
         ShaderConfig {
-            name: "sdf_text2d",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
-        },
-        ShaderConfig {
-            name: "sdf_clay",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
-        },
-        ShaderConfig {
-            name: "sdf_msdf_relief",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
-        },
-        ShaderConfig {
-            name: "sdf_text_shadow",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
-        },
-        ShaderConfig {
             name: "sdf_text_vector",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
-        },
-        ShaderConfig {
-            name: "sdf_text_vector_3d",
             entries: vec![
                 ("vs_main", "vertex"),
                 ("fs_main", "fragment"),

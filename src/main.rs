@@ -10,8 +10,6 @@ mod capture;
 mod constants;
 #[cfg(not(feature = "windowed"))]
 mod sdf_renderer;
-#[cfg(not(feature = "windowed"))]
-mod screenshot_all;
 mod window_mode;
 
 use anyhow::Result;
@@ -37,12 +35,6 @@ fn main() -> Result<()> {
 
 #[cfg(not(feature = "windowed"))]
 async fn run_headless() -> Result<()> {
-    // Check for --all flag to screenshot all examples
-    let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--all") {
-        return screenshot_all::screenshot_all().await;
-    }
-
     log::info!("Creating SDF renderer...");
     let renderer = sdf_renderer::SdfRenderer::new().await?;
 

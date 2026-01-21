@@ -55,12 +55,15 @@ pub struct VectorFontAtlas {
     /// Per-glyph metadata, indexed by codepoint
     pub glyphs: HashMap<u32, GlyphAtlasEntry>,
     /// Ordered list of glyph entries for GPU upload
+    #[allow(dead_code)]
     pub glyph_list: Vec<(u32, GlyphAtlasEntry)>,
     /// Grid resolution (cells per em unit)
     pub grid_resolution: u32,
     /// Font metrics
     pub ascender: f32,
+    #[allow(dead_code)]
     pub descender: f32,
+    #[allow(dead_code)]
     pub line_height: f32,
 }
 
@@ -289,21 +292,25 @@ impl VectorFontAtlas {
     }
 
     /// Get glyph entry by character
+    #[allow(dead_code)]
     pub fn get_glyph(&self, ch: char) -> Option<&GlyphAtlasEntry> {
         self.glyphs.get(&(ch as u32))
     }
 
     /// Get total size needed for curve buffer in bytes
+    #[allow(dead_code)]
     pub fn curve_buffer_size(&self) -> usize {
         self.curves.len() * std::mem::size_of::<BezierCurve>()
     }
 
     /// Get total size needed for grid cell buffer in bytes
+    #[allow(dead_code)]
     pub fn grid_cell_buffer_size(&self) -> usize {
         self.grid_cells.len() * std::mem::size_of::<GridCell>()
     }
 
     /// Get total size needed for curve index buffer in bytes
+    #[allow(dead_code)]
     pub fn curve_index_buffer_size(&self) -> usize {
         self.curve_indices.len() * std::mem::size_of::<u16>()
     }

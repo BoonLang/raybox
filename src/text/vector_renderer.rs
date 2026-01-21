@@ -18,6 +18,7 @@ pub struct TextVertex {
 }
 
 impl TextVertex {
+    #[allow(dead_code)]
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<TextVertex>() as wgpu::BufferAddress,
@@ -55,6 +56,7 @@ pub struct VectorGlyphInstance {
 }
 
 impl VectorGlyphInstance {
+    #[allow(dead_code)]
     pub fn new(
         offset: [f32; 2],
         size: [f32; 2],
@@ -75,6 +77,7 @@ impl VectorGlyphInstance {
         }
     }
 
+    #[allow(dead_code)]
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<VectorGlyphInstance>() as wgpu::BufferAddress,
@@ -187,6 +190,7 @@ pub struct VectorTextRenderer {
     max_instances: u32,
 }
 
+#[allow(dead_code)]
 impl VectorTextRenderer {
     /// Create a new vector text renderer
     pub fn new(

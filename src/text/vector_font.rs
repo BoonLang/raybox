@@ -72,6 +72,7 @@ impl BezierCurve {
 #[derive(Debug, Clone)]
 pub struct VectorGlyphMetrics {
     /// Unicode codepoint
+    #[allow(dead_code)]
     pub codepoint: u32,
     /// Advance width in em units
     pub advance: f32,
@@ -91,6 +92,7 @@ pub struct VectorFont {
     /// Per-glyph metrics, indexed by codepoint
     pub glyphs: HashMap<u32, VectorGlyphMetrics>,
     /// Font em size
+    #[allow(dead_code)]
     pub units_per_em: f32,
     /// Ascender height in em units
     pub ascender: f32,
@@ -166,6 +168,7 @@ impl VectorFont {
     }
 
     /// Get glyph metrics for a character
+    #[allow(dead_code)]
     pub fn get_glyph(&self, ch: char) -> Option<&VectorGlyphMetrics> {
         self.glyphs.get(&(ch as u32))
     }

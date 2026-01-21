@@ -12,8 +12,7 @@ ex num:
         4) cargo run --example demo_text2d --features windowed ;;
         5) cargo run --example demo_clay --features windowed ;;
         6) cargo run --example demo_text_shadow --features windowed ;;
-        7) echo "Windowed mode not available for demo_text_vector_3d" ;;
-        *) echo "Unknown example {{num}}. Available: 1-6 (windowed), 7 (vector 3D, screenshot only)" ;;
+        *) echo "Unknown example {{num}}. Available: 1-6" ;;
     esac
 
 # Run example screenshot by number: just ex_screenshot 4
@@ -26,8 +25,7 @@ ex_screenshot num:
         4) cargo run --example demo_text2d ;;
         5) cargo run --example demo_clay ;;
         6) cargo run --example demo_text_shadow ;;
-        7) cargo run --example demo_text_vector_3d ;;
-        *) echo "Unknown example {{num}}. Available: 1-7 (screenshot mode)" ;;
+        *) echo "Unknown example {{num}}. Available: 1-6" ;;
     esac
 
 # Build WASM and generate bindings
@@ -111,15 +109,3 @@ setup:
     cargo install miniserve
     rustup target add wasm32-unknown-unknown
 
-# Generate MSDF atlas from font file (grid layout for shader compatibility)
-gen-atlas font="assets/fonts/DejaVuSans.ttf":
-    ./tools/msdf-atlas-gen \
-        -font {{font}} \
-        -type msdf \
-        -uniformgrid \
-        -uniformcols 10 \
-        -uniformcell 64 64 \
-        -size 48 \
-        -pxrange 4 \
-        -imageout assets/fonts/atlas.png \
-        -json assets/fonts/atlas.json
