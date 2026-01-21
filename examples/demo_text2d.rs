@@ -8,6 +8,10 @@
 mod constants;
 #[path = "../src/text/mod.rs"]
 mod text;
+#[path = "../src/camera.rs"]
+mod camera;
+#[path = "../src/input.rs"]
+mod input;
 
 #[allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals)]
 mod shader_bindings {
@@ -16,6 +20,7 @@ mod shader_bindings {
 
 use constants::WIDTH;
 use text::{VectorFont, VectorFontAtlas};
+use input::{OverlayMode, SystemMonitor};
 
 use anyhow::{Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -180,11 +185,16 @@ fn run_windowed() -> Result<()> {
         uniform_buffer: wgpu::Buffer,
         bind_group: wgpu::BindGroup,
         char_count: u32,
-        // Pan/zoom state
+        // Pan/zoom/rotate state
         pressed_keys: HashSet<KeyCode>,
         offset: [f32; 2],
         scale: f32,
+        rotation: f32,
         last_frame: std::time::Instant,
+        // Stats display
+        overlay_mode: OverlayMode,
+        frame_times: std::collections::VecDeque<f32>,
+        system_monitor: SystemMonitor,
     }
 
     impl Renderer {
@@ -510,7 +520,11 @@ fn run_windowed() -> Result<()> {
                 pressed_keys: HashSet::new(),
                 offset: [0.0, 0.0],
                 scale: 1.0,
+                rotation: 0.0,
                 last_frame: std::time::Instant::now(),
+                overlay_mode: OverlayMode::Off,
+                frame_times: std::collections::VecDeque::with_capacity(60),
+                system_monitor: SystemMonitor::new(),
             })
         }
 
@@ -563,50 +577,114 @@ fn run_windowed() -> Result<()> {
             let dt = now.duration_since(self.last_frame).as_secs_f32();
             self.last_frame = now;
 
-            let pan_speed = 200.0 * dt * self.scale;
-            let zoom_speed = 1.5 * dt;
+            // Track frame times for FPS
+            self.frame_times.push_back(dt);
+            if self.frame_times.len() > 60 {
+                self.frame_times.pop_front();
+            }
 
-            // W/S = zoom in/out
+            let pan_speed = 200.0 * dt / self.scale;  // faster when zoomed out
+            let zoom_speed = 1.5 * dt;
+            let rot_speed = 2.0 * dt;
+
+            // WASD = pan
+            if self.pressed_keys.contains(&KeyCode::KeyA) {
+                self.offset[0] -= pan_speed;
+            }
+            if self.pressed_keys.contains(&KeyCode::KeyD) {
+                self.offset[0] += pan_speed;
+            }
             if self.pressed_keys.contains(&KeyCode::KeyW) {
-                self.scale *= 1.0 + zoom_speed;
+                self.offset[1] += pan_speed;
             }
             if self.pressed_keys.contains(&KeyCode::KeyS) {
+                self.offset[1] -= pan_speed;
+            }
+
+            // Arrow up/down = zoom in/out
+            if self.pressed_keys.contains(&KeyCode::ArrowUp) {
+                self.scale *= 1.0 + zoom_speed;
+            }
+            if self.pressed_keys.contains(&KeyCode::ArrowDown) {
                 self.scale *= 1.0 - zoom_speed;
             }
             self.scale = self.scale.clamp(0.1, 10.0);
 
-            // A/D = pan left/right
-            if self.pressed_keys.contains(&KeyCode::KeyA) {
-                self.offset[0] += pan_speed;
+            // Q/E = rotate scene
+            if self.pressed_keys.contains(&KeyCode::KeyQ) {
+                self.rotation += rot_speed;
             }
-            if self.pressed_keys.contains(&KeyCode::KeyD) {
-                self.offset[0] -= pan_speed;
-            }
-
-            // Space/Ctrl = pan up/down
-            if self.pressed_keys.contains(&KeyCode::Space) {
-                self.offset[1] += pan_speed;
-            }
-            if self.pressed_keys.contains(&KeyCode::ControlLeft) || self.pressed_keys.contains(&KeyCode::ControlRight) {
-                self.offset[1] -= pan_speed;
+            if self.pressed_keys.contains(&KeyCode::KeyE) {
+                self.rotation -= rot_speed;
             }
 
             self.update_uniforms();
+
+            // Update system monitor and title if overlay shown
+            self.system_monitor.update();
+            if self.overlay_mode != OverlayMode::Off {
+                self.update_title();
+            }
         }
 
         fn update_uniforms(&self) {
             let uniforms = Uniforms {
                 screen_size: [self.config.width as f32, self.config.height as f32],
                 padding: self.offset,
-                text_params: [self.char_count as f32, self.scale, 0.0, 0.0],
+                text_params: [self.char_count as f32, self.scale, self.rotation, 0.0],
             };
             self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         }
 
-        fn reset(&mut self) {
+        fn reset_rotation(&mut self) {
+            self.rotation = 0.0;
+            self.update_uniforms();
+        }
+
+        fn reset_all(&mut self) {
             self.offset = [0.0, 0.0];
             self.scale = 1.0;
+            self.rotation = 0.0;
             self.update_uniforms();
+        }
+
+        fn toggle_overlay_app(&mut self) {
+            self.overlay_mode = match self.overlay_mode {
+                OverlayMode::App => OverlayMode::Off,
+                _ => OverlayMode::App,
+            };
+            self.update_title();
+        }
+
+        fn toggle_overlay_full(&mut self) {
+            self.overlay_mode = match self.overlay_mode {
+                OverlayMode::Full => OverlayMode::Off,
+                _ => OverlayMode::Full,
+            };
+            self.update_title();
+        }
+
+        fn update_title(&self) {
+            const BASE_TITLE: &str = "Demo 4: 2D Vector SDF Text | WASD pan, Arrows zoom, Q/E rotate, R/T reset, F/G, Esc";
+            match self.overlay_mode {
+                OverlayMode::Off => {
+                    self.window.set_title(BASE_TITLE);
+                }
+                mode => {
+                    let fps = if !self.frame_times.is_empty() {
+                        let avg_dt: f32 = self.frame_times.iter().sum::<f32>() / self.frame_times.len() as f32;
+                        1.0 / avg_dt
+                    } else {
+                        0.0
+                    };
+                    let sys_stats = self.system_monitor.format_stats(mode);
+                    let title = format!(
+                        "Demo 4: 2D Vector SDF Text | FPS: {:.0} | {}",
+                        fps, sys_stats
+                    );
+                    self.window.set_title(&title);
+                }
+            }
         }
     }
 
@@ -618,7 +696,7 @@ fn run_windowed() -> Result<()> {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             if self.renderer.is_none() {
                 let window_attrs = Window::default_attributes()
-                    .with_title("Demo 4: 2D Vector SDF Text | W/S zoom, A/D pan X, Space/Ctrl pan Y, R reset, Esc quit")
+                    .with_title("Demo 4: 2D Vector SDF Text | WASD pan, Arrows zoom, Q/E rotate, R/T reset, F/G, Esc")
                     .with_inner_size(winit::dpi::PhysicalSize::new(WIDTH, TEXT_WINDOW_HEIGHT));
 
                 let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
@@ -657,7 +735,10 @@ fn run_windowed() -> Result<()> {
                         // Handle single-press actions
                         if event.state == ElementState::Pressed {
                             match code {
-                                KeyCode::KeyR | KeyCode::KeyT => renderer.reset(),
+                                KeyCode::KeyR => renderer.reset_rotation(),
+                                KeyCode::KeyT => renderer.reset_all(),
+                                KeyCode::KeyF => renderer.toggle_overlay_app(),
+                                KeyCode::KeyG => renderer.toggle_overlay_full(),
                                 KeyCode::Escape => {
                                     event_loop.exit();
                                     return;

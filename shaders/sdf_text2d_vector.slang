@@ -298,12 +298,19 @@ float4 fs_main(VertexOutput input) : SV_Target {
     // Convert UV to pixel coordinates, flip Y to match font coordinate system
     float2 pixelPos = float2(input.uv.x, 1.0 - input.uv.y) * uniforms.screenSize;
 
-    // Apply pan/zoom transform around screen center
+    // Apply pan/zoom/rotate transform around screen center
     float2 center = uniforms.screenSize * 0.5;
     float scale = uniforms.textParams.y;
+    float rotation = uniforms.textParams.z;
     float2 offset = uniforms.offset;
 
-    // Transform: zoom around center, then apply offset
+    // Rotate around center
+    float c = cos(rotation);
+    float s = sin(rotation);
+    float2 p = pixelPos - center;
+    pixelPos = float2(p.x * c - p.y * s, p.x * s + p.y * c) + center;
+
+    // Then apply zoom and offset
     pixelPos = (pixelPos - center) / scale + center + offset;
 
     // Compute SDF
