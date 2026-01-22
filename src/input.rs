@@ -490,8 +490,8 @@ impl InputHandler {
             }
             mode => {
                 let pos = camera.position;
-                let yaw_deg = camera.yaw().to_degrees();
-                let pitch_deg = camera.pitch().to_degrees();
+                let yaw_deg = camera.get_yaw().to_degrees();
+                let pitch_deg = camera.get_pitch().to_degrees();
                 let sys_stats = self.system_monitor.format_stats(mode);
                 let title = format!(
                     "{} | FPS: {:.0} | {} | Pos: ({:.1}, {:.1}, {:.1}) | Yaw: {:.0} Pitch: {:.0} | Speed: {:.1}",

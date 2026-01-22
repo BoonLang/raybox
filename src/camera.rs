@@ -1,14 +1,16 @@
 use glam::{Mat4, Quat, Vec3};
 
 /// Fly camera with game-style WASD + mouse look controls
-/// Uses quaternion for orientation - all rotations are camera-relative
+/// Uses decoupled yaw/pitch/roll to avoid gimbal lock and roll drift
 pub struct FlyCamera {
     /// World position
     pub position: Vec3,
-    /// Camera orientation (quaternion)
-    pub orientation: Quat,
-    /// Intentional roll from Q/E input (radians) - preserved during look
-    pub intentional_roll: f32,
+    /// Yaw angle (rotation around world Y) in radians
+    pub yaw: f32,
+    /// Pitch angle (rotation around local X) in radians
+    pub pitch: f32,
+    /// Roll angle from Q/E input (rotation around local Z) in radians
+    pub roll: f32,
     /// Field of view (radians)
     pub fov: f32,
     /// Near clip plane
@@ -25,14 +27,25 @@ impl Default for FlyCamera {
     fn default() -> Self {
         Self {
             position: Vec3::new(0.0, 0.0, 4.0),
-            orientation: Quat::IDENTITY,
-            intentional_roll: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            roll: 0.0,
             fov: std::f32::consts::FRAC_PI_4, // 45 degrees
             near: 0.1,
             far: 100.0,
             move_speed: 3.0,
             look_sensitivity: 0.003,
         }
+    }
+}
+
+impl FlyCamera {
+    /// Compute orientation quaternion from yaw/pitch/roll
+    fn orientation(&self) -> Quat {
+        // Order: yaw (world Y) -> pitch (local X) -> roll (local Z)
+        Quat::from_rotation_y(self.yaw)
+            * Quat::from_rotation_x(self.pitch)
+            * Quat::from_rotation_z(self.roll)
     }
 }
 
@@ -45,17 +58,17 @@ impl FlyCamera {
 
     /// Forward direction (where camera looks)
     pub fn forward(&self) -> Vec3 {
-        self.orientation * -Vec3::Z
+        self.orientation() * -Vec3::Z
     }
 
     /// Right direction
     pub fn right(&self) -> Vec3 {
-        self.orientation * Vec3::X
+        self.orientation() * Vec3::X
     }
 
     /// Up direction
     pub fn up(&self) -> Vec3 {
-        self.orientation * Vec3::Y
+        self.orientation() * Vec3::Y
     }
 
     /// Get current position
@@ -83,48 +96,32 @@ impl FlyCamera {
         self.view_projection_matrix(aspect_ratio).inverse()
     }
 
-    /// Handle mouse look - screen-relative with intentional roll preserved
+    /// Handle mouse look - screen-relative with decoupled yaw/pitch/roll
     ///
-    /// Uses local axis rotations for screen-relative feel, then rebuilds
-    /// orientation with zero drift roll but reapplies intentional Q/E roll.
+    /// Transforms mouse input by roll angle for screen-relative feel,
+    /// then updates yaw/pitch directly. No drift possible.
     pub fn look(&mut self, dx: f32, dy: f32) {
-        // 1. Screen-relative rotations (local axes - feels natural)
-        let yaw_rot = Quat::from_axis_angle(self.up(), -dx * self.look_sensitivity);
-        let pitch_rot = Quat::from_axis_angle(self.right(), -dy * self.look_sensitivity);
-        self.orientation = (yaw_rot * pitch_rot * self.orientation).normalize();
+        // Transform mouse input by roll for screen-relative feel
+        let (cos_r, sin_r) = (self.roll.cos(), self.roll.sin());
+        let yaw_delta = (dx * cos_r + dy * sin_r) * self.look_sensitivity;
+        let pitch_delta = (-dx * sin_r + dy * cos_r) * self.look_sensitivity;
 
-        // 2. Rebuild orientation: zero drift roll, then reapply intentional roll
-        let forward = self.forward();
+        // Update yaw/pitch directly
+        self.yaw -= yaw_delta;
+        self.pitch -= pitch_delta;
 
-        // Skip near gimbal lock (looking straight up/down)
-        if forward.y.abs() < 0.99 {
-            // Extract yaw/pitch from forward direction
-            let yaw = forward.x.atan2(-forward.z);
-            let pitch = forward.y.asin();
-
-            // Build orientation with zero roll
-            let base = Quat::from_rotation_y(-yaw) * Quat::from_rotation_x(pitch);
-
-            // Reapply intentional roll
-            let roll_rot = Quat::from_axis_angle(base * -Vec3::Z, self.intentional_roll);
-            self.orientation = (roll_rot * base).normalize();
-        }
+        // Clamp pitch to ±89° to avoid looking straight up/down
+        self.pitch = self.pitch.clamp(-1.55, 1.55);
     }
 
     /// Roll camera (Q/E keys) - rotates around forward axis
     pub fn roll_camera(&mut self, delta: f32) {
-        self.intentional_roll += delta;
-        let roll_rot = Quat::from_axis_angle(self.forward(), delta);
-        self.orientation = (roll_rot * self.orientation).normalize();
+        self.roll += delta;
     }
 
     /// Reset roll to horizontal (aligns up with world Y)
     pub fn reset_roll(&mut self) {
-        self.intentional_roll = 0.0;
-        let forward = self.forward();
-        let yaw = forward.x.atan2(-forward.z);
-        let pitch = forward.y.asin();
-        self.orientation = Quat::from_rotation_y(-yaw) * Quat::from_rotation_x(pitch);
+        self.roll = 0.0;
     }
 
     /// Move forward/backward (W/S keys)
@@ -156,29 +153,28 @@ impl FlyCamera {
     /// Reset camera to default position and orientation
     pub fn reset(&mut self) {
         self.position = Vec3::new(0.0, 0.0, 4.0);
-        self.orientation = Quat::IDENTITY;
-        self.intentional_roll = 0.0;
+        self.yaw = 0.0;
+        self.pitch = 0.0;
+        self.roll = 0.0;
         self.move_speed = 3.0;
     }
 
     /// Point the camera at a target position
     pub fn look_at(&mut self, target: Vec3) {
-        self.intentional_roll = 0.0;
+        self.roll = 0.0;
         let dir = (target - self.position).normalize();
-        let yaw = dir.x.atan2(-dir.z);
-        let pitch = dir.y.asin();
-        self.orientation = Quat::from_rotation_y(-yaw) * Quat::from_rotation_x(pitch);
+        self.yaw = -dir.x.atan2(-dir.z);
+        self.pitch = dir.y.asin();
     }
 
     /// Get yaw angle (for debug display)
-    pub fn yaw(&self) -> f32 {
-        let forward = self.forward();
-        forward.x.atan2(-forward.z)
+    pub fn get_yaw(&self) -> f32 {
+        self.yaw
     }
 
     /// Get pitch angle (for debug display)
-    pub fn pitch(&self) -> f32 {
-        self.forward().y.asin()
+    pub fn get_pitch(&self) -> f32 {
+        self.pitch
     }
 }
 
