@@ -24,14 +24,16 @@ impl TextVertex {
             array_stride: std::mem::size_of::<TextVertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
+                // position -> location 0 (POSITION)
                 wgpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
                     format: wgpu::VertexFormat::Float32x2,
                 },
+                // uv -> location 6 (TEXCOORD0 maps to location 6 in Slang)
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-                    shader_location: 1,
+                    shader_location: 6,
                     format: wgpu::VertexFormat::Float32x2,
                 },
             ],
@@ -83,35 +85,35 @@ impl VectorGlyphInstance {
             array_stride: std::mem::size_of::<VectorGlyphInstance>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
-                // offset (location 2)
+                // offset -> location 1 (TEXCOORD1)
                 wgpu::VertexAttribute {
                     offset: 0,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // size -> location 2 (TEXCOORD2)
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
                     shader_location: 2,
                     format: wgpu::VertexFormat::Float32x2,
                 },
-                // size (location 3)
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-                    shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-                // glyph_bounds (location 4)
+                // glyph_bounds -> location 3 (TEXCOORD3)
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: 4,
+                    shader_location: 3,
                     format: wgpu::VertexFormat::Float32x4,
                 },
-                // grid_info (location 5)
+                // grid_info -> location 4 (TEXCOORD4, Uint32x4)
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                    shader_location: 5,
+                    shader_location: 4,
                     format: wgpu::VertexFormat::Uint32x4,
                 },
-                // color (location 6)
+                // color -> location 5 (TEXCOORD5)
                 wgpu::VertexAttribute {
                     offset: (std::mem::size_of::<[f32; 8]>() + std::mem::size_of::<[u32; 4]>())
                         as wgpu::BufferAddress,
-                    shader_location: 6,
+                    shader_location: 5,
                     format: wgpu::VertexFormat::Float32x4,
                 },
             ],

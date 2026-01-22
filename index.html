@@ -15,13 +15,189 @@
         canvas {
             border: 1px solid #333;
         }
+        #overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #fff;
+            font-family: monospace;
+            font-size: 14px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 4px;
+            white-space: pre;
+            pointer-events: none;
+        }
+        #reload-indicator {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: #0f0;
+            padding: 20px 40px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 18px;
+            display: none;
+            z-index: 1000;
+        }
     </style>
 </head>
 <body>
     <canvas id="canvas" width="800" height="600"></canvas>
+    <div id="overlay"></div>
+    <div id="reload-indicator">Reloading...</div>
     <script type="module">
-        import init from './pkg/raybox.js';
-        init();
+        // Parse URL parameters
+        const params = new URLSearchParams(window.location.search);
+        const initialDemo = parseInt(params.get('demo') || '1');
+        const controlEnabled = params.get('control') === '1' || params.get('control') === 'true';
+        const hotReloadEnabled = params.get('hotreload') === '1' || params.get('hotreload') === 'true';
+        const controlUrl = params.get('control_url') || 'ws://127.0.0.1:9300';
+
+        // State for hot-reload
+        let wasmModule = null;
+        let savedStateJson = null;
+        let hotReloadWs = null;
+
+        // Show/hide reload indicator
+        function showReloadIndicator(show) {
+            document.getElementById('reload-indicator').style.display = show ? 'block' : 'none';
+        }
+
+        // Load and initialize WASM module
+        async function loadWasm() {
+            // Add cache-busting timestamp for hot-reload
+            const timestamp = hotReloadEnabled ? `?t=${Date.now()}` : '';
+            const module = await import(`./pkg/raybox.js${timestamp}`);
+            await module.default();
+            return module;
+        }
+
+        // Main initialization
+        async function init() {
+            try {
+                wasmModule = await loadWasm();
+
+                // Restore state if we have saved state from a previous reload
+                if (savedStateJson && savedStateJson !== '{}') {
+                    wasmModule.restore_state(savedStateJson);
+                    savedStateJson = null;
+                }
+
+                console.log('Raybox initialized, demo:', initialDemo);
+            } catch (e) {
+                console.error('Failed to initialize WASM:', e);
+            }
+        }
+
+        // Hot-reload: save state, reload WASM, restore state
+        async function performHotReload() {
+            if (!wasmModule) {
+                console.warn('No WASM module loaded, skipping hot-reload');
+                return;
+            }
+
+            console.log('Hot-reload triggered');
+            showReloadIndicator(true);
+
+            try {
+                // Save current state
+                savedStateJson = wasmModule.save_state_for_reload();
+                console.log('Saved state:', savedStateJson);
+
+                // Clean up current module
+                wasmModule.cleanup_for_reload();
+
+                // Brief delay to allow GPU resources to be released
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Reload WASM module (with cache-busting)
+                wasmModule = await loadWasm();
+
+                // Restore state
+                if (savedStateJson && savedStateJson !== '{}') {
+                    wasmModule.restore_state(savedStateJson);
+                    savedStateJson = null;
+                }
+
+                console.log('Hot-reload completed');
+            } catch (e) {
+                console.error('Hot-reload failed:', e);
+            } finally {
+                showReloadIndicator(false);
+            }
+        }
+
+        // Set up WebSocket for hot-reload notifications
+        function setupHotReloadWebSocket() {
+            if (!hotReloadEnabled) return;
+
+            const wsUrl = params.get('reload_url') || controlUrl;
+            console.log('Connecting to hot-reload WebSocket:', wsUrl);
+
+            try {
+                hotReloadWs = new WebSocket(wsUrl);
+
+                hotReloadWs.onopen = () => {
+                    console.log('Hot-reload WebSocket connected');
+                };
+
+                hotReloadWs.onmessage = async (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        // Check for reload command (either direct or via control protocol)
+                        if (data.command?.type === 'reload' ||
+                            data.command?.type === 'reloadWasm' ||
+                            data.type === 'reload') {
+                            await performHotReload();
+                            // Send success response if it was a command with an ID
+                            if (data.id !== undefined) {
+                                hotReloadWs.send(JSON.stringify({
+                                    id: data.id,
+                                    response: { type: 'success', data: { message: 'reload_complete' } }
+                                }));
+                            }
+                        }
+                        // Check for WasmReload event from dev server
+                        else if (data.event?.type === 'wasmReload') {
+                            console.log('Received wasmReload event from dev server');
+                            await performHotReload();
+                        }
+                        // Check for BuildCompleted event (as fallback)
+                        else if (data.event?.type === 'buildCompleted' && data.event?.success) {
+                            console.log('Build completed, reloading WASM...');
+                            await performHotReload();
+                        }
+                    } catch (e) {
+                        // Might be a plain text message
+                        if (event.data === 'reload') {
+                            await performHotReload();
+                        }
+                    }
+                };
+
+                hotReloadWs.onclose = () => {
+                    console.log('Hot-reload WebSocket disconnected, reconnecting...');
+                    setTimeout(setupHotReloadWebSocket, 2000);
+                };
+
+                hotReloadWs.onerror = (e) => {
+                    console.error('Hot-reload WebSocket error:', e);
+                };
+            } catch (e) {
+                console.error('Failed to setup hot-reload WebSocket:', e);
+                setTimeout(setupHotReloadWebSocket, 2000);
+            }
+        }
+
+        // Expose performHotReload globally for manual triggering
+        window.rayboxHotReload = performHotReload;
+
+        // Initialize
+        await init();
+        setupHotReloadWebSocket();
     </script>
 </body>
 </html>

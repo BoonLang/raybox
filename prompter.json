@@ -5,7 +5,7 @@
     "cl"
   ],
   "store_prompts": null,
-  "supervisor_prompt": "Do not stop until plan is complete and examples 4 (2d text), 5 (3d relief), 6 (3d text) works and text is readable (honestly review their screenshots with a subagents). Use long texr and title from example 4 for examples 5 and 6. Update justfile to have command 'just ex_screenshot [0-6]' working similarly to 'just screenshot'. All text examples have to use new architecture and have title and long text (1000 words)",
+  "supervisor_prompt": "plan:\n  I want to run `just demos` to run the our app where I will be able to switch examples by\n  pressing keys 1-6 (corresponding to current `just ex 1-6`. Ther'll be new \"dummy\" example\n  0 that will be just empty window with nothing (to compare how HW resource will change\n  dependeing on individual examples). Also on pressing `k` key, keynindings/key hints will\n  show for each examples simialry to current dat with f/g key. But, instead of drawing\n  current hw datat into window title, I want you to draw it to overlay directly to the\n  renderred content. Data standardly shown after pressink `f` will be display autoamtically\n  by default. All examples together with overlays need to run in browser as well. Once done,\n  verify all examples - you should be able to make screenshots of any example in both\n  native and browser environemtn and also you should be able to switch example\n  programitcally in both native window and browser (like user would do with numbers) so you\n  can reuse one native windows and one chromium tab for all needed testing.",
   "completion_condition": "+completed+",
   "completion_command": null,
   "protected_patterns": [],

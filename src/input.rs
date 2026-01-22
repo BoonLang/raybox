@@ -14,7 +14,6 @@
 //! - Esc: Release capture (if captured), else exit
 
 use crate::camera::FlyCamera;
-use glam::Vec3;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
@@ -24,21 +23,8 @@ use winit::{
     window::{CursorGrabMode, Window},
 };
 
-/// Camera configuration for initial position and orientation
-#[derive(Clone, Debug)]
-pub struct CameraConfig {
-    pub initial_position: Vec3,
-    pub look_at_target: Vec3,
-}
-
-impl Default for CameraConfig {
-    fn default() -> Self {
-        Self {
-            initial_position: Vec3::new(0.0, 0.0, 4.0),
-            look_at_target: Vec3::ZERO,
-        }
-    }
-}
+// Re-export CameraConfig from demo_core for backward compatibility
+pub use crate::demo_core::CameraConfig;
 
 /// Debug overlay display mode
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -56,6 +42,7 @@ pub enum InputAction {
     ToggleCapture,
     ToggleOverlayApp,
     ToggleOverlayFull,
+    ToggleKeybindings,
     ResetRoll,
     ResetCamera,
 }
@@ -308,7 +295,7 @@ impl InputHandler {
         Self {
             pressed_keys: HashSet::new(),
             mouse_captured: false,
-            overlay_mode: OverlayMode::Off,
+            overlay_mode: OverlayMode::App, // Stats shown by default
             config,
             frame_times: VecDeque::with_capacity(60),
             last_fps: 0.0,
@@ -350,6 +337,7 @@ impl InputHandler {
             KeyCode::Tab => Some(InputAction::ToggleCapture),
             KeyCode::KeyF => Some(InputAction::ToggleOverlayApp),
             KeyCode::KeyG => Some(InputAction::ToggleOverlayFull),
+            KeyCode::KeyK => Some(InputAction::ToggleKeybindings),
             KeyCode::KeyR => Some(InputAction::ResetRoll),
             KeyCode::KeyT | KeyCode::Home => Some(InputAction::ResetCamera),
             _ => None,
@@ -500,6 +488,22 @@ impl InputHandler {
                 window.set_title(&title);
             }
         }
+    }
+
+    /// Get formatted stats string for overlay display
+    pub fn format_stats(&self) -> String {
+        match self.overlay_mode {
+            OverlayMode::Off => String::new(),
+            mode => {
+                let sys_stats = self.system_monitor.format_stats(mode);
+                format!("FPS: {:.0}\n{}", self.last_fps, sys_stats)
+            }
+        }
+    }
+
+    /// Get current FPS
+    pub fn fps(&self) -> f32 {
+        self.last_fps
     }
 }
 

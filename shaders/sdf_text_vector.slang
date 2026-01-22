@@ -245,9 +245,18 @@ float4 fs_main(VertexOutput input) : SV_Target {
     float glyphEmHeight = input.glyphBounds.w - input.glyphBounds.y;
     float pixelSize = max(dUV.x * glyphEmWidth, dUV.y * glyphEmHeight);
 
-    // Anti-aliased edge
-    float alpha = smoothstep(pixelSize, -pixelSize, d);
+    // Anti-aliased fill (inside the glyph)
+    float fillAlpha = smoothstep(pixelSize, -pixelSize, d);
+
+    // Dark outline/shadow for readability
+    float outlineWidth = pixelSize * 3.0;
+    float outlineAlpha = smoothstep(outlineWidth, 0.0, d);
+    float3 outlineColor = float3(0.0, 0.0, 0.0);
+
+    // Composite: outline behind, fill on top
+    float3 color = lerp(outlineColor, input.color.rgb, fillAlpha);
+    float alpha = outlineAlpha;
 
     // Output with premultiplied alpha
-    return float4(input.color.rgb * alpha, alpha) * input.color.a;
+    return float4(color * alpha, alpha) * input.color.a;
 }

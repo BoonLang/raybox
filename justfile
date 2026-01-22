@@ -2,6 +2,14 @@
 default:
     cargo run --features windowed
 
+# Run unified demo mode (press 0-6 to switch demos)
+demos:
+    cargo run --bin demos --features windowed
+
+# Run demos starting from specific demo: just demos-from 3
+demos-from num:
+    RAYBOX_DEMO={{num}} cargo run --bin demos --features windowed
+
 # Run example by number: just ex 1, just ex 2, etc.
 ex num:
     #!/usr/bin/env bash
@@ -108,4 +116,42 @@ setup:
     cargo install wasm-bindgen-cli
     cargo install miniserve
     rustup target add wasm32-unknown-unknown
+
+# Run demos with control server enabled
+demos-control:
+    cargo run --bin demos --features windowed,overlay,control -- --control
+
+# Run demos with simple overlay (cosmic-text)
+demos-overlay:
+    cargo run --bin demos --features windowed,overlay
+
+# Start MCP server
+mcp:
+    cargo run --bin raybox-mcp --features mcp
+
+# Run CLI control tool
+ctl *args:
+    cargo run --bin raybox-ctl --features control -- {{args}}
+
+# Development mode with hot-reload (native)
+dev:
+    cargo run --bin raybox-dev --features hot-reload
+
+# Development mode with hot-reload (web)
+dev-web:
+    cargo run --bin raybox-dev --features hot-reload -- --web
+
+# Open browser with hot-reload enabled (use with dev-web)
+open-browser-hotreload:
+    chromium \
+        --user-data-dir=./chromium_data \
+        --no-first-run \
+        --no-default-browser-check \
+        --disable-session-crashed-bubble \
+        --hide-crash-restore-bubble \
+        --test-type \
+        --enable-unsafe-webgpu \
+        --enable-features=Vulkan,WebGPU,UseSkiaRenderer \
+        --use-angle=vulkan \
+        "http://localhost:8000?hotreload=1&control=1"
 

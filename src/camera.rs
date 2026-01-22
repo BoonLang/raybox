@@ -164,6 +164,11 @@ impl FlyCamera {
         self.move_speed = 3.0;
     }
 
+    /// Set position (used by CameraController)
+    pub fn set_position(&mut self, pos: Vec3) {
+        self.position = pos;
+    }
+
     /// Point the camera at a target position
     pub fn look_at(&mut self, target: Vec3) {
         self.roll = 0.0;
@@ -180,6 +185,11 @@ impl FlyCamera {
     /// Get pitch angle (for debug display)
     pub fn get_pitch(&self) -> f32 {
         self.pitch
+    }
+
+    /// Get roll angle (for debug display)
+    pub fn get_roll(&self) -> f32 {
+        self.roll
     }
 }
 
@@ -349,4 +359,5 @@ impl Uniforms {
         self.render_params[0] = width as f32;
         self.render_params[1] = height as f32;
     }
+
 }

@@ -686,6 +686,9 @@ fn run_windowed() -> Result<()> {
                                 InputAction::ResetCamera => {
                                     renderer.input.reset_camera(&mut renderer.camera);
                                 }
+                                InputAction::ToggleKeybindings => {
+                                    // Not used in standalone examples
+                                }
                             }
                         }
                     }
