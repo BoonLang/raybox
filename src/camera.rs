@@ -7,6 +7,8 @@ pub struct FlyCamera {
     pub position: Vec3,
     /// Camera orientation (quaternion)
     pub orientation: Quat,
+    /// Intentional roll from Q/E input (radians) - preserved during look
+    pub intentional_roll: f32,
     /// Field of view (radians)
     pub fov: f32,
     /// Near clip plane
@@ -24,6 +26,7 @@ impl Default for FlyCamera {
         Self {
             position: Vec3::new(0.0, 0.0, 4.0),
             orientation: Quat::IDENTITY,
+            intentional_roll: 0.0,
             fov: std::f32::consts::FRAC_PI_4, // 45 degrees
             near: 0.1,
             far: 100.0,
@@ -80,33 +83,44 @@ impl FlyCamera {
         self.view_projection_matrix(aspect_ratio).inverse()
     }
 
-    /// Handle mouse look - screen-relative using local axis rotations
+    /// Handle mouse look - screen-relative with intentional roll preserved
     ///
-    /// Uses pure local axis rotations which naturally produce screen-relative
-    /// controls regardless of roll angle. No complex compensation needed.
-    ///
-    /// Note: Continuous circular mouse movements can accumulate small roll drift.
-    /// Press R to reset roll if needed.
+    /// Uses local axis rotations for screen-relative feel, then rebuilds
+    /// orientation with zero drift roll but reapplies intentional Q/E roll.
     pub fn look(&mut self, dx: f32, dy: f32) {
-        // Yaw: rotate around camera's LOCAL up axis
+        // 1. Screen-relative rotations (local axes - feels natural)
         let yaw_rot = Quat::from_axis_angle(self.up(), -dx * self.look_sensitivity);
-
-        // Pitch: rotate around camera's LOCAL right axis
         let pitch_rot = Quat::from_axis_angle(self.right(), -dy * self.look_sensitivity);
-
-        // Apply both rotations
         self.orientation = (yaw_rot * pitch_rot * self.orientation).normalize();
+
+        // 2. Rebuild orientation: zero drift roll, then reapply intentional roll
+        let forward = self.forward();
+
+        // Skip near gimbal lock (looking straight up/down)
+        if forward.y.abs() < 0.99 {
+            // Extract yaw/pitch from forward direction
+            let yaw = forward.x.atan2(-forward.z);
+            let pitch = forward.y.asin();
+
+            // Build orientation with zero roll
+            let base = Quat::from_rotation_y(-yaw) * Quat::from_rotation_x(pitch);
+
+            // Reapply intentional roll
+            let roll_rot = Quat::from_axis_angle(base * -Vec3::Z, self.intentional_roll);
+            self.orientation = (roll_rot * base).normalize();
+        }
     }
 
     /// Roll camera (Q/E keys) - rotates around forward axis
     pub fn roll_camera(&mut self, delta: f32) {
+        self.intentional_roll += delta;
         let roll_rot = Quat::from_axis_angle(self.forward(), delta);
         self.orientation = (roll_rot * self.orientation).normalize();
     }
 
     /// Reset roll to horizontal (aligns up with world Y)
     pub fn reset_roll(&mut self) {
-        // Extract yaw and pitch from current orientation, reset roll
+        self.intentional_roll = 0.0;
         let forward = self.forward();
         let yaw = forward.x.atan2(-forward.z);
         let pitch = forward.y.asin();
@@ -143,11 +157,13 @@ impl FlyCamera {
     pub fn reset(&mut self) {
         self.position = Vec3::new(0.0, 0.0, 4.0);
         self.orientation = Quat::IDENTITY;
+        self.intentional_roll = 0.0;
         self.move_speed = 3.0;
     }
 
     /// Point the camera at a target position
     pub fn look_at(&mut self, target: Vec3) {
+        self.intentional_roll = 0.0;
         let dir = (target - self.position).normalize();
         let yaw = dir.x.atan2(-dir.z);
         let pitch = dir.y.asin();
