@@ -1,7 +1,10 @@
 use glam::{Mat4, Quat, Vec3};
 
-/// Fly camera with game-style WASD + mouse look controls
-/// Uses decoupled yaw/pitch/roll to avoid gimbal lock and roll drift
+/// Fly camera with game-style WASD + mouse look controls.
+///
+/// Uses decoupled yaw/pitch/roll angles (not a single quaternion) to eliminate
+/// roll drift. Mouse input is transformed by roll for screen-relative feel.
+/// Pitch is clamped to ±89° to avoid gimbal lock singularity.
 pub struct FlyCamera {
     /// World position
     pub position: Vec3,
@@ -40,9 +43,9 @@ impl Default for FlyCamera {
 }
 
 impl FlyCamera {
-    /// Compute orientation quaternion from yaw/pitch/roll
+    /// Compute orientation quaternion from decoupled yaw/pitch/roll.
+    /// Order: yaw (world Y) → pitch (local X) → roll (local Z)
     fn orientation(&self) -> Quat {
-        // Order: yaw (world Y) -> pitch (local X) -> roll (local Z)
         Quat::from_rotation_y(self.yaw)
             * Quat::from_rotation_x(self.pitch)
             * Quat::from_rotation_z(self.roll)
@@ -96,22 +99,24 @@ impl FlyCamera {
         self.view_projection_matrix(aspect_ratio).inverse()
     }
 
-    /// Handle mouse look - screen-relative with decoupled yaw/pitch/roll
+    /// Handle mouse look with screen-relative controls.
     ///
-    /// Transforms mouse input by roll angle for screen-relative feel,
-    /// then updates yaw/pitch directly. No drift possible.
+    /// Mouse input is rotated by the current roll angle so that "left" on screen
+    /// always looks left, even when the camera is rolled. Updates yaw/pitch
+    /// directly (no quaternion drift).
     pub fn look(&mut self, dx: f32, dy: f32) {
-        // Transform mouse input by roll for screen-relative feel
+        // Rotate mouse input by roll for screen-relative feel:
+        // When rolled, screen-left is no longer world-yaw, so we transform
         let (cos_r, sin_r) = (self.roll.cos(), self.roll.sin());
         let yaw_delta = (dx * cos_r + dy * sin_r) * self.look_sensitivity;
         let pitch_delta = (-dx * sin_r + dy * cos_r) * self.look_sensitivity;
 
-        // Update yaw/pitch directly
         self.yaw -= yaw_delta;
         self.pitch -= pitch_delta;
 
-        // Clamp pitch to ±89° to avoid looking straight up/down
-        self.pitch = self.pitch.clamp(-1.55, 1.55);
+        // Clamp pitch to ±89° to avoid gimbal lock singularity at poles
+        const MAX_PITCH: f32 = 1.553; // ~89°
+        self.pitch = self.pitch.clamp(-MAX_PITCH, MAX_PITCH);
     }
 
     /// Roll camera (Q/E keys) - rotates around forward axis
