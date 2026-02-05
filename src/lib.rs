@@ -12,9 +12,6 @@ pub mod text;
 #[cfg(feature = "windowed")]
 pub mod input;
 
-#[cfg(feature = "windowed")]
-pub mod overlay;
-
 #[cfg(feature = "overlay")]
 pub mod simple_overlay;
 

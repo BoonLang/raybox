@@ -9,10 +9,7 @@ use crate::constants::{HEIGHT, WIDTH};
 #[allow(unused_imports)]
 use crate::input::{InputAction, InputHandler, OverlayMode};
 
-#[cfg(feature = "overlay")]
 use crate::simple_overlay::SimpleOverlay;
-#[cfg(not(feature = "overlay"))]
-use crate::overlay::OverlayRenderer;
 
 #[cfg(feature = "control")]
 use crate::control::{
@@ -71,10 +68,7 @@ pub struct DemoRunner {
     input: InputHandler,
 
     // Overlay
-    #[cfg(feature = "overlay")]
     overlay: SimpleOverlay,
-    #[cfg(not(feature = "overlay"))]
-    overlay: OverlayRenderer,
     show_keybindings: bool,
 
     // 2D demo controls
@@ -159,10 +153,7 @@ impl DemoRunner {
         input.setup_camera(&mut camera);
 
         // Create overlay renderer
-        #[cfg(feature = "overlay")]
         let overlay = SimpleOverlay::new(&device, &queue, surface_format, WIDTH, HEIGHT)?;
-        #[cfg(not(feature = "overlay"))]
-        let overlay = OverlayRenderer::new(&device, &queue, surface_format, WIDTH, HEIGHT)?;
 
         Ok(Self {
             window,
@@ -792,10 +783,7 @@ impl DemoRunner {
                 occlusion_query_set: None,
             });
 
-            #[cfg(feature = "overlay")]
             self.overlay.render(&mut render_pass);
-            #[cfg(not(feature = "overlay"))]
-            self.overlay.render(&mut render_pass, &self.queue);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -848,18 +836,9 @@ impl DemoRunner {
             None
         };
 
-        #[cfg(feature = "overlay")]
         self.overlay.update(
             &self.queue,
             &self.device,
-            &stats,
-            keybindings.as_deref(),
-            self.config.width,
-            self.config.height,
-        );
-        #[cfg(not(feature = "overlay"))]
-        self.overlay.update(
-            &self.queue,
             &stats,
             keybindings.as_deref(),
             self.config.width,

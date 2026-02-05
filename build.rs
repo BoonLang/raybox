@@ -53,13 +53,6 @@ fn main() -> Result<()> {
             ],
         },
         ShaderConfig {
-            name: "sdf_text_vector",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
-        },
-        ShaderConfig {
             name: "sdf_clay_vector",
             entries: vec![
                 ("vs_main", "vertex"),

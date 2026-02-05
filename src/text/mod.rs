@@ -4,11 +4,8 @@
 
 pub mod vector_font;
 pub mod glyph_atlas;
-pub mod vector_renderer;
 
 #[allow(unused_imports)]
 pub use vector_font::{VectorFont, BezierCurve, VectorGlyphMetrics};
 #[allow(unused_imports)]
 pub use glyph_atlas::{VectorFontAtlas, GlyphAtlasEntry, GridCell};
-#[allow(unused_imports)]
-pub use vector_renderer::{VectorTextRenderer, VectorGlyphInstance};

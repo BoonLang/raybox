@@ -119,11 +119,7 @@ setup:
 
 # Run demos with control server enabled
 demos-control:
-    cargo run --bin demos --features windowed,overlay,control -- --control
-
-# Run demos with simple overlay (cosmic-text)
-demos-overlay:
-    cargo run --bin demos --features windowed,overlay
+    cargo run --bin demos --features windowed,control -- --control
 
 # Start MCP server
 mcp:
