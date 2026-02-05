@@ -39,7 +39,7 @@ impl DevServer {
         let child = match self.build_mode {
             BuildMode::Native => {
                 ProcessCommand::new("cargo")
-                    .args(["run", "--bin", "demos", "--features", "windowed,overlay,control", "--", "--control"])
+                    .args(["run", "--bin", "demos", "--features", "windowed,control", "--", "--control"])
                     .stdout(Stdio::inherit())
                     .stderr(Stdio::inherit())
                     .spawn()?
@@ -170,18 +170,24 @@ async fn main() -> anyhow::Result<()> {
 
     log::info!("Starting raybox development server (mode: {:?})", build_mode);
 
-    // Create WebSocket server
+    // Create WebSocket server for event broadcasting
     let ws_server = WsServer::new();
     let event_tx = ws_server.event_sender();
-    let _state = ws_server.state();
 
-    // Start WebSocket server in background
-    let port = DEFAULT_WS_PORT;
-    tokio::spawn(async move {
-        if let Err(e) = ws_server.run(port).await {
-            log::error!("WebSocket server error: {}", e);
+    // Only start WsServer in web mode — native demo starts its own control server on port 9300
+    match build_mode {
+        BuildMode::Web => {
+            let port = DEFAULT_WS_PORT;
+            tokio::spawn(async move {
+                if let Err(e) = ws_server.run(port).await {
+                    log::error!("WebSocket server error: {}", e);
+                }
+            });
         }
-    });
+        BuildMode::Native => {
+            drop(ws_server);
+        }
+    }
 
     // Create dev server
     let mut dev_server = DevServer::new(build_mode, event_tx)?;

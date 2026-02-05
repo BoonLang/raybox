@@ -117,9 +117,10 @@ async fn handle_connection(
     while let Some(msg) = read.next().await {
         match msg {
             Ok(Message::Text(text)) => {
-                let response = process_message(&text, &state);
-                if let Ok(mut s) = state.write() {
-                    s.push_response(response);
+                if let Some(response) = process_message(&text, &state) {
+                    if let Ok(mut s) = state.write() {
+                        s.push_response(response);
+                    }
                 }
             }
             Ok(Message::Close(_)) => break,
@@ -144,8 +145,9 @@ async fn handle_connection(
     Ok(())
 }
 
-/// Process a single message and return a response
-fn process_message(text: &str, state: &SharedControlState) -> ResponseMessage {
+/// Process a single message, returning a response only for immediate commands.
+/// Demo-bound commands are queued in state and the demo pushes the response.
+fn process_message(text: &str, state: &SharedControlState) -> Option<ResponseMessage> {
     // Parse the request
     let request: Result<Request, _> = serde_json::from_str(text);
 
@@ -153,36 +155,34 @@ fn process_message(text: &str, state: &SharedControlState) -> ResponseMessage {
         Ok(req) => {
             // Check protocol version
             if req.version != PROTOCOL_VERSION {
-                return ResponseMessage::error(
+                return Some(ResponseMessage::error(
                     req.id,
                     ErrorCode::VersionMismatch,
                     format!(
                         "Protocol version mismatch: expected {}, got {}",
                         PROTOCOL_VERSION, req.version
                     ),
-                );
+                ));
             }
 
             // Handle immediate responses
             match &req.command {
-                Command::Ping => ResponseMessage::new(req.id, Response::Pong),
+                Command::Ping => Some(ResponseMessage::new(req.id, Response::Pong)),
                 _ => {
                     // Queue command for demo app to process
+                    // Demo will push the response when it handles the command
                     if let Ok(mut s) = state.write() {
                         s.push_command(req.id, req.command);
                     }
-                    // Response will be sent later by the demo app
-                    // Return a placeholder that won't be sent
-                    // (the demo app will push the real response)
-                    ResponseMessage::success(req.id, None)
+                    None
                 }
             }
         }
-        Err(e) => ResponseMessage::error(
+        Err(e) => Some(ResponseMessage::error(
             0,
             ErrorCode::InvalidCommand,
             format!("Failed to parse request: {}", e),
-        ),
+        )),
     }
 }
 

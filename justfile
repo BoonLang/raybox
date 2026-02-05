@@ -137,6 +137,38 @@ dev:
 dev-web:
     cargo run --bin raybox-dev --features hot-reload -- --web
 
+# Benchmark FPS across all demos (requires running demo with --control)
+bench:
+    #!/usr/bin/env bash
+    set -e
+    CTL="cargo run --bin raybox-ctl --features control --"
+
+    # Wait for control server
+    echo "Waiting for demo control server..."
+    for i in $(seq 1 30); do
+        if $CTL ping 2>/dev/null | grep -q "Pong"; then
+            break
+        fi
+        if [ "$i" -eq 30 ]; then
+            echo "ERROR: Could not connect. Start demo with: just demos-control  OR  just dev"
+            exit 1
+        fi
+        sleep 1
+    done
+
+    echo ""
+    echo "=== FPS Benchmark ==="
+    echo ""
+    DEMOS=(0 1 2 3 4 5 6)
+    NAMES=("Empty" "Objects" "Spheres" "Towers" "2D Text" "Clay Tablet" "Text Shadow")
+    for i in "${!DEMOS[@]}"; do
+        $CTL switch "${DEMOS[$i]}" > /dev/null 2>&1
+        sleep 3
+        FPS=$($CTL status 2>/dev/null | grep "FPS:" | awk '{print $2}')
+        printf "  Demo %d %-14s %s FPS\n" "${DEMOS[$i]}" "(${NAMES[$i]})" "$FPS"
+    done
+    echo ""
+
 # Open browser with hot-reload enabled (use with dev-web)
 open-browser-hotreload:
     chromium \
