@@ -4,12 +4,11 @@
 //! and notifies connected demo apps to reload.
 
 use raybox::control::{
-    broadcast_event, Command, Event, WsServer, DEFAULT_WS_PORT,
+    broadcast_event, Event, WsServer, DEFAULT_WS_PORT,
 };
 use raybox::hot_reload::{BuildMode, Builder, FileChange, FileWatcher, WatcherConfig};
 use std::env;
 use std::process::{Child, Command as ProcessCommand, Stdio};
-use std::sync::Arc;
 use tokio::sync::broadcast;
 
 struct DevServer {
@@ -174,7 +173,7 @@ async fn main() -> anyhow::Result<()> {
     // Create WebSocket server
     let ws_server = WsServer::new();
     let event_tx = ws_server.event_sender();
-    let state = ws_server.state();
+    let _state = ws_server.state();
 
     // Start WebSocket server in background
     let port = DEFAULT_WS_PORT;

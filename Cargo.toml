@@ -74,7 +74,7 @@ anyhow = "1.0"
 
 [features]
 default = []
-windowed = ["dep:winit", "dep:sysinfo", "dep:nvml-wrapper"]
+windowed = ["dep:winit", "dep:sysinfo", "dep:nvml-wrapper", "overlay"]
 overlay = ["dep:cosmic-text"]
 control = ["dep:tokio-tungstenite", "dep:futures-util", "dep:tokio"]
 mcp = ["control"]

@@ -6,6 +6,7 @@
 use super::{create_demo, Demo, DemoContext, DemoId, DemoType};
 use crate::camera::FlyCamera;
 use crate::constants::{HEIGHT, WIDTH};
+#[allow(unused_imports)]
 use crate::input::{InputAction, InputHandler, OverlayMode};
 
 #[cfg(feature = "overlay")]
@@ -895,9 +896,6 @@ impl DemoRunner {
             KeyCode::Digit4 => { let _ = self.switch_demo(DemoId::Text2D); }
             KeyCode::Digit5 => { let _ = self.switch_demo(DemoId::Clay); }
             KeyCode::Digit6 => { let _ = self.switch_demo(DemoId::TextShadow); }
-            KeyCode::KeyK => {
-                self.show_keybindings = !self.show_keybindings;
-            }
             KeyCode::Escape => {
                 event_loop.exit();
             }
@@ -949,6 +947,7 @@ impl ApplicationHandler for DemoApp {
             let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
 
             match DemoRunner::new(window, self.initial_demo) {
+                #[allow(unused_mut)]
                 Ok(mut runner) => {
                     // Set control state if enabled
                     #[cfg(feature = "control")]
@@ -1053,6 +1052,9 @@ impl ApplicationHandler for DemoApp {
                                     KeyCode::KeyG => {
                                         runner.input.toggle_overlay_full();
                                     }
+                                    KeyCode::KeyK => {
+                                        runner.show_keybindings = !runner.show_keybindings;
+                                    }
                                     _ => {}
                                 }
                             }
@@ -1112,7 +1114,7 @@ pub fn run_with_control(initial_demo: DemoId, port: Option<u16>) -> Result<()> {
     let port = port.unwrap_or(DEFAULT_WS_PORT);
 
     // Create shared state
-    let state = new_shared_state();
+    let _state = new_shared_state();
 
     // Create WebSocket server
     let ws_server = WsServer::new();

@@ -2,7 +2,7 @@
 //!
 //! Serializable state that can be preserved across reloads.
 
-use crate::demo_core::{DemoId, OverlayMode};
+use crate::demo_core::OverlayMode;
 use serde::{Deserialize, Serialize};
 
 /// Serializable state that persists across hot-reloads

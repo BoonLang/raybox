@@ -3,7 +3,7 @@
 //! Simple command-line interface to control running raybox demos.
 
 use raybox::control::{
-    Command, Response, BlockingWsClient, DEFAULT_WS_PORT,
+    Command, Response, BlockingWsClient,
 };
 use std::env;
 use std::fs;

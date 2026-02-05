@@ -3,7 +3,6 @@
 //! Handles cargo build and shader compilation.
 
 use std::process::{Command, Output, Stdio};
-use std::path::Path;
 
 /// Build result
 #[derive(Debug)]

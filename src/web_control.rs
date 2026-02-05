@@ -2,7 +2,8 @@
 //!
 //! Allows the web version to be controlled remotely via WebSocket.
 
-use crate::demo_core::DemoId;
+#![allow(dead_code)]
+
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;

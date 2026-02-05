@@ -5,6 +5,8 @@
 //! Optionally connects to control server when ?control=1 URL parameter is present.
 //! Supports hot-reload via WASM module reloading with state preservation.
 
+#![allow(dead_code)]
+
 use crate::camera::{OrbitalCamera, Uniforms};
 use crate::constants::{HEIGHT, WIDTH};
 use crate::demo_core::{DemoId, DemoType, OverlayMode, KEYBINDINGS_COMMON};
