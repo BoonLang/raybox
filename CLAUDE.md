@@ -2,27 +2,43 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Version Control
+
+**Use `jj` (Jujutsu), NOT `git`.** Commands: `jj status`, `jj log`, `jj describe`, `jj new`, etc.
+
 ## Build Commands
 
 ```bash
 # Headless mode (default) - renders to PNG
-cargo build
 cargo run                    # outputs to output/screenshot.png
 
-# Windowed mode - desktop window with live rendering
-cargo build --features windowed
-cargo run --features windowed
+# Windowed mode - desktop window with all 7 demos
+just demos                   # press 0-6 to switch demos, F=stats, K=keybindings
+just demos-from 3            # start from specific demo
+
+# Windowed with control server (WebSocket on port 9300)
+just demos-control
+
+# Development mode with hot-reload (watches files, auto-rebuilds, restarts)
+just dev                     # native
+just dev-web                 # web/WASM
+
+# FPS benchmark across all demos (requires running demo with control)
+just bench
+
+# Control CLI
+just ctl ping                # test connection
+just ctl status              # get current demo/FPS/camera
+just ctl switch 3            # switch to demo 3
+just ctl screenshot          # capture PNG
 
 # Web/WASM mode
 just build-web               # compile WASM + generate JS bindings
 just web                     # build, serve, and open Chromium
-just serve                   # start dev server on :8000
 
 # Screenshots
-just screenshot              # native headless render to output/screenshot.png
-just screenshot-open         # same + open the image
-just web-screenshot          # web render to output/web_screenshot.png
-just web-screenshot-open     # same + open the image
+just screenshot              # native headless render
+just web-screenshot          # web render
 
 # Setup (installs wasm-bindgen-cli, miniserve, wasm32 target)
 just setup
@@ -32,40 +48,75 @@ just setup
 
 ### Execution Modes
 
-Three mutually exclusive rendering modes controlled by features and target:
+Four build modes controlled by features:
 
 1. **Headless** (default): Renders to offscreen texture, exports PNG via `capture.rs`
-2. **Windowed** (`--features windowed`): Desktop window via winit, continuous render loop
-3. **Web** (`target_arch = "wasm32"`): WebGPU in browser via canvas element
+2. **Windowed** (`--features windowed`): Desktop window via winit with overlay (cosmic-text)
+3. **Hot-reload** (`--features hot-reload`): Windowed + file watcher + auto-rebuild + control server
+4. **Web** (`target_arch = "wasm32"`): WebGPU in browser via canvas element
+
+### Feature Flags
+
+- `windowed` — winit window, sysinfo, overlay (cosmic-text SimpleOverlay)
+- `overlay` — cosmic-text CPU-rasterized text overlay (included by `windowed`)
+- `control` — WebSocket control server (tokio-tungstenite)
+- `hot-reload` — file watcher + builder (includes `windowed` + `control`)
+- `mcp` — MCP server (includes `control`)
 
 ### Module Structure
 
-- `lib.rs` - Library root, exports `shader_bindings` module (auto-generated from shaders)
-- `main.rs` - Binary entry, dispatches to windowed or headless mode
-- `renderer.rs` - Headless wgpu renderer (no surface)
-- `window_mode.rs` - Windowed renderer with winit event loop
-- `web.rs` - WebGPU renderer for WASM target
-- `capture.rs` - GPU texture readback and PNG export
-- `constants.rs` - WIDTH (800), HEIGHT (600), TEXTURE_FORMAT (Rgba8UnormSrgb)
+- `lib.rs` — library root, exports shader_bindings
+- `main.rs` — binary entry, dispatches to windowed or headless
+- `demos/` — unified demo system (7 demos, runner, switching)
+  - `runner.rs` — DemoRunner: window, input, overlay, demo lifecycle
+  - `empty.rs`, `objects.rs`, `spheres.rs`, `towers.rs` — 3D demos
+  - `text2d.rs`, `clay.rs`, `text_shadow.rs` — 2D text/SDF demos
+- `demo_core/` — platform-agnostic demo trait, DemoId, CameraConfig
+- `text/` — vector font parsing and glyph atlas for SDF demos
+  - `vector_font.rs` — TTF parsing, Bézier curve extraction
+  - `glyph_atlas.rs` — grid-based spatial acceleration for SDF rendering
+- `simple_overlay.rs` — cosmic-text CPU-rasterized text overlay
+- `input.rs` — input handling, camera controls, stats formatting
+- `camera.rs` — FlyCamera with yaw/pitch/roll
+- `control/` — WebSocket control protocol
+  - `protocol.rs` — Command/Response enums, Request/ResponseMessage
+  - `ws_server.rs` — WebSocket server (tokio-tungstenite)
+  - `ws_client.rs` — blocking WebSocket client for CLI
+  - `state.rs` — SharedControlState (Arc<RwLock>)
+- `hot_reload/` — file watcher + cargo builder
+- `capture.rs` — GPU texture readback and PNG export
+- `constants.rs` — WIDTH (800), HEIGHT (600), TEXTURE_FORMAT (Rgba8UnormSrgb)
+- `web.rs`, `web_input.rs`, `web_control.rs` — WASM-specific modules
+
+### Binaries
+
+- `demos` — unified demo app (main binary for windowed mode)
+- `raybox-ctl` — CLI control tool
+- `raybox-dev` — dev server with hot-reload
+- `raybox-mcp` — MCP server
 
 ### Shader Pipeline
 
-1. `build.rs` compiles `shaders/rectangle.slang` → WGSL using `slangc`
+1. `build.rs` compiles `shaders/*.slang` → WGSL using `slangc`
 2. `wgsl_bindgen` generates Rust bindings in `$OUT_DIR/shader_bindings.rs`
 3. Bindings included via `include!()` macro in `lib.rs`
 
-The generated `shader_bindings::rectangle` module provides:
-- `create_shader_module_embed_source()` - ShaderModule from embedded WGSL
-- `create_pipeline_layout()` - PipelineLayout
-- `vs_main_entry()` / `fs_main_entry()` - Entry point configurations
-- `vertexInput_0` - Typed vertex struct with `new()` constructor
+Shaders: `rectangle`, `sdf_raymarch`, `sdf_spheres`, `sdf_towers`, `sdf_text2d_vector`, `sdf_clay_vector`, `sdf_text_shadow_vector`
+
+### Control Protocol
+
+WebSocket on port 9300. JSON messages with `{id, version, command}` / `{id, response}`.
+
+Commands: `switchDemo`, `setCamera`, `screenshot`, `getStatus`, `toggleOverlay`, `pressKey`, `ping`, `reloadShaders`
 
 ### Dependencies
 
-- **slangc** (external): Required for shader compilation. Download from https://github.com/shader-slang/slang/releases
+- **slangc** (external): Required for shader compilation
 - **wgpu 25**: GPU abstraction layer
-- **winit 0.30** (optional): Window management for windowed mode
-- **web-sys 0.3** (wasm32): DOM/canvas bindings for web mode
+- **winit 0.30** (optional): Window management
+- **cosmic-text** (optional): CPU text rasterization for overlay
+- **tokio-tungstenite** (optional): WebSocket for control protocol
+- **sysinfo** (optional): System/GPU stats in overlay
 
 ## Web Mode Details
 
@@ -73,5 +124,3 @@ Chromium flags for WebGPU on Linux (automatically set by `just open-browser`):
 ```
 --enable-unsafe-webgpu --enable-features=Vulkan,WebGPU,UseSkiaRenderer --use-angle=vulkan
 ```
-
-Screenshot capture uses Chrome DevTools Protocol via `websocat`.
