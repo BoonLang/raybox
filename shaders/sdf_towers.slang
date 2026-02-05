@@ -74,7 +74,6 @@ Hit mapScene(float3 p) {
 
             Hit tower;
             tower.dist = sdBox(p - towerPos, towerSize * 0.5);
-            // Color based on position
             tower.materialId = 2 + int(hash(gridPos + 50.0) * 5.99);
             result = opUnionHit(result, tower);
         }
@@ -143,9 +142,11 @@ RayHit raymarch(float3 ro, float3 rd) {
     result.hit = false;
 
     float t = 0.0;
+
     for (int i = 0; i < 128 && t < 100.0; i++) {
         float3 p = ro + rd * t;
         Hit h = mapScene(p);
+
         if (h.dist < 0.001) {
             result.t = t;
             result.materialId = h.materialId;

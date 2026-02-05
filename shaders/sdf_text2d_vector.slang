@@ -213,11 +213,6 @@ float sdGlyphAt(float2 localPos, uint glyphIdx, float4 bounds, uint4 gridInfo, u
     bool cellIsInside = (flags & 0x01u) != 0u;
     bool isUniform = (flags & 0x02u) != 0u;
 
-    // Early out for uniform cells - use larger distances for cleaner AA
-    if (isUniform && cellCurveCount == 0u) {
-        return cellIsInside ? -1.0 : 1.0;
-    }
-
     // Compute minimum distance to curves in this cell
     float minDist = 1e10;
     for (uint i = 0u; i < cellCurveCount && i < 16u; i++) {
@@ -238,8 +233,12 @@ float sdGlyphAt(float2 localPos, uint glyphIdx, float4 bounds, uint4 gridInfo, u
         minDist = min(minDist, dist);
     }
 
-    // Compute winding using ALL glyph curves (not just cell curves)
-    // This gives correct inside/outside determination
+    // For uniform cells with no curves, sign is already known — skip expensive winding loop
+    if (isUniform && cellCurveCount == 0u) {
+        return (cellIsInside ? -1.0 : 1.0) * minDist;
+    }
+
+    // Boundary cells and uniform cells with curves need winding from ALL glyph curves
     int winding = 0;
     for (uint i = 0u; i < glyphCurveCount && i < 256u; i++) {
         BezierCurve curve = curves[glyphCurveOffset + i];

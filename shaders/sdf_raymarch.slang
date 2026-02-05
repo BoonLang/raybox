@@ -284,7 +284,6 @@ RayHit raymarch(float3 ro, float3 rd) {
             return result;
         }
 
-        // Over-relaxation for faster convergence
         t += h.dist * 0.9;
     }
 

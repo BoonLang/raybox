@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use cosmic_text::{
     Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache,
 };
+use std::time::Instant;
 use wgpu::util::DeviceExt;
 
 /// Simple 2D text overlay renderer
@@ -34,6 +35,8 @@ pub struct SimpleOverlay {
     screen_height: u32,
     // Whether content changed and needs re-rasterization
     dirty: bool,
+    // Throttle stats updates to avoid re-rasterizing every frame
+    last_stats_update: Instant,
 }
 
 // Vertex for textured quad
@@ -278,6 +281,7 @@ impl SimpleOverlay {
             screen_width: width,
             screen_height: height,
             dirty: true,
+            last_stats_update: Instant::now(),
         })
     }
 
@@ -299,7 +303,11 @@ impl SimpleOverlay {
             self.dirty = true;
         }
 
-        // Check if content changed
+        // Check if content changed (throttle stats to ~4/sec to avoid
+        // re-rasterizing + uploading 1.92MB texture every frame)
+        let now = Instant::now();
+        let stats_interval_elapsed = now.duration_since(self.last_stats_update).as_millis() >= 250;
+
         let new_keybindings_text = if let Some(bindings) = keybindings {
             bindings
                 .iter()
@@ -310,9 +318,15 @@ impl SimpleOverlay {
             String::new()
         };
 
-        if stats != self.stats_text || new_keybindings_text != self.keybindings_text {
-            self.stats_text = stats.to_string();
+        // Keybindings changes are rare, always check. Stats change every frame, throttle.
+        if new_keybindings_text != self.keybindings_text {
             self.keybindings_text = new_keybindings_text;
+            self.dirty = true;
+        }
+
+        if stats_interval_elapsed && stats != self.stats_text {
+            self.stats_text = stats.to_string();
+            self.last_stats_update = now;
             self.dirty = true;
         }
 

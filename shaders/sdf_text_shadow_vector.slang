@@ -7,6 +7,7 @@ struct Uniforms {
     float4 lightDirIntensity; // xyz = lightDir, w = intensity
     float4 renderParams;      // xy = resolution, z = textDepth, w = textScale
     float4 textParams;        // x = charCount, yzw = reserved
+    float4 textAabb;          // xy = min(x,y), zw = max(x,y) of all text in 2D
 };
 
 // Grid cell structure
@@ -216,11 +217,6 @@ float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
     bool cellIsInside = (flags & 0x01u) != 0u;
     bool isUniform = (flags & 0x02u) != 0u;
 
-    // Early out for uniform cells with no curves
-    if (isUniform && cellCurveCount == 0u) {
-        return cellIsInside ? -1.0 : 1.0;
-    }
-
     // Compute minimum distance to curves in this cell
     float minDist = 1e10;
     for (uint i = 0u; i < cellCurveCount && i < 16u; i++) {
@@ -240,7 +236,12 @@ float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
         minDist = min(minDist, dist);
     }
 
-    // Compute winding using ALL glyph curves (not just cell curves)
+    // For uniform cells with no curves, sign is already known — skip expensive winding loop
+    if (isUniform && cellCurveCount == 0u) {
+        return (cellIsInside ? -1.0 : 1.0) * minDist;
+    }
+
+    // Boundary cells and uniform cells with curves need winding from ALL glyph curves
     int winding = 0;
     for (uint i = 0u; i < glyphCurveCount && i < 256u; i++) {
         BezierCurve curve = curves[glyphCurveOffset + i];
@@ -312,6 +313,16 @@ float sdText3D(float3 p, float depth) {
     uint charCount = uint(uniforms.textParams.x);
     float halfDepth = depth * 0.5;
 
+    // Text AABB early-exit: skip entire character loop when far from text
+    float2 aabbMin = uniforms.textAabb.xy;
+    float2 aabbMax = uniforms.textAabb.zw;
+    float3 textBoxMin = float3(aabbMin, -halfDepth);
+    float3 textBoxMax = float3(aabbMax, halfDepth);
+    float3 textBoxCenter = (textBoxMin + textBoxMax) * 0.5;
+    float3 textBoxHalf = (textBoxMax - textBoxMin) * 0.5;
+    float textBoxDist = sdBox(p - textBoxCenter, textBoxHalf);
+    if (textBoxDist > 0.2) return textBoxDist;
+
     for (uint i = 0; i < charCount && i < MAX_CHARS; i++) {
         CharInstance ch = charInstances[i];
         float2 charPos = ch.posAndChar.xy;
@@ -370,6 +381,36 @@ Hit opUnionHit(Hit a, Hit b) {
     return b;
 }
 
+// Coarse scene for shadow/AO rays — use text AABB box instead of exact SDF
+Hit mapSceneCoarse(float3 p) {
+    Hit result;
+    result.dist = 1e10;
+    result.materialId = 0;
+
+    float textDepth = uniforms.renderParams.z;
+    float halfDepth = textDepth * 0.5;
+
+    // Ground plane
+    Hit ground;
+    ground.dist = sdPlane(p, float3(0, 1, 0), 1.0);
+    ground.materialId = 1;
+    result = opUnionHit(result, ground);
+
+    // Text approximated as a single box
+    Hit text;
+    float2 aabbMin = uniforms.textAabb.xy;
+    float2 aabbMax = uniforms.textAabb.zw;
+    float3 boxMin = float3(aabbMin, -halfDepth);
+    float3 boxMax = float3(aabbMax, halfDepth);
+    float3 boxCenter = (boxMin + boxMax) * 0.5;
+    float3 boxHalf = (boxMax - boxMin) * 0.5;
+    text.dist = sdBox(p - boxCenter, boxHalf);
+    text.materialId = 2;
+    result = opUnionHit(result, text);
+
+    return result;
+}
+
 Hit mapScene(float3 p) {
     Hit result;
     result.dist = 1e10;
@@ -415,7 +456,7 @@ float calcSoftShadow(float3 ro, float3 rd, float mint, float maxt, float k) {
     float res = 1.0;
     float t = mint;
     for (int i = 0; i < 64 && t < maxt; i++) {
-        float h = mapScene(ro + rd * t).dist;
+        float h = mapSceneCoarse(ro + rd * t).dist;
         if (h < 0.001) return 0.0;
         res = min(res, k * h / t);
         t += clamp(h, 0.01, 0.2);
@@ -428,7 +469,7 @@ float calcAO(float3 pos, float3 nor) {
     float sca = 1.0;
     for (int i = 0; i < 5; i++) {
         float h = 0.01 + 0.12 * float(i);
-        float d = mapScene(pos + h * nor).dist;
+        float d = mapSceneCoarse(pos + h * nor).dist;
         occ += (h - d) * sca;
         sca *= 0.95;
     }

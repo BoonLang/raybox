@@ -221,11 +221,6 @@ float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
     bool cellIsInside = (flags & 0x01u) != 0u;
     bool isUniform = (flags & 0x02u) != 0u;
 
-    // Early out for uniform cells with no curves
-    if (isUniform && cellCurveCount == 0u) {
-        return cellIsInside ? -1.0 : 1.0;
-    }
-
     // Compute minimum distance to curves in this cell
     float minDist = 1e10;
     for (uint i = 0u; i < cellCurveCount && i < 16u; i++) {
@@ -245,7 +240,12 @@ float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
         minDist = min(minDist, dist);
     }
 
-    // Compute winding using ALL glyph curves (not just cell curves)
+    // For uniform cells with no curves, sign is already known — skip expensive winding loop
+    if (isUniform && cellCurveCount == 0u) {
+        return (cellIsInside ? -1.0 : 1.0) * minDist;
+    }
+
+    // Boundary cells and uniform cells with curves need winding from ALL glyph curves
     int winding = 0;
     for (uint i = 0u; i < glyphCurveCount && i < 256u; i++) {
         BezierCurve curve = curves[glyphCurveOffset + i];
@@ -318,6 +318,16 @@ float sdTextRelief(float3 p, float depth) {
     uint charCount = uint(uniforms.textParams.x);
     float halfDepth = depth * 0.5;
 
+    // Text AABB early-exit: text on XZ plane, X=[-2.15,2.15], Z=[-1.45,1.45], Y=[-halfDepth,halfDepth]
+    float2 textMin2D = float2(-2.2, -1.5);
+    float2 textMax2D = float2(2.2, 1.5);
+    float3 textBoxMin = float3(textMin2D.x, -halfDepth, -textMax2D.y);
+    float3 textBoxMax = float3(textMax2D.x, halfDepth, -textMin2D.y);
+    float3 textBoxCenter = (textBoxMin + textBoxMax) * 0.5;
+    float3 textBoxHalf = (textBoxMax - textBoxMin) * 0.5;
+    float textBoxDist = sdBox(p - textBoxCenter, textBoxHalf);
+    if (textBoxDist > 0.2) return textBoxDist;
+
     for (uint i = 0; i < charCount && i < MAX_CHARS; i++) {
         CharInstance ch = charInstances[i];
         float2 charPos = ch.posAndChar.xy;
@@ -366,6 +376,28 @@ struct Hit {
 Hit opUnionHit(Hit a, Hit b) {
     if (a.dist < b.dist) return a;
     return b;
+}
+
+// Coarse scene for shadow/AO rays — skip expensive text SDF
+Hit mapSceneCoarse(float3 p) {
+    Hit result;
+    result.dist = 1e10;
+    result.materialId = 0;
+
+    // Ground plane
+    Hit ground;
+    ground.dist = sdPlane(p, float3(0, 1, 0), 1.5);
+    ground.materialId = 1;
+    result = opUnionHit(result, ground);
+
+    // Clay tablet (rounded box only, no text carving)
+    Hit tablet;
+    float3 tabletP = p - float3(0, 0.3, 0);
+    tablet.dist = sdRoundBox(tabletP, float3(2.5, 0.25, 1.8), 0.08);
+    tablet.materialId = 2;
+    result = opUnionHit(result, tablet);
+
+    return result;
 }
 
 Hit mapScene(float3 p) {
@@ -421,7 +453,7 @@ float calcSoftShadow(float3 ro, float3 rd, float mint, float maxt, float k) {
     float res = 1.0;
     float t = mint;
     for (int i = 0; i < 64 && t < maxt; i++) {
-        float h = mapScene(ro + rd * t).dist;
+        float h = mapSceneCoarse(ro + rd * t).dist;
         if (h < 0.001) return 0.0;
         res = min(res, k * h / t);
         t += clamp(h, 0.01, 0.2);
@@ -434,7 +466,7 @@ float calcAO(float3 pos, float3 nor) {
     float sca = 1.0;
     for (int i = 0; i < 5; i++) {
         float h = 0.01 + 0.12 * float(i);
-        float d = mapScene(pos + h * nor).dist;
+        float d = mapSceneCoarse(pos + h * nor).dist;
         occ += (h - d) * sca;
         sca *= 0.95;
     }

@@ -22,6 +22,7 @@ struct Uniforms {
     light_dir_intensity: [f32; 4],
     render_params: [f32; 4],
     text_params: [f32; 4],
+    text_aabb: [f32; 4], // xy = min(x,y), zw = max(x,y)
 }
 
 impl Default for Uniforms {
@@ -32,6 +33,7 @@ impl Default for Uniforms {
             light_dir_intensity: [0.4, 0.8, 0.5, 1.3],
             render_params: [800.0, 600.0, 0.15, 1.0],
             text_params: [0.0, 0.0, 0.4, 0.0],
+            text_aabb: [0.0; 4],
         }
     }
 }
@@ -151,11 +153,38 @@ fn build_shadow_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstance> {
     instances
 }
 
+fn compute_text_aabb(instances: &[GpuCharInstance], atlas: &VectorFontAtlas) -> [f32; 4] {
+    let mut min_x = f32::MAX;
+    let mut min_y = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut max_y = f32::MIN;
+
+    for inst in instances {
+        let x = inst.pos_and_char[0];
+        let y = inst.pos_and_char[1];
+        let scale = inst.pos_and_char[2];
+        let glyph_idx = inst.pos_and_char[3] as usize;
+
+        if glyph_idx < atlas.glyph_list.len() {
+            let (_, entry) = &atlas.glyph_list[glyph_idx];
+            let bounds = entry.bounds;
+            min_x = min_x.min(x + bounds[0] * scale);
+            min_y = min_y.min(y + bounds[1] * scale);
+            max_x = max_x.max(x + bounds[2] * scale);
+            max_y = max_y.max(y + bounds[3] * scale);
+        }
+    }
+
+    // Add small margin
+    [min_x - 0.05, min_y - 0.05, max_x + 0.05, max_y + 0.05]
+}
+
 pub struct TextShadowDemo {
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     char_count: u32,
+    text_aabb: [f32; 4],
     width: u32,
     height: u32,
 }
@@ -171,6 +200,7 @@ impl TextShadowDemo {
         // Build text layout
         let char_instances = build_shadow_text_layout(&atlas);
         let char_count = char_instances.len() as u32;
+        let text_aabb = compute_text_aabb(&char_instances, &atlas);
 
         // Prepare GPU data
         let gpu_grid_cells: Vec<GpuGridCell> = atlas
@@ -222,6 +252,7 @@ impl TextShadowDemo {
 
         let mut uniforms = Uniforms::default();
         uniforms.text_params[0] = char_count as f32;
+        uniforms.text_aabb = text_aabb;
 
         let uniform_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("TextShadow Demo Uniform Buffer"),
@@ -425,6 +456,7 @@ impl TextShadowDemo {
             uniform_buffer,
             bind_group,
             char_count,
+            text_aabb,
             width: ctx.width,
             height: ctx.height,
         })
@@ -434,6 +466,7 @@ impl TextShadowDemo {
         let mut uniforms = Uniforms::default();
         uniforms.update_from_camera(camera, self.width, self.height, time);
         uniforms.text_params[0] = self.char_count as f32;
+        uniforms.text_aabb = self.text_aabb;
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 }

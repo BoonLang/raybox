@@ -58,13 +58,18 @@ Hit mapScene(float3 p) {
     ground.materialId = 1;
     result = opUnionHit(result, ground);
 
-    // Animated spheres in a grid pattern
+    // 3x3 neighborhood around nearest grid cell (spacing = 1.2, radius = 0.4)
     float sphereRadius = 0.4;
-    for (int i = -2; i <= 2; i++) {
-        for (int j = -2; j <= 2; j++) {
-            float3 offset = float3(i * 1.2, 0.0, j * 1.2);
-            // Bounce uses abs(sin) so spheres only go UP, never below ground
-            // Ground is at y = -0.5, so sphere center at rest should be at -0.5 + radius = -0.1
+    float spacing = 1.2;
+    int cx = int(round(p.x / spacing));
+    int cz = int(round(p.z / spacing));
+    for (int di = -1; di <= 1; di++) {
+        for (int dj = -1; dj <= 1; dj++) {
+            int i = cx + di;
+            int j = cz + dj;
+            if (i < -2 || i > 2 || j < -2 || j > 2) continue;
+
+            float3 offset = float3(i * spacing, 0.0, j * spacing);
             float bounce = abs(sin(time * 2.0 + float(i + j) * 0.5)) * 0.8;
             float3 spherePos = p - offset - float3(0, bounce - 0.1, 0);
 
@@ -138,9 +143,11 @@ RayHit raymarch(float3 ro, float3 rd) {
     result.hit = false;
 
     float t = 0.0;
+
     for (int i = 0; i < 128 && t < 100.0; i++) {
         float3 p = ro + rd * t;
         Hit h = mapScene(p);
+
         if (h.dist < 0.001) {
             result.t = t;
             result.materialId = h.materialId;
