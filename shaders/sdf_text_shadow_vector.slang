@@ -66,6 +66,9 @@ StructuredBuffer<CharGridCellData> charGridCells;
 [[vk::binding(7, 0)]]
 StructuredBuffer<uint> charGridIndices;
 
+[[vk::binding(8, 0)]]
+StructuredBuffer<uint> charGridDistField;
+
 struct VertexOutput {
     float4 position : SV_Position;
     float2 uv : TEXCOORD0;
@@ -292,7 +295,7 @@ float opExtrusion(float sdf2d, float zDist, float depth) {
     return min(max(w.x, w.y), 0.0) + length(max(w, 0.0));
 }
 
-// 3D extruded text with per-character extrusion using char grid
+// 3D extruded text with per-character extrusion using char grid + distance field
 float sdText3D(float3 p, float depth) {
     float minDist = 1e10;
     float halfDepth = depth * 0.5;
@@ -327,7 +330,6 @@ float sdText3D(float3 p, float depth) {
         GlyphData glyph = glyphData[glyphIdx];
         float4 bounds = glyph.bounds;
 
-        // Transform to glyph local 2D coordinates
         float2 localP = (textPos - charPos) / charScale;
 
         if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
@@ -341,7 +343,12 @@ float sdText3D(float3 p, float depth) {
     if (minDist < 1e9) {
         return minDist;
     }
-    return textBoxDist;
+    // Empty cell — use precomputed distance field for efficient step sizing.
+    // Larger steps far from text, conservative steps near text.
+    uint cellDist = charGridDistField[cellIdx];
+    float cellStep = min(uniforms.charGridParams.z, uniforms.charGridParams.w);
+    float safeDist = max(float(cellDist) - 0.5, 0.5) * cellStep;
+    return max(textBoxDist, safeDist);
 }
 
 struct Hit {

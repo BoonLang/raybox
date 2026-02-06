@@ -6,6 +6,7 @@
 
 use super::glyph_atlas::{GlyphAtlasEntry, VectorFontAtlas};
 use bytemuck::{Pod, Zeroable};
+use std::collections::VecDeque;
 
 /// GPU-side cell header: offset into char index list + count
 #[repr(C)]
@@ -29,6 +30,8 @@ pub struct CharGrid {
     pub cells: Vec<CharGridCell>,
     /// Flat list of character indices referenced by cells
     pub char_indices: Vec<u32>,
+    /// Chebyshev distance from each cell to nearest occupied cell (for safe raymarcher steps)
+    pub cell_distances: Vec<u32>,
 }
 
 /// A character instance with its world-space bounding box
@@ -50,12 +53,14 @@ pub fn build_char_grid(
     grid_dims: [u32; 2],
 ) -> CharGrid {
     if instances.is_empty() {
+        let total = (grid_dims[0] * grid_dims[1]) as usize;
         return CharGrid {
             dims: grid_dims,
             bounds: [0.0; 4],
             cell_size: [1.0, 1.0],
-            cells: vec![CharGridCell::default(); (grid_dims[0] * grid_dims[1]) as usize],
+            cells: vec![CharGridCell::default(); total],
             char_indices: vec![0],
+            cell_distances: vec![255; total],
         };
     }
 
@@ -144,11 +149,52 @@ pub fn build_char_grid(
         char_indices.push(0);
     }
 
+    // Compute Chebyshev distance from each cell to nearest occupied cell (BFS)
+    let mut cell_distances = vec![u32::MAX; total_cells];
+    let mut queue = VecDeque::new();
+
+    for (idx, cell_list) in cell_chars.iter().enumerate() {
+        if !cell_list.is_empty() {
+            cell_distances[idx] = 0;
+            queue.push_back(idx);
+        }
+    }
+
+    while let Some(idx) = queue.pop_front() {
+        let cx = (idx % grid_w as usize) as i32;
+        let cy = (idx / grid_w as usize) as i32;
+        let current_dist = cell_distances[idx];
+
+        for dy in -1..=1_i32 {
+            for dx in -1..=1_i32 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let nx = cx + dx;
+                let ny = cy + dy;
+                if nx < 0 || ny < 0 || nx >= grid_w as i32 || ny >= grid_h as i32 {
+                    continue;
+                }
+                let nidx = (ny * grid_w as i32 + nx) as usize;
+                if current_dist + 1 < cell_distances[nidx] {
+                    cell_distances[nidx] = current_dist + 1;
+                    queue.push_back(nidx);
+                }
+            }
+        }
+    }
+
+    // Clamp to 255 for GPU buffer
+    for d in &mut cell_distances {
+        *d = (*d).min(255);
+    }
+
     CharGrid {
         dims: [grid_w, grid_h],
         bounds: [global_min_x, global_min_y, global_max_x, global_max_y],
         cell_size: [cell_w, cell_h],
         cells,
         char_indices,
+        cell_distances,
     }
 }

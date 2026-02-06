@@ -90,15 +90,15 @@ fn build_shadow_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstance> {
 
     let full_text = format!(
         "VECTOR SDF TEXT\n\n{}",
-        format!("{} {} {}", LOREM, LOREM, LOREM)
+        format!("{} {} {} {} {} {}", LOREM, LOREM, LOREM, LOREM, LOREM, LOREM)
     );
 
     let scale = 0.12;
     let line_height = 0.18;
     let margin = 0.1;
 
-    let panel_width = 2.4;
-    let panel_height = 1.8;
+    let panel_width = 4.0;
+    let panel_height = 3.0;
     let start_x = -panel_width / 2.0 + margin;
     let start_y = panel_height / 2.0 - margin;
     let max_x = panel_width / 2.0 - margin;
@@ -106,7 +106,7 @@ fn build_shadow_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstance> {
     let mut x = start_x;
     let mut y = start_y;
     let mut line_num = 0;
-    let max_lines = 20;
+    let max_lines = 30;
 
     for ch in full_text.chars() {
         if line_num >= max_lines {
@@ -210,7 +210,7 @@ impl TextShadowDemo {
 
         // Build character spatial grid
         let instance_data: Vec<[f32; 4]> = char_instances.iter().map(|c| c.pos_and_char).collect();
-        let char_grid = build_char_grid(&instance_data, &atlas, [48, 32]);
+        let char_grid = build_char_grid(&instance_data, &atlas, [64, 48]);
 
         let char_grid_params = [
             char_grid.dims[0] as f32,
@@ -350,6 +350,12 @@ impl TextShadowDemo {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
+        let char_grid_dist_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Char Grid Distance Field Buffer"),
+            contents: bytemuck::cast_slice(&char_grid.cell_distances),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
         // Create bind group layout
         let storage_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
@@ -382,6 +388,7 @@ impl TextShadowDemo {
                 storage_entry(5),
                 storage_entry(6),
                 storage_entry(7),
+                storage_entry(8),
             ],
         });
 
@@ -420,6 +427,10 @@ impl TextShadowDemo {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: char_grid_indices_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: char_grid_dist_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -502,7 +513,7 @@ impl Demo for TextShadowDemo {
 
     fn camera_config(&self) -> CameraConfig {
         CameraConfig {
-            initial_position: glam::Vec3::new(0.0, 0.0, 3.5),
+            initial_position: glam::Vec3::new(0.0, 0.0, 4.5),
             look_at_target: glam::Vec3::new(0.0, 0.0, 0.0),
         }
     }

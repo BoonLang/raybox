@@ -350,7 +350,7 @@ float sdTextRelief(float3 p, float depth) {
     if (minDist < 1e9) {
         return minDist;
     }
-    return textBoxDist;
+    return 1e10;
 }
 
 struct Hit {
@@ -378,7 +378,7 @@ Hit mapSceneCoarse(float3 p) {
     // Clay tablet (rounded box only, no text carving)
     Hit tablet;
     float3 tabletP = p - float3(0, 0.3, 0);
-    tablet.dist = sdRoundBox(tabletP, float3(2.5, 0.25, 1.8), 0.08);
+    tablet.dist = sdRoundBox(tabletP, float3(3.5, 0.25, 2.5), 0.08);
     tablet.materialId = 2;
     result = opUnionHit(result, tablet);
 
@@ -402,7 +402,7 @@ Hit mapScene(float3 p) {
     // Clay tablet (rounded box)
     Hit tablet;
     float3 tabletP = p - float3(0, 0.3, 0);
-    tablet.dist = sdRoundBox(tabletP, float3(2.5, 0.25, 1.8), 0.08);
+    tablet.dist = sdRoundBox(tabletP, float3(3.5, 0.25, 2.5), 0.08);
     tablet.materialId = 2;
 
     // Carve text into tablet (CSG subtraction)

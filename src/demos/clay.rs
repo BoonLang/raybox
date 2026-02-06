@@ -106,7 +106,7 @@ fn build_clay_text_layout(
     let mut x = start_x;
     let mut z = start_z;
     let mut line_num = 0;
-    let max_lines = 16;
+    let max_lines = 24;
 
     for ch in full_text.chars() {
         if line_num >= max_lines {
@@ -177,12 +177,12 @@ impl ClayDemo {
         let atlas = VectorFontAtlas::from_font(&font, 32);
 
         // Build text layout
-        let char_instances = build_clay_text_layout(&atlas, 2.3, 1.6);
+        let char_instances = build_clay_text_layout(&atlas, 3.3, 2.3);
         let char_count = char_instances.len() as u32;
 
         // Build character spatial grid
         let instance_data: Vec<[f32; 4]> = char_instances.iter().map(|c| c.pos_and_char).collect();
-        let char_grid = build_char_grid(&instance_data, &atlas, [64, 32]);
+        let char_grid = build_char_grid(&instance_data, &atlas, [80, 48]);
 
         let char_grid_params = [
             char_grid.dims[0] as f32,
@@ -471,7 +471,7 @@ impl Demo for ClayDemo {
 
     fn camera_config(&self) -> CameraConfig {
         CameraConfig {
-            initial_position: glam::Vec3::new(0.0, 4.5, 1.5),
+            initial_position: glam::Vec3::new(0.0, 5.5, 2.0),
             look_at_target: glam::Vec3::new(0.0, 0.0, 0.0),
         }
     }
