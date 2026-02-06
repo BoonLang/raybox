@@ -62,9 +62,15 @@ Hit mapScene(float3 p) {
     ground.materialId = 1;
     result = opUnionHit(result, ground);
 
-    // Grid of towers with varying heights
-    for (int i = -3; i <= 3; i++) {
-        for (int j = -3; j <= 3; j++) {
+    // 3x3 spatial lookup with clamped center (was 7x7)
+    int cx = clamp(int(round(p.x)), -3, 3);
+    int cz = clamp(int(round(p.z)), -3, 3);
+    for (int di = -1; di <= 1; di++) {
+        for (int dj = -1; dj <= 1; dj++) {
+            int i = cx + di;
+            int j = cz + dj;
+            if (i < -3 || i > 3 || j < -3 || j > 3) continue;
+
             float2 gridPos = float2(float(i), float(j));
             float h = hash(gridPos) * 2.0 + 0.5;  // Height: 0.5 to 2.5
             float w = 0.3 + hash(gridPos + 100.0) * 0.2;  // Width: 0.3 to 0.5
@@ -80,6 +86,19 @@ Hit mapScene(float3 p) {
     }
 
     return result;
+}
+
+// Coarse scene for AO - only ground + nearest tower
+float mapSceneAO(float3 p) {
+    float d = sdPlane(p, float3(0, 1, 0), 0.5);
+    int cx = clamp(int(round(p.x)), -3, 3);
+    int cz = clamp(int(round(p.z)), -3, 3);
+    float2 gridPos = float2(float(cx), float(cz));
+    float h = hash(gridPos) * 2.0 + 0.5;
+    float w = 0.3 + hash(gridPos + 100.0) * 0.2;
+    float3 towerPos = float3(cx * 1.0, h * 0.5 - 0.5, cz * 1.0);
+    d = min(d, sdBox(p - towerPos, float3(w, h, w) * 0.5));
+    return d;
 }
 
 float3 getMaterialColor(int id) {
@@ -107,7 +126,7 @@ float3 calcNormal(float3 p) {
 float calcSoftShadow(float3 ro, float3 rd, float mint, float maxt, float k) {
     float res = 1.0;
     float t = mint;
-    for (int i = 0; i < 64 && t < maxt; i++) {
+    for (int i = 0; i < 32 && t < maxt; i++) {
         float h = mapScene(ro + rd * t).dist;
         if (h < 0.001) return 0.0;
         res = min(res, k * h / t);
@@ -122,7 +141,7 @@ float calcAO(float3 pos, float3 nor) {
     float aoRadius = uniforms.renderParams.z;
     for (int i = 0; i < 5; i++) {
         float h = 0.01 + aoRadius * float(i) / 4.0;
-        float d = mapScene(pos + h * nor).dist;
+        float d = mapSceneAO(pos + h * nor);
         occ += (h - d) * sca;
         sca *= 0.95;
     }
@@ -143,17 +162,18 @@ RayHit raymarch(float3 ro, float3 rd) {
 
     float t = 0.0;
 
-    for (int i = 0; i < 128 && t < 100.0; i++) {
+    for (int i = 0; i < 128 && t < 40.0; i++) {
         float3 p = ro + rd * t;
         Hit h = mapScene(p);
 
-        if (h.dist < 0.001) {
+        float eps = 0.001 + t * 0.0002;
+        if (h.dist < eps) {
             result.t = t;
             result.materialId = h.materialId;
             result.hit = true;
             return result;
         }
-        t += h.dist * 0.9;
+        t += h.dist * 0.95;
     }
     return result;
 }
@@ -168,7 +188,15 @@ float3 render(float3 ro, float3 rd) {
     if (!hit.hit) return getSkyColor(rd);
 
     float3 pos = ro + rd * hit.t;
-    float3 nor = calcNormal(pos);
+
+    // Skip normal calc for ground plane - always (0,1,0)
+    float3 nor;
+    if (hit.materialId == 1) {
+        nor = float3(0, 1, 0);
+    } else {
+        nor = calcNormal(pos);
+    }
+
     float3 col = getMaterialColor(hit.materialId);
 
     float3 lightDir = normalize(uniforms.lightDirIntensity.xyz);
@@ -176,7 +204,7 @@ float3 render(float3 ro, float3 rd) {
     float shadowSoftness = uniforms.renderParams.w;
 
     float diff = max(dot(nor, lightDir), 0.0);
-    float shadow = calcSoftShadow(pos + nor * 0.01, lightDir, 0.02, 15.0, shadowSoftness);
+    float shadow = calcSoftShadow(pos + nor * 0.01, lightDir, 0.02, 10.0, shadowSoftness);
     float ao = calcAO(pos, nor);
 
     float3 ambient = float3(0.08, 0.09, 0.12);

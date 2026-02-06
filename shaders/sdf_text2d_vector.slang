@@ -285,8 +285,6 @@ uint charGridCellIndex(int2 cell) {
 // Compute SDF for all text characters using spatial grid
 float sdText(float2 pixelPos) {
     float minDist = 1e10;
-    float globalScale = uniforms.textParams.y;
-
     // Look up character grid cell
     int2 cellCoord = charGridCellCoord(pixelPos);
     uint cellIdx = charGridCellIndex(cellCoord);
@@ -298,7 +296,7 @@ float sdText(float2 pixelPos) {
         uint charIdx = charGridIndices[start + i];
         CharInstance ch = charInstances[charIdx];
         float2 charPos = ch.posAndChar.xy;
-        float charScale = ch.posAndChar.z * globalScale;
+        float charScale = ch.posAndChar.z;
         uint glyphIdx = uint(ch.posAndChar.w);
 
         GlyphData glyph = glyphData[glyphIdx];

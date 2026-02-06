@@ -83,6 +83,23 @@ Hit mapScene(float3 p) {
     return result;
 }
 
+// Coarse scene for AO - only ground + nearest sphere
+float mapSceneAO(float3 p) {
+    float time = uniforms.cameraPosTime.w;
+    float d = sdPlane(p, float3(0, 1, 0), 0.5);
+
+    float sphereRadius = 0.4;
+    float spacing = 1.2;
+    int cx = clamp(int(round(p.x / spacing)), -2, 2);
+    int cz = clamp(int(round(p.z / spacing)), -2, 2);
+    float3 offset = float3(cx * spacing, 0.0, cz * spacing);
+    float bounce = abs(sin(time * 2.0 + float(cx + cz) * 0.5)) * 0.8;
+    float3 spherePos = p - offset - float3(0, bounce - 0.1, 0);
+    d = min(d, sdSphere(spherePos, sphereRadius));
+
+    return d;
+}
+
 float3 getMaterialColor(int id) {
     switch (id) {
         case 1: return float3(0.3, 0.3, 0.35);  // Ground
@@ -108,7 +125,7 @@ float3 calcNormal(float3 p) {
 float calcSoftShadow(float3 ro, float3 rd, float mint, float maxt, float k) {
     float res = 1.0;
     float t = mint;
-    for (int i = 0; i < 64 && t < maxt; i++) {
+    for (int i = 0; i < 32 && t < maxt; i++) {
         float h = mapScene(ro + rd * t).dist;
         if (h < 0.001) return 0.0;
         res = min(res, k * h / t);
@@ -123,7 +140,7 @@ float calcAO(float3 pos, float3 nor) {
     float aoRadius = uniforms.renderParams.z;
     for (int i = 0; i < 5; i++) {
         float h = 0.01 + aoRadius * float(i) / 4.0;
-        float d = mapScene(pos + h * nor).dist;
+        float d = mapSceneAO(pos + h * nor);
         occ += (h - d) * sca;
         sca *= 0.95;
     }
@@ -144,11 +161,12 @@ RayHit raymarch(float3 ro, float3 rd) {
 
     float t = 0.0;
 
-    for (int i = 0; i < 128 && t < 100.0; i++) {
+    for (int i = 0; i < 128 && t < 40.0; i++) {
         float3 p = ro + rd * t;
         Hit h = mapScene(p);
 
-        if (h.dist < 0.001) {
+        float eps = 0.001 + t * 0.0002;
+        if (h.dist < eps) {
             result.t = t;
             result.materialId = h.materialId;
             result.hit = true;
@@ -169,7 +187,15 @@ float3 render(float3 ro, float3 rd) {
     if (!hit.hit) return getSkyColor(rd);
 
     float3 pos = ro + rd * hit.t;
-    float3 nor = calcNormal(pos);
+
+    // Skip normal calc for ground plane - always (0,1,0)
+    float3 nor;
+    if (hit.materialId == 1) {
+        nor = float3(0, 1, 0);
+    } else {
+        nor = calcNormal(pos);
+    }
+
     float3 col = getMaterialColor(hit.materialId);
 
     float3 lightDir = normalize(uniforms.lightDirIntensity.xyz);
@@ -177,7 +203,7 @@ float3 render(float3 ro, float3 rd) {
     float shadowSoftness = uniforms.renderParams.w;
 
     float diff = max(dot(nor, lightDir), 0.0);
-    float shadow = calcSoftShadow(pos + nor * 0.01, lightDir, 0.02, 10.0, shadowSoftness);
+    float shadow = calcSoftShadow(pos + nor * 0.01, lightDir, 0.02, 8.0, shadowSoftness);
     float ao = calcAO(pos, nor);
 
     float3 ambient = float3(0.06, 0.07, 0.10);

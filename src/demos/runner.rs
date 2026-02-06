@@ -45,6 +45,7 @@ impl From<OverlayModeState> for OverlayMode {
 use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -788,6 +789,7 @@ impl DemoRunner {
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
+        let _ = self.device.poll(wgpu::PollType::Poll);
 
         Ok(())
     }
@@ -894,6 +896,7 @@ impl DemoRunner {
 pub struct DemoApp {
     runner: Option<DemoRunner>,
     initial_demo: DemoId,
+    last_render: Instant,
     #[cfg(feature = "control")]
     control_state: Option<SharedControlState>,
 }
@@ -903,6 +906,7 @@ impl DemoApp {
         Self {
             runner: None,
             initial_demo,
+            last_render: Instant::now(),
             #[cfg(feature = "control")]
             control_state: None,
         }
@@ -948,6 +952,18 @@ impl ApplicationHandler for DemoApp {
                     event_loop.exit();
                 }
             }
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.runner.is_some() {
+            let target_frametime = Duration::from_secs_f64(1.0 / 60.0);
+            let next_frame = self.last_render + target_frametime;
+            let now = Instant::now();
+            if now >= next_frame {
+                self.runner.as_ref().unwrap().window.request_redraw();
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame));
         }
     }
 
@@ -1065,11 +1081,11 @@ impl ApplicationHandler for DemoApp {
             }
             WindowEvent::Resized(size) => runner.resize(size),
             WindowEvent::RedrawRequested => {
+                self.last_render = Instant::now();
                 runner.update();
                 if let Err(e) = runner.render() {
                     eprintln!("Render error: {:?}", e);
                 }
-                runner.window.request_redraw();
             }
             _ => {}
         }
@@ -1079,7 +1095,7 @@ impl ApplicationHandler for DemoApp {
 /// Run the demo application
 pub fn run(initial_demo: DemoId) -> Result<()> {
     let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = DemoApp::new(initial_demo);
     event_loop.run_app(&mut app)?;
     Ok(())
@@ -1117,7 +1133,7 @@ pub fn run_with_control(initial_demo: DemoId, port: Option<u16>) -> Result<()> {
 
     // Run the event loop
     let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = DemoApp::new(initial_demo).with_control(control_state);
     event_loop.run_app(&mut app)?;
     Ok(())

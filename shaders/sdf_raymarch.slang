@@ -220,7 +220,7 @@ float calcSoftShadow(float3 ro, float3 rd, float mint, float maxt, float k) {
     float res = 1.0;
     float t = mint;
 
-    for (int i = 0; i < 64 && t < maxt; i++) {
+    for (int i = 0; i < 32 && t < maxt; i++) {
         float h = mapScene(ro + rd * t).dist;
         if (h < 0.001) {
             return 0.0;
@@ -267,8 +267,7 @@ RayHit raymarch(float3 ro, float3 rd) {
     result.materialId = 0;
     result.hit = false;
 
-    const float MAX_DIST = 100.0;
-    const float MIN_DIST = 0.001;
+    const float MAX_DIST = 30.0;
     const int MAX_STEPS = 128;
 
     float t = 0.0;
@@ -277,7 +276,8 @@ RayHit raymarch(float3 ro, float3 rd) {
         float3 p = ro + rd * t;
         Hit h = mapScene(p);
 
-        if (h.dist < MIN_DIST) {
+        float eps = 0.001 + t * 0.0002;
+        if (h.dist < eps) {
             result.t = t;
             result.materialId = h.materialId;
             result.hit = true;
@@ -311,7 +311,15 @@ float3 render(float3 ro, float3 rd) {
     }
 
     float3 pos = ro + rd * hit.t;
-    float3 nor = calcNormal(pos);
+
+    // Skip normal calc for ground plane - always (0,1,0)
+    float3 nor;
+    if (hit.materialId == 1) {
+        nor = float3(0, 1, 0);
+    } else {
+        nor = calcNormal(pos);
+    }
+
     float3 col = getMaterialColor(hit.materialId);
 
     // Unpack uniforms
