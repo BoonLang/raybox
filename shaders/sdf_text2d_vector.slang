@@ -5,6 +5,8 @@ struct Uniforms {
     float2 screenSize;
     float2 offset;       // pan offset in pixels (x, y)
     float4 textParams;   // x = charCount, y = scale, z = unused, w = unused
+    float4 charGridParams;  // xy = gridDims, zw = cellSize
+    float4 charGridBounds;  // xy = gridMin, zw = gridMax
 };
 
 // Grid cell structure
@@ -31,6 +33,12 @@ struct CharInstance {
     float4 posAndChar;  // x, y, scale, glyphIndex
 };
 
+// Character grid cell (offset + count into charGridIndices)
+struct CharGridCellData {
+    uint offset;
+    uint count;
+};
+
 [[vk::binding(0, 0)]]
 ConstantBuffer<Uniforms> uniforms;
 
@@ -48,6 +56,12 @@ StructuredBuffer<GlyphData> glyphData;
 
 [[vk::binding(5, 0)]]
 StructuredBuffer<CharInstance> charInstances;
+
+[[vk::binding(6, 0)]]
+StructuredBuffer<CharGridCellData> charGridCells;
+
+[[vk::binding(7, 0)]]
+StructuredBuffer<uint> charGridIndices;
 
 struct VertexOutput {
     float4 position : SV_Position;
@@ -222,12 +236,14 @@ float sdGlyphAt(float2 localPos, uint glyphIdx, float4 bounds, uint4 gridInfo, u
         float2 p0 = curve.points01.xy;
         float2 p1 = curve.points01.zw;
         float2 p2 = curve.points2bbox.xy;
-        float4 bbox = float4(curve.points2bbox.zw, curve.bboxFlags.xy);
 
-        // Early reject using bounding box
-        float2 d = max(bbox.xy - localPos, localPos - bbox.zw);
-        float bboxDist = length(max(d, 0.0));
-        if (bboxDist > minDist) continue;
+        // Midpoint initial guess: skip expensive sdQuadraticBezier if midpoint distance
+        // already proves this curve can't be closer than current best
+        float2 mid = (p0 + 2.0 * p1 + p2) * 0.25;
+        float midDist = length(localPos - mid);
+        float4 bbox = float4(curve.points2bbox.zw, curve.bboxFlags.xy);
+        float curveRadius = length(bbox.zw - bbox.xy) * 0.5;
+        if (midDist - curveRadius > minDist) continue;
 
         float dist = sdQuadraticBezier(localPos, p0, p1, p2);
         minDist = min(minDist, dist);
@@ -252,14 +268,35 @@ float sdGlyphAt(float2 localPos, uint glyphIdx, float4 bounds, uint4 gridInfo, u
     return sign * minDist;
 }
 
-// Compute SDF for all text characters
+// Character grid helpers
+int2 charGridCellCoord(float2 p) {
+    float2 gridMin = uniforms.charGridBounds.xy;
+    float2 cellSize = uniforms.charGridParams.zw;
+    int2 gridDims = int2(uniforms.charGridParams.xy);
+    int2 cell = int2((p - gridMin) / cellSize);
+    return clamp(cell, int2(0), gridDims - 1);
+}
+
+uint charGridCellIndex(int2 cell) {
+    int gridW = int(uniforms.charGridParams.x);
+    return uint(cell.y * gridW + cell.x);
+}
+
+// Compute SDF for all text characters using spatial grid
 float sdText(float2 pixelPos) {
     float minDist = 1e10;
-    int charCount = int(uniforms.textParams.x);
     float globalScale = uniforms.textParams.y;
 
-    for (int i = 0; i < charCount && i < 4000; i++) {
-        CharInstance ch = charInstances[i];
+    // Look up character grid cell
+    int2 cellCoord = charGridCellCoord(pixelPos);
+    uint cellIdx = charGridCellIndex(cellCoord);
+    CharGridCellData cgCell = charGridCells[cellIdx];
+    uint start = cgCell.offset;
+    uint count = cgCell.count;
+
+    for (uint i = 0u; i < count && i < 16u; i++) {
+        uint charIdx = charGridIndices[start + i];
+        CharInstance ch = charInstances[charIdx];
         float2 charPos = ch.posAndChar.xy;
         float charScale = ch.posAndChar.z * globalScale;
         uint glyphIdx = uint(ch.posAndChar.w);
@@ -267,18 +304,7 @@ float sdText(float2 pixelPos) {
         GlyphData glyph = glyphData[glyphIdx];
         float4 bounds = glyph.bounds;
 
-        // Check if pixel is near this glyph (screen space bounding box)
-        // Account for glyph bounds offset (descenders have negative Y bounds)
-        float2 glyphScreenMin = charPos + float2(bounds.x, bounds.y) * charScale;
-        float2 glyphScreenMax = charPos + float2(bounds.z, bounds.w) * charScale;
-
-        if (pixelPos.x < glyphScreenMin.x - 5.0 || pixelPos.x > glyphScreenMax.x + 5.0 ||
-            pixelPos.y < glyphScreenMin.y - 5.0 || pixelPos.y > glyphScreenMax.y + 5.0) {
-            continue;
-        }
-
         // Transform from screen pixels to glyph local coordinates
-        // Match the 3D shader approach - just scale, don't add bounds
         float2 localPos = (pixelPos - charPos) / charScale;
 
         // Compute SDF if inside bounds (with margin)

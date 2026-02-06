@@ -8,6 +8,8 @@ struct Uniforms {
     float4 renderParams;      // xy = resolution, z = textDepth, w = textScale
     float4 textParams;        // x = charCount, yzw = reserved
     float4 textAabb;          // xy = min(x,y), zw = max(x,y) of all text in 2D
+    float4 charGridParams;    // xy = gridDims, zw = cellSize
+    float4 charGridBounds;    // xy = gridMin, zw = gridMax
 };
 
 // Grid cell structure
@@ -34,6 +36,12 @@ struct GlyphData {
     uint4 curveInfo;    // curveOffset, curveCount, unused, unused
 };
 
+// Character grid cell (offset + count into charGridIndices)
+struct CharGridCellData {
+    uint offset;
+    uint count;
+};
+
 [[vk::binding(0, 0)]]
 ConstantBuffer<Uniforms> uniforms;
 
@@ -51,6 +59,12 @@ StructuredBuffer<GlyphData> glyphData;
 
 [[vk::binding(5, 0)]]
 StructuredBuffer<CharInstance> charInstances;
+
+[[vk::binding(6, 0)]]
+StructuredBuffer<CharGridCellData> charGridCells;
+
+[[vk::binding(7, 0)]]
+StructuredBuffer<uint> charGridIndices;
 
 struct VertexOutput {
     float4 position : SV_Position;
@@ -226,11 +240,14 @@ float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
         float2 p0 = curve.points01.xy;
         float2 p1 = curve.points01.zw;
         float2 p2 = curve.points2bbox.xy;
-        float4 bbox = float4(curve.points2bbox.zw, curve.bboxFlags.xy);
 
-        float2 d = max(bbox.xy - localPos, localPos - bbox.zw);
-        float bboxDist = length(max(d, 0.0));
-        if (bboxDist > minDist) continue;
+        // Midpoint initial guess: skip expensive sdQuadraticBezier if midpoint distance
+        // already proves this curve can't be closer than current best
+        float2 mid = (p0 + 2.0 * p1 + p2) * 0.25;
+        float midDist = length(localPos - mid);
+        float4 bbox = float4(curve.points2bbox.zw, curve.bboxFlags.xy);
+        float curveRadius = length(bbox.zw - bbox.xy) * 0.5;
+        if (midDist - curveRadius > minDist) continue;
 
         float dist = sdQuadraticBezier(localPos, p0, p1, p2);
         minDist = min(minDist, dist);
@@ -255,48 +272,18 @@ float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
     return sign_val * minDist;
 }
 
-static const uint MAX_CHARS = 512;
+// Character grid helpers
+int2 charGridCellCoord(float2 p) {
+    float2 gridMin = uniforms.charGridBounds.xy;
+    float2 cellSize = uniforms.charGridParams.zw;
+    int2 gridDims = int2(uniforms.charGridParams.xy);
+    int2 cell = int2((p - gridMin) / cellSize);
+    return clamp(cell, int2(0), gridDims - 1);
+}
 
-// Compute 2D SDF for all text
-float sdText2D(float2 p) {
-    float minSdfDist = 1e10;  // Full SDF distance (signed)
-    float minBoxDist = 1e10;  // Minimum distance to any glyph's bounding box (unsigned)
-    uint charCount = uint(uniforms.textParams.x);
-
-    for (uint i = 0; i < charCount && i < MAX_CHARS; i++) {
-        CharInstance ch = charInstances[i];
-        float2 charPos = ch.posAndChar.xy;
-        float charScale = ch.posAndChar.z;
-        uint glyphIdx = uint(ch.posAndChar.w);
-
-        GlyphData glyph = glyphData[glyphIdx];
-        float4 bounds = glyph.bounds;
-
-        // Compute world-space bounding box
-        float2 glyphMin = charPos + float2(bounds.x, bounds.y) * charScale;
-        float2 glyphMax = charPos + float2(bounds.z, bounds.w) * charScale;
-
-        // Distance to this glyph's bounding box
-        float2 d = max(glyphMin - p, p - glyphMax);
-        float boxDist = length(max(d, 0.0));
-        minBoxDist = min(minBoxDist, boxDist);
-
-        // Transform to glyph local coordinates
-        float2 localP = (p - charPos) / charScale;
-
-        // Compute full SDF if within bounds margin
-        if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
-            localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
-            float d = sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo);
-            minSdfDist = min(minSdfDist, d * charScale);
-        }
-    }
-
-    // If we computed an SDF for any glyph, use it; otherwise use box distance
-    if (minSdfDist < 1e9) {
-        return minSdfDist;
-    }
-    return minBoxDist;
+uint charGridCellIndex(int2 cell) {
+    int gridW = int(uniforms.charGridParams.x);
+    return uint(cell.y * gridW + cell.x);
 }
 
 // Exact extrusion operation (from Inigo Quilez) - same as clay shader
@@ -305,15 +292,12 @@ float opExtrusion(float sdf2d, float zDist, float depth) {
     return min(max(w.x, w.y), 0.0) + length(max(w, 0.0));
 }
 
-// 3D extruded text with per-character extrusion (fixes "cut" artifacts)
-// Each character is extruded independently, then all are unioned
+// 3D extruded text with per-character extrusion using char grid
 float sdText3D(float3 p, float depth) {
     float minDist = 1e10;
-    float minBoxDist = 1e10;  // Track minimum 3D bounding box distance as fallback
-    uint charCount = uint(uniforms.textParams.x);
     float halfDepth = depth * 0.5;
 
-    // Text AABB early-exit: skip entire character loop when far from text
+    // Text AABB early-exit
     float2 aabbMin = uniforms.textAabb.xy;
     float2 aabbMax = uniforms.textAabb.zw;
     float3 textBoxMin = float3(aabbMin, -halfDepth);
@@ -323,8 +307,19 @@ float sdText3D(float3 p, float depth) {
     float textBoxDist = sdBox(p - textBoxCenter, textBoxHalf);
     if (textBoxDist > 0.2) return textBoxDist;
 
-    for (uint i = 0; i < charCount && i < MAX_CHARS; i++) {
-        CharInstance ch = charInstances[i];
+    // Convert 3D position to text 2D coordinates (XY plane)
+    float2 textPos = p.xy;
+
+    // Look up character grid cell
+    int2 cellCoord = charGridCellCoord(textPos);
+    uint cellIdx = charGridCellIndex(cellCoord);
+    CharGridCellData cgCell = charGridCells[cellIdx];
+    uint start = cgCell.offset;
+    uint count = cgCell.count;
+
+    for (uint i = 0u; i < count && i < 16u; i++) {
+        uint charIdx = charGridIndices[start + i];
+        CharInstance ch = charInstances[charIdx];
         float2 charPos = ch.posAndChar.xy;
         float charScale = ch.posAndChar.z;
         uint glyphIdx = uint(ch.posAndChar.w);
@@ -332,43 +327,21 @@ float sdText3D(float3 p, float depth) {
         GlyphData glyph = glyphData[glyphIdx];
         float4 bounds = glyph.bounds;
 
-        // Compute distance to character's 3D bounding box
-        float2 glyphMin2D = charPos + float2(bounds.x, bounds.y) * charScale;
-        float2 glyphMax2D = charPos + float2(bounds.z, bounds.w) * charScale;
-        float3 boxMin = float3(glyphMin2D, -halfDepth);
-        float3 boxMax = float3(glyphMax2D, halfDepth);
-        float3 boxCenter = (boxMin + boxMax) * 0.5;
-        float3 boxHalf = (boxMax - boxMin) * 0.5;
-        float boxDist = sdBox(p - boxCenter, boxHalf);
-
-        // Always track minimum box distance as fallback
-        minBoxDist = min(minBoxDist, boxDist);
-
-        // Skip expensive SDF if bounding box is farther than current best + margin
-        if (boxDist > minDist + 0.1) continue;
-
         // Transform to glyph local 2D coordinates
-        float2 localP = (float2(p.x, p.y) - charPos) / charScale;
+        float2 localP = (textPos - charPos) / charScale;
 
-        // Only compute expensive SDF if within bounds margin
         if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
             localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
-            // Compute 2D SDF for THIS character only
             float d2d = sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScale;
-
-            // Extrude THIS character to 3D
             float d3d = opExtrusion(d2d, p.z, halfDepth);
-
-            // Union with other characters
             minDist = min(minDist, d3d);
         }
     }
 
-    // If we computed detailed SDF for any character, use it; otherwise use box distance
     if (minDist < 1e9) {
         return minDist;
     }
-    return minBoxDist;
+    return textBoxDist;
 }
 
 struct Hit {
@@ -442,14 +415,16 @@ float3 getMaterialColor(int id) {
     }
 }
 
-// Same normal calculation as clay shader
+// Tetrahedron normal calculation (4 mapScene calls instead of 6)
 float3 calcNormal(float3 p) {
-    const float eps = 0.0002;
-    float3 n;
-    n.x = mapScene(p + float3(eps, 0, 0)).dist - mapScene(p - float3(eps, 0, 0)).dist;
-    n.y = mapScene(p + float3(0, eps, 0)).dist - mapScene(p - float3(0, eps, 0)).dist;
-    n.z = mapScene(p + float3(0, 0, eps)).dist - mapScene(p - float3(0, 0, eps)).dist;
-    return normalize(n);
+    const float h = 0.0002;
+    const float2 k = float2(1, -1);
+    return normalize(
+        k.xyy * mapScene(p + k.xyy * h).dist +
+        k.yyx * mapScene(p + k.yyx * h).dist +
+        k.yxy * mapScene(p + k.yxy * h).dist +
+        k.xxx * mapScene(p + k.xxx * h).dist
+    );
 }
 
 float calcSoftShadow(float3 ro, float3 rd, float mint, float maxt, float k) {

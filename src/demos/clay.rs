@@ -7,7 +7,7 @@ use std::any::Any;
 use crate::camera::FlyCamera;
 use crate::input::CameraConfig;
 use crate::shader_bindings::sdf_clay_vector;
-use crate::text::{VectorFont, VectorFontAtlas};
+use crate::text::{VectorFont, VectorFontAtlas, build_char_grid};
 use anyhow::{Context, Result};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -22,6 +22,8 @@ struct Uniforms {
     light_dir_intensity: [f32; 4],
     render_params: [f32; 4],
     text_params: [f32; 4],
+    char_grid_params: [f32; 4],  // xy = gridDims, zw = cellSize
+    char_grid_bounds: [f32; 4],  // xy = gridMin, zw = gridMax
 }
 
 impl Default for Uniforms {
@@ -32,6 +34,8 @@ impl Default for Uniforms {
             light_dir_intensity: [0.5, 0.8, 0.3, 1.5],
             render_params: [800.0, 600.0, 0.2, 1.0],
             text_params: [0.0, 0.0, 0.4, 0.0],
+            char_grid_params: [0.0; 4],
+            char_grid_bounds: [0.0; 4],
         }
     }
 }
@@ -158,6 +162,8 @@ pub struct ClayDemo {
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     char_count: u32,
+    char_grid_params: [f32; 4],
+    char_grid_bounds: [f32; 4],
     width: u32,
     height: u32,
 }
@@ -168,11 +174,23 @@ impl ClayDemo {
         let font_data = std::fs::read("assets/fonts/DejaVuSans.ttf")
             .context("Failed to load font file")?;
         let font = VectorFont::from_ttf(&font_data).map_err(|e| anyhow::anyhow!(e))?;
-        let atlas = VectorFontAtlas::from_font(&font, 8);
+        let atlas = VectorFontAtlas::from_font(&font, 32);
 
         // Build text layout
         let char_instances = build_clay_text_layout(&atlas, 2.3, 1.6);
         let char_count = char_instances.len() as u32;
+
+        // Build character spatial grid
+        let instance_data: Vec<[f32; 4]> = char_instances.iter().map(|c| c.pos_and_char).collect();
+        let char_grid = build_char_grid(&instance_data, &atlas, [64, 32]);
+
+        let char_grid_params = [
+            char_grid.dims[0] as f32,
+            char_grid.dims[1] as f32,
+            char_grid.cell_size[0],
+            char_grid.cell_size[1],
+        ];
+        let char_grid_bounds = char_grid.bounds;
 
         // Prepare GPU data
         let gpu_grid_cells: Vec<GpuGridCell> = atlas
@@ -224,6 +242,8 @@ impl ClayDemo {
 
         let mut uniforms = Uniforms::default();
         uniforms.text_params[0] = char_count as f32;
+        uniforms.char_grid_params = char_grid_params;
+        uniforms.char_grid_bounds = char_grid_bounds;
 
         let uniform_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Clay Demo Uniform Buffer"),
@@ -289,7 +309,30 @@ impl ClayDemo {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        // Create bind group layout
+        let char_grid_cells_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Char Grid Cells Buffer"),
+            contents: bytemuck::cast_slice(&char_grid.cells),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let char_grid_indices_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Char Grid Indices Buffer"),
+            contents: bytemuck::cast_slice(&char_grid.char_indices),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        // Create bind group layout (8 bindings: uniform + 5 existing + 2 char grid)
+        let storage_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+
         let bind_group_layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Clay Demo Bind Group Layout"),
             entries: &[
@@ -303,56 +346,13 @@ impl ClayDemo {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                storage_entry(1),
+                storage_entry(2),
+                storage_entry(3),
+                storage_entry(4),
+                storage_entry(5),
+                storage_entry(6),
+                storage_entry(7),
             ],
         });
 
@@ -383,6 +383,14 @@ impl ClayDemo {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: char_instances_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: char_grid_cells_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: char_grid_indices_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -427,6 +435,8 @@ impl ClayDemo {
             uniform_buffer,
             bind_group,
             char_count,
+            char_grid_params,
+            char_grid_bounds,
             width: ctx.width,
             height: ctx.height,
         })
@@ -436,6 +446,8 @@ impl ClayDemo {
         let mut uniforms = Uniforms::default();
         uniforms.update_from_camera(camera, self.width, self.height, time);
         uniforms.text_params[0] = self.char_count as f32;
+        uniforms.char_grid_params = self.char_grid_params;
+        uniforms.char_grid_bounds = self.char_grid_bounds;
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 }
