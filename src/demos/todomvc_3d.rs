@@ -190,7 +190,7 @@ fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
             // Ambient
             t.ambient_color = [0.18, 0.16, 0.14, 1.0];
             // Text relief: raised
-            t.extra_params[0] = 0.06; // textReliefDepth
+            t.extra_params[0] = 0.20; // textReliefDepth
             t.extra_params[1] = 0.0;  // raised
         }
         (ThemeId::Professional, true) => {
@@ -210,7 +210,7 @@ fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
             t.material_props[7] = [0.65, 0.0, 0.0, 0.0];
             t.geometry_params = [0.015, 0.10, 0.005, 0.02];
             t.ambient_color = [0.06, 0.06, 0.08, 1.0];
-            t.extra_params[0] = 0.06;
+            t.extra_params[0] = 0.20;
             t.extra_params[1] = 0.0;
         }
         (ThemeId::Neobrutalism, false) => {
@@ -230,7 +230,7 @@ fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
             t.material_props[7] = [0.15, 0.0, 0.0, 0.0];
             t.geometry_params = [0.005, 0.12, 0.008, 0.025];
             t.ambient_color = [0.20, 0.18, 0.15, 1.0];
-            t.extra_params[0] = 0.08;
+            t.extra_params[0] = 0.20;
             t.extra_params[1] = 0.0;
         }
         (ThemeId::Neobrutalism, true) => {
@@ -250,7 +250,7 @@ fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
             t.material_props[7] = [0.15, 0.0, 0.0, 0.0];
             t.geometry_params = [0.005, 0.12, 0.008, 0.025];
             t.ambient_color = [0.06, 0.06, 0.05, 1.0];
-            t.extra_params[0] = 0.08;
+            t.extra_params[0] = 0.20;
             t.extra_params[1] = 0.0;
         }
         (ThemeId::Glassmorphism, false) => {
@@ -270,7 +270,7 @@ fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
             t.material_props[7] = [0.5, 0.0, 0.0, 0.0];
             t.geometry_params = [0.018, 0.10, 0.003, 0.015];
             t.ambient_color = [0.25, 0.27, 0.32, 1.0];
-            t.extra_params[0] = 0.05;
+            t.extra_params[0] = 0.20;
             t.extra_params[1] = 0.0;
         }
         (ThemeId::Glassmorphism, true) => {
@@ -290,7 +290,7 @@ fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
             t.material_props[7] = [0.5, 0.0, 0.0, 0.0];
             t.geometry_params = [0.018, 0.10, 0.003, 0.015];
             t.ambient_color = [0.05, 0.06, 0.08, 1.0];
-            t.extra_params[0] = 0.05;
+            t.extra_params[0] = 0.20;
             t.extra_params[1] = 0.0;
         }
         (ThemeId::Neumorphism, false) => {
@@ -310,7 +310,7 @@ fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
             t.material_props[7] = [0.3, 0.0, 0.0, 0.0];
             t.geometry_params = [0.020, 0.08, 0.003, 0.015];
             t.ambient_color = [0.22, 0.22, 0.24, 1.0];
-            t.extra_params[0] = 0.04;
+            t.extra_params[0] = 0.20;
             t.extra_params[1] = 1.0; // carved
         }
         (ThemeId::Neumorphism, true) => {
@@ -330,7 +330,7 @@ fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
             t.material_props[7] = [0.3, 0.0, 0.0, 0.0];
             t.geometry_params = [0.020, 0.08, 0.003, 0.015];
             t.ambient_color = [0.06, 0.06, 0.07, 1.0];
-            t.extra_params[0] = 0.04;
+            t.extra_params[0] = 0.20;
             t.extra_params[1] = 1.0; // carved
         }
     }
@@ -339,16 +339,20 @@ fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
 }
 
 /// Get per-theme light direction and intensity
+/// Light comes from upper-left so shadows fall to the right (+X) and down (+Z)
+/// Direction vector points TOWARD the light source (normalized in shader)
 fn theme_light(theme_id: ThemeId, dark_mode: bool) -> [f32; 4] {
+    // Light from upper-left: negative X (left), positive Y (up), negative Z (toward top of card)
+    // This casts shadows to +X (right) and +Z (down)
     match (theme_id, dark_mode) {
-        (ThemeId::Professional, false) => [0.5, 0.8, 0.3, 1.6],
-        (ThemeId::Professional, true) => [0.5, 0.8, 0.3, 1.2],
-        (ThemeId::Neobrutalism, false) => [0.6, 0.9, 0.2, 1.8],
-        (ThemeId::Neobrutalism, true) => [0.6, 0.9, 0.2, 1.3],
-        (ThemeId::Glassmorphism, false) => [0.3, 0.7, 0.4, 1.3],
-        (ThemeId::Glassmorphism, true) => [0.3, 0.7, 0.4, 1.0],
-        (ThemeId::Neumorphism, false) => [0.4, 0.6, 0.5, 1.2],
-        (ThemeId::Neumorphism, true) => [0.4, 0.6, 0.5, 0.9],
+        (ThemeId::Professional, false) => [-0.4, 0.8, -0.3, 1.6],
+        (ThemeId::Professional, true) => [-0.4, 0.8, -0.3, 1.2],
+        (ThemeId::Neobrutalism, false) => [-0.5, 0.9, -0.2, 1.8],
+        (ThemeId::Neobrutalism, true) => [-0.5, 0.9, -0.2, 1.3],
+        (ThemeId::Glassmorphism, false) => [-0.3, 0.7, -0.3, 1.3],
+        (ThemeId::Glassmorphism, true) => [-0.3, 0.7, -0.3, 1.0],
+        (ThemeId::Neumorphism, false) => [-0.3, 0.6, -0.3, 1.2],
+        (ThemeId::Neumorphism, true) => [-0.3, 0.6, -0.3, 0.9],
     }
 }
 
@@ -417,15 +421,15 @@ struct TextColors {
 
 // ---- Text layout (pixel coords → world XZ) ----
 
+// Card pixel bounds: x=75, y=130, w=550, h=344.2 → center at pixel (350, 302)
 // Card is 5.5 world units wide (CARD_W=2.75), 3.44 deep (CARD_D=1.72)
-// TodoMVC UI viewport is 700x700 pixels
-// Mapping: world_x = (pixel_x - 350) / 100, world_z = -(pixel_y - 350) / 100
-// So 700px maps to 7.0 world units — but card is 5.5 wide, so text needs to be
-// scaled to fit within card bounds.
+// Mapping: world_x = (pixel_x - 350) / 100, world_z = -(pixel_y - 302) / 100
+// In 3D: textPos.y = -p.z, so p.z = (pixel_y - 302) / 100
+// Card top (py=130) → Z = -1.72, card bottom (py=474.2) → Z = +1.72
 
 const PIXEL_TO_WORLD: f32 = 1.0 / 100.0;
 const PIXEL_CENTER_X: f32 = 350.0;
-const PIXEL_CENTER_Z: f32 = 350.0;
+const PIXEL_CENTER_Z: f32 = 302.0;
 
 fn px_to_world_x(px: f32) -> f32 {
     (px - PIXEL_CENTER_X) * PIXEL_TO_WORLD
@@ -919,7 +923,7 @@ impl Demo for TodoMvc3DDemo {
 
     fn camera_config(&self) -> CameraConfig {
         CameraConfig {
-            initial_position: glam::Vec3::new(0.0, 3.5, 3.5),
+            initial_position: glam::Vec3::new(0.0, 9.5, 0.001),
             look_at_target: glam::Vec3::new(0.0, 0.0, 0.0),
         }
     }

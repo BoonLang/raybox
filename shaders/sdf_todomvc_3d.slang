@@ -283,9 +283,30 @@ Hit opUnionHit(Hit a, Hit b) {
 
 // ---- Scene geometry constants ----
 // Card dimensions in world space (card is on XZ plane, Y is up)
-static const float CARD_W = 2.75;  // half-width
+// In 3D, Z maps as: p.z = (pixel_y - 302) / 100
+// Card top (py=130) → Z = -1.72, card bottom (py=474.2) → Z = +1.72
+static const float CARD_W = 2.75;  // half-width (X)
 static const float CARD_D = 1.72;  // half-depth (Z)
 static const float CARD_Y = 0.0;   // card center Y
+
+// World Z positions derived from pixel Y coords (center=302, scale=1/100)
+// Negative Z = top of card, positive Z = bottom of card
+static const float INPUT_TOP_Z = -1.72;    // py=130, same as card top
+static const float INPUT_BOT_Z = -1.062;   // py=195.8
+static const float SEP1_Z = -0.466;        // py=255.4
+static const float SEP2_Z = 0.130;         // py=315.0
+static const float SEP3_Z = 0.726;         // py=374.6
+static const float FOOTER_Z = 1.314;       // py=433.4
+// Item center Z positions (between borders)
+static const float ITEM1_Z = -0.764;       // between INPUT_BOT and SEP1
+static const float ITEM2_Z = -0.168;       // between SEP1 and SEP2
+static const float ITEM3_Z = 0.428;        // between SEP2 and SEP3
+static const float ITEM4_Z = 1.020;        // between SEP3 and FOOTER
+static const float ITEM_HALF_H = 0.28;     // item half-height in Z (slightly smaller than spacing)
+// Checkbox position
+static const float CB_X = -2.49;           // pixel x=101: (101-350)/100
+static const float CB_RADIUS = 0.17;       // 17 pixels
+static const float CB_TUBE_R = 0.006;      // tube radius for torus ring
 
 // ---- Text relief with per-character color ----
 
@@ -305,15 +326,16 @@ TextHit sdTextRelief3D(float3 p, float depth) {
 
     float halfDepth = depth * 0.5;
 
-    // Text AABB early-exit
+    // Text AABB early-exit (with padded Y extent for conservative raymarching)
     float2 gridMin = uniforms.charGridBounds.xy;
     float2 gridMax = uniforms.charGridBounds.zw;
-    float3 textBoxMin = float3(gridMin.x, -halfDepth, -gridMax.y);
-    float3 textBoxMax = float3(gridMax.x, halfDepth, -gridMin.y);
+    float aabbPadY = 0.3; // extra Y padding so raymarcher sees text slab from further away
+    float3 textBoxMin = float3(gridMin.x, -halfDepth - aabbPadY, -gridMax.y);
+    float3 textBoxMax = float3(gridMax.x, halfDepth + aabbPadY, -gridMin.y);
     float3 textBoxCenter = (textBoxMin + textBoxMax) * 0.5;
     float3 textBoxHalf = (textBoxMax - textBoxMin) * 0.5;
     float textBoxDist = sdBox(p - textBoxCenter, textBoxHalf);
-    if (textBoxDist > 0.3) {
+    if (textBoxDist > 0.1) {
         result.dist = textBoxDist;
         return result;
     }
@@ -321,36 +343,56 @@ TextHit sdTextRelief3D(float3 p, float depth) {
     // Convert 3D position to text 2D coordinates (text on XZ plane, Z negated)
     float2 textPos = float2(p.x, -p.z);
 
-    // Look up character grid cell
-    int2 cellCoord = charGridCellCoord(textPos);
-    uint cellIdx = charGridCellIndex(cellCoord);
-    CharGridCellData cgCell = charGridCells[cellIdx];
-    uint start = cgCell.offset;
-    uint count = cgCell.count;
+    // Check 3x3 neighborhood of grid cells to avoid missing chars at cell boundaries
+    int2 centerCell = charGridCellCoord(textPos);
+    int2 gridDims = int2(uniforms.charGridParams.xy);
 
-    for (uint i = 0u; i < count && i < 16u; i++) {
-        uint charIdx = charGridIndices[start + i];
-        CharInstanceEx ch = charInstances[charIdx];
-        float2 charPos = ch.posAndChar.xy;
-        float charScale = ch.posAndChar.z;
-        uint glyphIdx = uint(ch.posAndChar.w);
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            int2 cell = centerCell + int2(dx, dy);
+            if (cell.x < 0 || cell.y < 0 || cell.x >= gridDims.x || cell.y >= gridDims.y)
+                continue;
 
-        GlyphData glyph = glyphData[glyphIdx];
-        float4 bounds = glyph.bounds;
+            uint cellIdx = charGridCellIndex(cell);
+            CharGridCellData cgCell = charGridCells[cellIdx];
+            uint start = cgCell.offset;
+            uint count = cgCell.count;
 
-        float2 localP = (textPos - charPos) / charScale;
+            for (uint i = 0u; i < count && i < 16u; i++) {
+                uint charIdx = charGridIndices[start + i];
+                CharInstanceEx ch = charInstances[charIdx];
+                float2 charPos = ch.posAndChar.xy;
+                float charScale = ch.posAndChar.z;
+                uint glyphIdx = uint(ch.posAndChar.w);
 
-        if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
-            localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
-            float d2d = sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScale;
-            float d3d = opExtrusion(d2d, p.y, halfDepth);
-            if (d3d < result.dist) {
-                result.dist = d3d;
-                result.color = ch.colorFlags.xyz;
-                result.flags = ch.colorFlags.w;
-                result.valid = true;
+                GlyphData glyph = glyphData[glyphIdx];
+                float4 bounds = glyph.bounds;
+
+                float2 localP = (textPos - charPos) / charScale;
+
+                if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
+                    localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
+                    float d2d = sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScale;
+                    float d3d = opExtrusion(d2d, p.y, halfDepth);
+                    if (d3d < result.dist) {
+                        result.dist = d3d;
+                        result.color = ch.colorFlags.xyz;
+                        result.flags = ch.colorFlags.w;
+                        result.valid = true;
+                    }
+                }
             }
         }
+    }
+
+    // If inside the text AABB but no character found, return slab distance
+    // to prevent the raymarcher from taking huge steps through the text region
+    if (!result.valid) {
+        float slabDist = max(abs(p.y) - halfDepth, 0.0);
+        // Use distance to nearest cell boundary as XZ component
+        float2 cellSize = uniforms.charGridParams.zw;
+        float cellMinDist = min(cellSize.x, cellSize.y) * 0.5;
+        result.dist = max(slabDist, cellMinDist);
     }
 
     return result;
@@ -418,47 +460,39 @@ Hit mapScene(float3 p) {
     float cardDist = sdRoundBox(cardP, float3(CARD_W, 0.04, CARD_D), edgeR);
 
     // Input well (CSG subtract from top of card)
-    // Input area occupies top ~19% of card in Z
-    float inputWellZ = CARD_D - 0.33;  // input well center Z offset from card center
-    float3 inputP = cardP - float3(0, 0.02, -inputWellZ);
-    float inputWell = sdRoundBox(inputP, float3(CARD_W - 0.04, inputDepth, 0.30), edgeR * 0.5);
+    // Input area: pixel Y=130 to 195.8 → Z = -1.72 to -1.062
+    float inputCenterZ = (INPUT_TOP_Z + INPUT_BOT_Z) * 0.5;  // -1.391
+    float inputHalfZ = (INPUT_BOT_Z - INPUT_TOP_Z) * 0.5;    // 0.329
+    float3 inputP = cardP - float3(0, 0.02, inputCenterZ);
+    float inputWell = sdRoundBox(inputP, float3(CARD_W - 0.04, inputDepth, inputHalfZ), edgeR * 0.5);
     cardDist = max(cardDist, -inputWell);  // CSG subtract
 
     // Todo item raised panels (4 items)
-    float itemStartZ = CARD_D - 0.93;  // start of first item
-    float itemH = 0.28;  // height per item
-    float itemGap = 0.02;
-
+    float itemCenters[4] = { ITEM1_Z, ITEM2_Z, ITEM3_Z, ITEM4_Z };
     for (int i = 0; i < 4; i++) {
-        float iz = itemStartZ - float(i) * (itemH + itemGap);
-        float3 itemP = cardP - float3(0, 0.0, -iz);
-        float itemDist = sdRoundBox(itemP, float3(CARD_W - 0.04, 0.04 + itemElev, itemH * 0.5), edgeR * 0.3);
-        // Union with main card
+        float3 itemP = cardP - float3(0, 0, itemCenters[i]);
+        float itemDist = sdRoundBox(itemP, float3(CARD_W - 0.04, 0.04 + itemElev, ITEM_HALF_H), edgeR * 0.3);
         Hit item;
         item.dist = itemDist;
         item.materialId = 3;  // todo item material
         item.textColor = float3(0);
         result = opUnionHit(result, item);
 
-        // Checkbox recess (CSG subtract a circle from item)
-        float3 cbP = cardP - float3(-CARD_W + 0.35, 0.0, -iz);
-        float cbDist = sdRoundBox(cbP, float3(0.09, 0.06, 0.09), 0.08);
-        // Only apply if inside the item area
-        if (cbDist < 0.2) {
-            // Checkbox border ring (material 4)
-            float cbRing = abs(cbDist) - 0.008;
-            Hit cbHit;
-            cbHit.dist = cbRing;
-            cbHit.materialId = 4;  // checkbox ring
-            cbHit.textColor = float3(0);
-            result = opUnionHit(result, cbHit);
-        }
+        // Checkbox circle ring (torus lying flat on card surface)
+        float3 cbP = cardP - float3(CB_X, 0.04, itemCenters[i]);
+        float2 torusQ = float2(length(cbP.xz) - CB_RADIUS, cbP.y);
+        float cbDist = length(torusQ) - CB_TUBE_R;
+        Hit cbHit;
+        cbHit.dist = cbDist;
+        cbHit.materialId = 4;  // checkbox ring
+        cbHit.textColor = float3(0);
+        result = opUnionHit(result, cbHit);
     }
 
-    // Separator lines between items (thin boxes)
+    // Separator lines between items
+    float sepZs[3] = { SEP1_Z, SEP2_Z, SEP3_Z };
     for (int s = 0; s < 3; s++) {
-        float sz = itemStartZ - float(s + 1) * (itemH + itemGap) + itemGap * 0.5 + itemH * 0.5;
-        float3 sepP = cardP - float3(0, 0.04, -sz);
+        float3 sepP = cardP - float3(0, 0.04, sepZs[s]);
         float sepDist = sdRoundBox(sepP, float3(CARD_W - 0.06, 0.002, 0.002), 0.001);
         Hit sep;
         sep.dist = sepDist;
@@ -467,26 +501,38 @@ Hit mapScene(float3 p) {
         result = opUnionHit(result, sep);
     }
 
-    // Footer area (bottom of card)
-    float footerZ = -CARD_D + 0.25;
-    float3 footerSepP = cardP - float3(0, 0.04, -footerZ - 0.12);
-    float footerSepDist = sdRoundBox(footerSepP, float3(CARD_W - 0.04, 0.002, 0.002), 0.001);
-    Hit footerSep;
-    footerSep.dist = footerSepDist;
-    footerSep.materialId = 5;
-    footerSep.textColor = float3(0);
-    result = opUnionHit(result, footerSep);
+    // Input/list border (between input area and first todo item)
+    {
+        float3 borderP = cardP - float3(0, 0.04, INPUT_BOT_Z);
+        float borderDist = sdRoundBox(borderP, float3(CARD_W - 0.06, 0.002, 0.002), 0.001);
+        Hit border;
+        border.dist = borderDist;
+        border.materialId = 5;
+        border.textColor = float3(0);
+        result = opUnionHit(result, border);
+    }
 
-    // Stacked decorative cards behind main card
+    // Footer border (between last item and footer)
+    {
+        float3 footerP = cardP - float3(0, 0.04, FOOTER_Z);
+        float footerDist = sdRoundBox(footerP, float3(CARD_W - 0.04, 0.002, 0.002), 0.001);
+        Hit footer;
+        footer.dist = footerDist;
+        footer.materialId = 5;
+        footer.textColor = float3(0);
+        result = opUnionHit(result, footer);
+    }
+
+    // Stacked decorative cards (behind and below main card, peek at bottom = +Z)
     Hit stack1;
-    float3 stack1P = p - float3(0, cardElev - 0.005, -0.02);
+    float3 stack1P = p - float3(0, cardElev - 0.005, 0.04);
     stack1.dist = sdRoundBox(stack1P, float3(CARD_W - 0.02, 0.035, CARD_D), edgeR);
     stack1.materialId = 6;  // stack card
     stack1.textColor = float3(0);
     result = opUnionHit(result, stack1);
 
     Hit stack2;
-    float3 stack2P = p - float3(0, cardElev - 0.01, -0.04);
+    float3 stack2P = p - float3(0, cardElev - 0.01, 0.08);
     stack2.dist = sdRoundBox(stack2P, float3(CARD_W - 0.04, 0.03, CARD_D), edgeR);
     stack2.materialId = 6;
     stack2.textColor = float3(0);
@@ -499,12 +545,13 @@ Hit mapScene(float3 p) {
     card.textColor = float3(0);
     result = opUnionHit(result, card);
 
-    // Text relief
+    // Text relief — always include text distance in scene SDF to prevent
+    // the raymarcher from stepping through the thin text slab
     float3 textP = (p - float3(0, cardElev + 0.04, 0)) / textScale;
     TextHit textHit = sdTextRelief3D(textP, textReliefDepth / textScale);
+    float textDist = textHit.dist * textScale;
 
     if (textHit.valid) {
-        float textDist = textHit.dist * textScale;
         if (textReliefMode < 0.5) {
             // Raised text: union above card surface
             Hit text;
@@ -527,6 +574,10 @@ Hit mapScene(float3 p) {
                 }
             }
         }
+    } else {
+        // No specific character found, but include text AABB/slab distance
+        // so the raymarcher slows down near the text region
+        result.dist = min(result.dist, textDist);
     }
 
     return result;
@@ -584,7 +635,8 @@ RayHit raymarch(float3 ro, float3 rd) {
     result.hit = false;
 
     float t = 0.0;
-    float omega = 1.6;
+    // No over-relaxation: thin floating text slabs (0.06 units) get overshot with omega>1
+    float omega = 1.0;
     float prevRadius = 0.0;
 
     for (int i = 0; i < 128 && t < 50.0; i++) {
