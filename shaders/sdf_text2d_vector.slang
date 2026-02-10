@@ -201,64 +201,22 @@ int curveWindingContribution(float2 point, float2 p0, float2 p1, float2 p2) {
 
 // Compute SDF for a single glyph
 float sdGlyphAt(float2 localPos, uint glyphIdx, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
-    uint gridOffset = gridInfo.x;
-    uint gridSizeX = gridInfo.y;
-    uint gridSizeY = gridInfo.z;
     uint glyphCurveOffset = curveInfo.x;
     uint glyphCurveCount = curveInfo.y;
 
-    // Determine grid cell - clamp to valid range to avoid out-of-bounds access
-    float2 gridUV = (localPos - bounds.xy) / (bounds.zw - bounds.xy);
-    gridUV = clamp(gridUV, 0.0, 1.0);
-
-    // Compute cell indices, ensuring we don't exceed grid dimensions
-    int cellX = min(int(gridUV.x * float(gridSizeX)), int(gridSizeX) - 1);
-    int cellY = min(int(gridUV.y * float(gridSizeY)), int(gridSizeY) - 1);
-    uint cellIdx = gridOffset + uint(cellY) * gridSizeX + uint(cellX);
-
-    GridCell cell = gridCells[cellIdx];
-    uint cellCurveStart = cell.curveStartAndCount & 0xFFFF;
-    uint cellCurveCount = (cell.curveStartAndCount >> 16) & 0xFF;
-    uint flags = (cell.curveStartAndCount >> 24) & 0xFF;
-
-    // Flag interpretation:
-    // Bit 0 (0x01): cell center is INSIDE the glyph
-    // Bit 1 (0x02): cell is UNIFORM (all corners same as center) - safe for early return
-    bool cellIsInside = (flags & 0x01u) != 0u;
-    bool isUniform = (flags & 0x02u) != 0u;
-
-    // Compute minimum distance to curves in this cell
+    // Brute-force: compute distance and winding from ALL glyph curves.
+    // This guarantees correct distances (no per-cell approximation artifacts).
     float minDist = 1e10;
-    for (uint i = 0u; i < cellCurveCount && i < 16u; i++) {
-        uint globalCurveIdx = curveIndices[cellCurveStart + i];
-        BezierCurve curve = curves[globalCurveIdx];
-
-        float2 p0 = curve.points01.xy;
-        float2 p1 = curve.points01.zw;
-        float2 p2 = curve.points2bbox.xy;
-
-        // Quick culling: skip curves whose bounding sphere is farther than current best
-        float2 mid = (p0 + 2.0 * p1 + p2) * 0.25;
-        float midDist = length(localPos - mid);
-        float curveRadius = length(curve.bboxFlags.xy - curve.points2bbox.zw) * 0.5;
-        if (midDist - curveRadius > minDist) continue;
-
-        float dist = sdQuadraticBezier(localPos, p0, p1, p2);
-        minDist = min(minDist, dist);
-    }
-
-    // For uniform cells with no curves, sign is already known — skip expensive winding loop
-    if (isUniform && cellCurveCount == 0u) {
-        return (cellIsInside ? -1.0 : 1.0) * minDist;
-    }
-
-    // Boundary cells and uniform cells with curves need winding from ALL glyph curves
     int winding = 0;
     for (uint i = 0u; i < glyphCurveCount && i < 256u; i++) {
         BezierCurve curve = curves[glyphCurveOffset + i];
         float2 p0 = curve.points01.xy;
         float2 p1 = curve.points01.zw;
         float2 p2 = curve.points2bbox.xy;
+
+        float dist = sdQuadraticBezier(localPos, p0, p1, p2);
+        minDist = min(minDist, dist);
+
         winding += curveWindingContribution(localPos, p0, p1, p2);
     }
 
