@@ -347,4 +347,6 @@ mod tests {
         assert!(curve.intersects_aabb(&[0.5, 0.0, 1.0, 0.5]));
         assert!(!curve.intersects_aabb(&[2.0, 2.0, 3.0, 3.0]));
     }
+
 }
+

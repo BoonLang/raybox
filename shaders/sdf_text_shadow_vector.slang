@@ -244,12 +244,10 @@ float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
         float2 p1 = curve.points01.zw;
         float2 p2 = curve.points2bbox.xy;
 
-        // Midpoint initial guess: skip expensive sdQuadraticBezier if midpoint distance
-        // already proves this curve can't be closer than current best
+        // Quick culling: skip curves whose bounding sphere is farther than current best
         float2 mid = (p0 + 2.0 * p1 + p2) * 0.25;
         float midDist = length(localPos - mid);
-        float4 bbox = float4(curve.points2bbox.zw, curve.bboxFlags.xy);
-        float curveRadius = length(bbox.zw - bbox.xy) * 0.5;
+        float curveRadius = length(curve.bboxFlags.xy - curve.points2bbox.zw) * 0.5;
         if (midDist - curveRadius > minDist) continue;
 
         float dist = sdQuadraticBezier(localPos, p0, p1, p2);
