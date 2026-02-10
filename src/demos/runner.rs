@@ -449,8 +449,8 @@ impl DemoRunner {
                 }
                 ResponseMessage::success(id, None)
             }
-            Command::Screenshot => {
-                self.capture_screenshot(id)
+            Command::Screenshot { center_crop } => {
+                self.capture_screenshot(id, center_crop)
             }
             Command::GetStatus => {
                 let status = self.get_status();
@@ -508,9 +508,9 @@ impl DemoRunner {
         }
     }
 
-    /// Capture a screenshot and return as base64
+    /// Capture a screenshot and return as base64, optionally cropping to a centered region
     #[cfg(feature = "control")]
-    fn capture_screenshot(&self, id: u64) -> ResponseMessage {
+    fn capture_screenshot(&self, id: u64, center_crop: Option<[u32; 2]>) -> ResponseMessage {
         // Create a texture to render to
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Screenshot Texture"),
@@ -628,9 +628,27 @@ impl DemoRunner {
                     }
                 };
 
+                // Apply center crop if requested
+                let (final_img, final_w, final_h): (Box<dyn std::ops::Deref<Target = [u8]>>, u32, u32) =
+                    if let Some([crop_w, crop_h]) = center_crop {
+                        let cw = crop_w.min(self.config.width);
+                        let ch = crop_h.min(self.config.height);
+                        let cx = (self.config.width.saturating_sub(cw)) / 2;
+                        let cy = (self.config.height.saturating_sub(ch)) / 2;
+                        let cropped = image::imageops::crop_imm(&img, cx, cy, cw, ch).to_image();
+                        let w = cropped.width();
+                        let h = cropped.height();
+                        (Box::new(cropped.into_raw()), w, h)
+                    } else {
+                        (Box::new(img.into_raw()), self.config.width, self.config.height)
+                    };
+
+                let final_img_buf: image::ImageBuffer<image::Rgba<u8>, _> =
+                    image::ImageBuffer::from_raw(final_w, final_h, final_img.to_vec()).unwrap();
+
                 let mut png_data = Vec::new();
                 let mut cursor = std::io::Cursor::new(&mut png_data);
-                if let Err(e) = img.write_to(&mut cursor, image::ImageFormat::Png) {
+                if let Err(e) = final_img_buf.write_to(&mut cursor, image::ImageFormat::Png) {
                     return ResponseMessage::error(
                         id,
                         ErrorCode::ScreenshotFailed,
@@ -644,8 +662,8 @@ impl DemoRunner {
 
                 ResponseMessage::new(id, Response::Screenshot {
                     base64: base64_str,
-                    width: self.config.width,
-                    height: self.config.height,
+                    width: final_w,
+                    height: final_h,
                 })
             }
             _ => ResponseMessage::error(
@@ -679,13 +697,10 @@ impl DemoRunner {
     }
 
     fn update_2d_controls(&mut self, dt: f32) {
-        // Get mutable access to the text2d demo if that's what we have
-        if self.current_demo_id != DemoId::Text2D {
+        if self.current_demo.demo_type() != DemoType::Scene2D {
             return;
         }
 
-        // We need to downcast to Text2DDemo to access its state
-        // For now, we'll handle this via a different mechanism in the demo itself
         let pan_speed = 200.0 * dt;
         let zoom_speed = 1.5 * dt;
         let rot_speed = 2.0 * dt;
@@ -721,13 +736,19 @@ impl DemoRunner {
             rotation_delta -= rot_speed;
         }
 
-        // Apply to demo (requires downcasting)
+        // Apply to demo (requires downcasting to each 2D demo type)
         if let Some(text2d) = self.current_demo.as_any_mut().downcast_mut::<super::text2d::Text2DDemo>() {
             text2d.offset[0] += offset_delta[0] / text2d.scale;
             text2d.offset[1] += offset_delta[1] / text2d.scale;
             text2d.scale *= scale_factor;
             text2d.scale = text2d.scale.clamp(0.1, 10.0);
             text2d.rotation += rotation_delta;
+        } else if let Some(todomvc) = self.current_demo.as_any_mut().downcast_mut::<super::todomvc::TodoMvcDemo>() {
+            todomvc.offset[0] += offset_delta[0] / todomvc.scale;
+            todomvc.offset[1] += offset_delta[1] / todomvc.scale;
+            todomvc.scale *= scale_factor;
+            todomvc.scale = todomvc.scale.clamp(0.1, 10.0);
+            todomvc.rotation += rotation_delta;
         }
     }
 
@@ -877,6 +898,7 @@ impl DemoRunner {
             KeyCode::Digit4 => { let _ = self.switch_demo(DemoId::Text2D); }
             KeyCode::Digit5 => { let _ = self.switch_demo(DemoId::Clay); }
             KeyCode::Digit6 => { let _ = self.switch_demo(DemoId::TextShadow); }
+            KeyCode::Digit7 => { let _ = self.switch_demo(DemoId::TodoMvc); }
             KeyCode::Escape => {
                 event_loop.exit();
             }
@@ -1034,11 +1056,15 @@ impl ApplicationHandler for DemoApp {
                                     KeyCode::KeyR => {
                                         if let Some(text2d) = runner.current_demo.as_any_mut().downcast_mut::<super::text2d::Text2DDemo>() {
                                             text2d.reset_rotation();
+                                        } else if let Some(todomvc) = runner.current_demo.as_any_mut().downcast_mut::<super::todomvc::TodoMvcDemo>() {
+                                            todomvc.reset_rotation();
                                         }
                                     }
                                     KeyCode::KeyT => {
                                         if let Some(text2d) = runner.current_demo.as_any_mut().downcast_mut::<super::text2d::Text2DDemo>() {
                                             text2d.reset_all();
+                                        } else if let Some(todomvc) = runner.current_demo.as_any_mut().downcast_mut::<super::todomvc::TodoMvcDemo>() {
+                                            todomvc.reset_all();
                                         }
                                     }
                                     KeyCode::KeyF => {

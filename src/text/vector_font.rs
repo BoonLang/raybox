@@ -121,8 +121,8 @@ impl VectorFont {
             line_height,
         };
 
-        // Extract curves for ASCII printable range
-        for codepoint in 32u32..=126 {
+        // Extract curves for ASCII printable range + Latin-1 Supplement (for accented chars like í)
+        for codepoint in (32u32..=126).chain(0xC0..=0xFF) {
             if let Some(ch) = char::from_u32(codepoint) {
                 if let Some(glyph_id) = face.glyph_index(ch) {
                     let advance = face
@@ -165,6 +165,55 @@ impl VectorFont {
         }
 
         Ok(font)
+    }
+
+    /// Merge glyphs from another TTF file with a codepoint offset.
+    /// Useful for adding italic/bold variants at higher codepoint ranges.
+    pub fn merge_from_ttf(&mut self, data: &[u8], codepoint_offset: u32) -> Result<(), &'static str> {
+        let face = Face::parse(data, 0).map_err(|_| "Failed to parse TTF")?;
+        let units_per_em = face.units_per_em() as f32;
+
+        for codepoint in (32u32..=126).chain(0xC0..=0xFF) {
+            if let Some(ch) = char::from_u32(codepoint) {
+                if let Some(glyph_id) = face.glyph_index(ch) {
+                    let advance = face
+                        .glyph_hor_advance(glyph_id)
+                        .map(|a| a as f32 / units_per_em)
+                        .unwrap_or(0.5);
+
+                    let curve_start = self.curves.len() as u32;
+                    let mut builder = CurveBuilder::new(units_per_em);
+
+                    let bounds = if let Some(rect) = face.outline_glyph(glyph_id, &mut builder) {
+                        [
+                            rect.x_min as f32 / units_per_em,
+                            rect.y_min as f32 / units_per_em,
+                            rect.x_max as f32 / units_per_em,
+                            rect.y_max as f32 / units_per_em,
+                        ]
+                    } else {
+                        [0.0, 0.0, advance, 1.0]
+                    };
+
+                    let curves = builder.finish();
+                    let curve_count = curves.len() as u32;
+                    self.curves.extend(curves);
+
+                    self.glyphs.insert(
+                        codepoint + codepoint_offset,
+                        VectorGlyphMetrics {
+                            codepoint: codepoint + codepoint_offset,
+                            advance,
+                            bounds,
+                            curve_start,
+                            curve_count,
+                        },
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Get glyph metrics for a character

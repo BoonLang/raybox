@@ -938,6 +938,7 @@ fn create_web_demo(
         DemoId::Text2D => Box::new(Text2DDemo::new(device, format)),
         DemoId::Clay => Box::new(ClayDemo::new(device, format)),
         DemoId::TextShadow => Box::new(TextShadowDemo::new(device, format)),
+        DemoId::TodoMvc => Box::new(EmptyDemo::new(device, format)), // TODO: web TodoMVC
     }
 }
 
@@ -1209,8 +1210,8 @@ impl WebRenderer {
         // Process control commands
         self.process_control_commands();
 
-        // Handle demo switching (0-6 keys)
-        for i in 0..7 {
+        // Handle demo switching (0-7 keys)
+        for i in 0..8 {
             let key = format!("Digit{}", i);
             if self.input.is_key_pressed(&key) {
                 if let Some(id) = DemoId::from_u8(i) {

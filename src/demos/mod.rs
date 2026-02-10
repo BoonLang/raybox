@@ -10,6 +10,7 @@ pub mod towers;
 pub mod text2d;
 pub mod clay;
 pub mod text_shadow;
+pub mod todomvc;
 pub mod runner;
 
 // Re-export from demo_core for backward compatibility
@@ -74,5 +75,6 @@ pub fn create_demo(id: DemoId, ctx: &DemoContext) -> anyhow::Result<Box<dyn Demo
         DemoId::Text2D => Ok(Box::new(text2d::Text2DDemo::new(ctx)?)),
         DemoId::Clay => Ok(Box::new(clay::ClayDemo::new(ctx)?)),
         DemoId::TextShadow => Ok(Box::new(text_shadow::TextShadowDemo::new(ctx)?)),
+        DemoId::TodoMvc => Ok(Box::new(todomvc::TodoMvcDemo::new(ctx)?)),
     }
 }

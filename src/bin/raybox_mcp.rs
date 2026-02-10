@@ -142,10 +142,13 @@ impl McpServer {
                     },
                     {
                         "name": "screenshot",
-                        "description": "Capture a screenshot and return as base64 PNG",
+                        "description": "Capture a screenshot and return as base64 PNG. Use center_crop to crop to a centered region.",
                         "inputSchema": {
                             "type": "object",
-                            "properties": {}
+                            "properties": {
+                                "center_crop_width": { "type": "integer", "description": "Width of centered crop region (e.g. 700)" },
+                                "center_crop_height": { "type": "integer", "description": "Height of centered crop region (e.g. 700)" }
+                            }
                         }
                     },
                     {
@@ -220,7 +223,16 @@ impl McpServer {
                 let pitch = arguments.get("pitch").and_then(|v| v.as_f64()).map(|v| (v as f32).to_radians());
                 Command::SetCamera { position, yaw, pitch, roll: None }
             }
-            "screenshot" => Command::Screenshot,
+            "screenshot" => {
+                let center_crop = match (
+                    arguments.get("center_crop_width").and_then(|v| v.as_u64()),
+                    arguments.get("center_crop_height").and_then(|v| v.as_u64()),
+                ) {
+                    (Some(w), Some(h)) => Some([w as u32, h as u32]),
+                    _ => None,
+                };
+                Command::Screenshot { center_crop }
+            }
             "get_status" => Command::GetStatus,
             "reload_shaders" => Command::ReloadShaders,
             _ => {

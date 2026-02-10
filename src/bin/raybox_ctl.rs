@@ -13,9 +13,10 @@ fn print_usage() {
     eprintln!();
     eprintln!("Commands:");
     eprintln!("  status                  Get current demo status");
-    eprintln!("  switch <id>             Switch to demo (0-6)");
-    eprintln!("  screenshot [--output <path>]  Take screenshot");
+    eprintln!("  switch <id>             Switch to demo (0-7)");
+    eprintln!("  screenshot [--output <path>] [--crop WxH]  Take screenshot");
     eprintln!("  camera <x> <y> <z>      Set camera position");
+    eprintln!("  pressKey <key>          Simulate key press (e.g. T, R)");
     eprintln!("  reload                  Reload shaders");
     eprintln!("  ping                    Test connection");
     eprintln!();
@@ -27,6 +28,7 @@ fn print_usage() {
     eprintln!("  4 = 2D Text");
     eprintln!("  5 = Clay Tablet");
     eprintln!("  6 = Text Shadow");
+    eprintln!("  7 = TodoMVC");
 }
 
 fn main() {
@@ -63,16 +65,28 @@ fn main() {
                 std::process::exit(1);
             }
             let id: u8 = match args[2].parse() {
-                Ok(id) if id <= 6 => id,
+                Ok(id) if id <= 7 => id,
                 _ => {
-                    eprintln!("Invalid demo ID. Must be 0-6.");
+                    eprintln!("Invalid demo ID. Must be 0-7.");
                     std::process::exit(1);
                 }
             };
             Command::SwitchDemo { id }
         }
         "screenshot" => {
-            Command::Screenshot
+            // Parse optional --crop WxH
+            let center_crop = args.iter()
+                .position(|a| a == "--crop")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|s| {
+                    let parts: Vec<&str> = s.split('x').collect();
+                    if parts.len() == 2 {
+                        Some([parts[0].parse::<u32>().ok()?, parts[1].parse::<u32>().ok()?])
+                    } else {
+                        None
+                    }
+                });
+            Command::Screenshot { center_crop }
         }
         "camera" => {
             if args.len() < 5 {
@@ -88,6 +102,13 @@ fn main() {
                 pitch: None,
                 roll: None,
             }
+        }
+        "pressKey" => {
+            if args.len() < 3 {
+                eprintln!("Usage: raybox-ctl pressKey <key>");
+                std::process::exit(1);
+            }
+            Command::PressKey { key: args[2].clone() }
         }
         "reload" => Command::ReloadShaders,
         "ping" => Command::Ping,

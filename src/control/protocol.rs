@@ -48,7 +48,11 @@ pub enum Command {
     },
 
     /// Take a screenshot and return as base64
-    Screenshot,
+    /// Optional center_crop: [width, height] to crop a centered region
+    Screenshot {
+        #[serde(default)]
+        center_crop: Option<[u32; 2]>,
+    },
 
     /// Get current status (demo, camera, FPS, etc.)
     GetStatus,
