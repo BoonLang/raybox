@@ -502,6 +502,29 @@ impl DemoRunner {
                     })))
                 }
             }
+            Command::SetTheme { theme, dark_mode } => {
+                use crate::demos::todomvc_3d::ThemeId;
+                if self.current_demo_id != DemoId::TodoMvc3D {
+                    ResponseMessage::error(id, ErrorCode::InvalidCommand,
+                        "SetTheme only works with TodoMVC 3D demo (demo 8)".to_string())
+                } else if let Some(theme_id) = ThemeId::from_str(&theme) {
+                    if let Some(demo) = self.current_demo.as_any_mut().downcast_mut::<super::todomvc_3d::TodoMvc3DDemo>() {
+                        demo.set_theme(theme_id);
+                        if let Some(dm) = dark_mode {
+                            demo.set_dark_mode(dm);
+                        }
+                        ResponseMessage::success(id, Some(serde_json::json!({
+                            "theme": theme_id.name(),
+                            "dark_mode": demo.dark_mode,
+                        })))
+                    } else {
+                        ResponseMessage::error(id, ErrorCode::Internal, "Failed to downcast demo".to_string())
+                    }
+                } else {
+                    ResponseMessage::error(id, ErrorCode::InvalidTheme,
+                        format!("Invalid theme: {}. Valid: professional, neobrutalism, glassmorphism, neumorphism", theme))
+                }
+            }
             Command::Ping => {
                 ResponseMessage::new(id, Response::Pong)
             }
@@ -843,6 +866,11 @@ impl DemoRunner {
                     demo.update_uniforms(&self.queue, &self.camera, time);
                 }
             }
+            DemoId::TodoMvc3D => {
+                if let Some(demo) = self.current_demo.as_any().downcast_ref::<super::todomvc_3d::TodoMvc3DDemo>() {
+                    demo.update_uniforms(&self.queue, &self.camera, time);
+                }
+            }
             _ => {}
         }
     }
@@ -899,6 +927,7 @@ impl DemoRunner {
             KeyCode::Digit5 => { let _ = self.switch_demo(DemoId::Clay); }
             KeyCode::Digit6 => { let _ = self.switch_demo(DemoId::TextShadow); }
             KeyCode::Digit7 => { let _ = self.switch_demo(DemoId::TodoMvc); }
+            KeyCode::Digit8 => { let _ = self.switch_demo(DemoId::TodoMvc3D); }
             KeyCode::Escape => {
                 event_loop.exit();
             }
@@ -1027,6 +1056,22 @@ impl ApplicationHandler for DemoApp {
                         ElementState::Pressed => {
                             // Handle input actions for 3D demos
                             if runner.current_demo.demo_type() == DemoType::Scene3D {
+                                // TodoMvc3D-specific keys
+                                if runner.current_demo_id == DemoId::TodoMvc3D {
+                                    match code {
+                                        KeyCode::KeyN => {
+                                            if let Some(demo) = runner.current_demo.as_any_mut().downcast_mut::<super::todomvc_3d::TodoMvc3DDemo>() {
+                                                demo.cycle_theme();
+                                            }
+                                        }
+                                        KeyCode::KeyM => {
+                                            if let Some(demo) = runner.current_demo.as_any_mut().downcast_mut::<super::todomvc_3d::TodoMvc3DDemo>() {
+                                                demo.toggle_dark_mode();
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
                                 if let Some(action) = runner.input.handle_key(event.clone()) {
                                     match action {
                                         InputAction::Exit => event_loop.exit(),

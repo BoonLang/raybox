@@ -80,6 +80,13 @@ fn main() -> Result<()> {
                 ("fs_main", "fragment"),
             ],
         },
+        ShaderConfig {
+            name: "sdf_todomvc_3d",
+            entries: vec![
+                ("vs_main", "vertex"),
+                ("fs_main", "fragment"),
+            ],
+        },
     ];
 
     for shader in &shaders {

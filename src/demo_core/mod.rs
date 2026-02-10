@@ -12,7 +12,7 @@ pub use context::DemoContext;
 
 use std::any::Any;
 
-/// Demo identifier (0-7)
+/// Demo identifier (0-8)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum DemoId {
@@ -24,6 +24,7 @@ pub enum DemoId {
     Clay = 5,
     TextShadow = 6,
     TodoMvc = 7,
+    TodoMvc3D = 8,
 }
 
 impl DemoId {
@@ -37,6 +38,7 @@ impl DemoId {
             5 => Some(Self::Clay),
             6 => Some(Self::TextShadow),
             7 => Some(Self::TodoMvc),
+            8 => Some(Self::TodoMvc3D),
             _ => None,
         }
     }
@@ -51,11 +53,12 @@ impl DemoId {
             Self::Clay => "Clay Tablet",
             Self::TextShadow => "Text Shadow",
             Self::TodoMvc => "TodoMVC",
+            Self::TodoMvc3D => "TodoMVC 3D",
         }
     }
 
     pub fn count() -> u8 {
-        8
+        9
     }
 
     /// Get all demo IDs in order
@@ -69,6 +72,7 @@ impl DemoId {
             DemoId::Clay,
             DemoId::TextShadow,
             DemoId::TodoMvc,
+            DemoId::TodoMvc3D,
         ]
     }
 }
@@ -178,7 +182,7 @@ pub const KEYBINDINGS_2D: &[(&str, &str)] = &[
 
 /// Common keybindings shown for all demos
 pub const KEYBINDINGS_COMMON: &[(&str, &str)] = &[
-    ("0-7", "Switch demo"),
+    ("0-8", "Switch demo"),
     ("F", "Toggle stats"),
     ("G", "Full stats"),
     ("K", "Keybindings"),

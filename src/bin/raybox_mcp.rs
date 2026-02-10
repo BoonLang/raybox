@@ -102,15 +102,15 @@ impl McpServer {
                 "tools": [
                     {
                         "name": "switch_demo",
-                        "description": "Switch to a specific demo (0-6). Demos: 0=Empty, 1=Objects, 2=Spheres, 3=Towers, 4=2DText, 5=Clay, 6=TextShadow",
+                        "description": "Switch to a specific demo (0-8). Demos: 0=Empty, 1=Objects, 2=Spheres, 3=Towers, 4=2DText, 5=Clay, 6=TextShadow, 7=TodoMVC, 8=TodoMVC3D",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "id": {
                                     "type": "integer",
-                                    "description": "Demo ID (0-6)",
+                                    "description": "Demo ID (0-8)",
                                     "minimum": 0,
-                                    "maximum": 6
+                                    "maximum": 8
                                 }
                             },
                             "required": ["id"]
@@ -165,6 +165,24 @@ impl McpServer {
                         "inputSchema": {
                             "type": "object",
                             "properties": {}
+                        }
+                    },
+                    {
+                        "name": "set_theme",
+                        "description": "Set theme for TodoMVC 3D demo. Themes: professional, neobrutalism, glassmorphism, neumorphism",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "theme": {
+                                    "type": "string",
+                                    "description": "Theme name (professional, neobrutalism, glassmorphism, neumorphism)"
+                                },
+                                "dark_mode": {
+                                    "type": "boolean",
+                                    "description": "Enable dark mode"
+                                }
+                            },
+                            "required": ["theme"]
                         }
                     }
                 ]
@@ -235,6 +253,11 @@ impl McpServer {
             }
             "get_status" => Command::GetStatus,
             "reload_shaders" => Command::ReloadShaders,
+            "set_theme" => {
+                let theme = arguments.get("theme").and_then(|v| v.as_str()).unwrap_or("professional").to_string();
+                let dark_mode = arguments.get("dark_mode").and_then(|v| v.as_bool());
+                Command::SetTheme { theme, dark_mode }
+            }
             _ => {
                 return McpResponse {
                     jsonrpc: "2.0".to_string(),

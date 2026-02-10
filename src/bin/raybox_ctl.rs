@@ -13,10 +13,11 @@ fn print_usage() {
     eprintln!();
     eprintln!("Commands:");
     eprintln!("  status                  Get current demo status");
-    eprintln!("  switch <id>             Switch to demo (0-7)");
+    eprintln!("  switch <id>             Switch to demo (0-8)");
     eprintln!("  screenshot [--output <path>] [--crop WxH]  Take screenshot");
     eprintln!("  camera <x> <y> <z>      Set camera position");
     eprintln!("  pressKey <key>          Simulate key press (e.g. T, R)");
+    eprintln!("  theme <name> [--dark]   Set theme (professional, neobrutalism, glassmorphism, neumorphism)");
     eprintln!("  reload                  Reload shaders");
     eprintln!("  ping                    Test connection");
     eprintln!();
@@ -29,6 +30,7 @@ fn print_usage() {
     eprintln!("  5 = Clay Tablet");
     eprintln!("  6 = Text Shadow");
     eprintln!("  7 = TodoMVC");
+    eprintln!("  8 = TodoMVC 3D");
 }
 
 fn main() {
@@ -65,9 +67,9 @@ fn main() {
                 std::process::exit(1);
             }
             let id: u8 = match args[2].parse() {
-                Ok(id) if id <= 7 => id,
+                Ok(id) if id <= 8 => id,
                 _ => {
-                    eprintln!("Invalid demo ID. Must be 0-7.");
+                    eprintln!("Invalid demo ID. Must be 0-8.");
                     std::process::exit(1);
                 }
             };
@@ -109,6 +111,17 @@ fn main() {
                 std::process::exit(1);
             }
             Command::PressKey { key: args[2].clone() }
+        }
+        "theme" => {
+            if args.len() < 3 {
+                eprintln!("Usage: raybox-ctl theme <name> [--dark]");
+                std::process::exit(1);
+            }
+            let dark_mode = args.iter().any(|a| a == "--dark");
+            Command::SetTheme {
+                theme: args[2].clone(),
+                dark_mode: if dark_mode { Some(true) } else { None },
+            }
         }
         "reload" => Command::ReloadShaders,
         "ping" => Command::Ping,

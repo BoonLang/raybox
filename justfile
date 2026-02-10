@@ -2,7 +2,7 @@
 default:
     cargo run --features windowed
 
-# Run unified demo mode (press 0-6 to switch demos)
+# Run unified demo mode (press 0-8 to switch demos)
 demos:
     cargo run --bin demos --features windowed
 
@@ -159,8 +159,8 @@ bench:
     echo ""
     echo "=== FPS Benchmark ==="
     echo ""
-    DEMOS=(0 1 2 3 4 5 6)
-    NAMES=("Empty" "Objects" "Spheres" "Towers" "2D Text" "Clay Tablet" "Text Shadow")
+    DEMOS=(0 1 2 3 4 5 6 7 8)
+    NAMES=("Empty" "Objects" "Spheres" "Towers" "2D Text" "Clay Tablet" "Text Shadow" "TodoMVC" "TodoMVC 3D")
     for i in "${!DEMOS[@]}"; do
         $CTL switch "${DEMOS[$i]}" > /dev/null 2>&1
         sleep 3

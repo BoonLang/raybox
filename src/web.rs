@@ -939,6 +939,7 @@ fn create_web_demo(
         DemoId::Clay => Box::new(ClayDemo::new(device, format)),
         DemoId::TextShadow => Box::new(TextShadowDemo::new(device, format)),
         DemoId::TodoMvc => Box::new(EmptyDemo::new(device, format)), // TODO: web TodoMVC
+        DemoId::TodoMvc3D => Box::new(EmptyDemo::new(device, format)), // TODO: web TodoMVC 3D
     }
 }
 

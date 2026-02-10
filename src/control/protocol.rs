@@ -66,6 +66,13 @@ pub enum Command {
     /// Reload shaders (for hot-reload)
     ReloadShaders,
 
+    /// Set theme for TodoMVC 3D demo
+    SetTheme {
+        theme: String,
+        #[serde(default)]
+        dark_mode: Option<bool>,
+    },
+
     /// Ping for connection testing
     Ping,
 }
@@ -141,6 +148,8 @@ pub enum ErrorCode {
     ScreenshotFailed,
     /// Protocol version mismatch
     VersionMismatch,
+    /// Invalid theme name
+    InvalidTheme,
     /// Internal error
     Internal,
 }

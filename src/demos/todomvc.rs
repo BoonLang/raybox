@@ -135,40 +135,44 @@ fn build_ui_primitives() -> Vec<GpuUiPrimitive> {
         extra: [0.0, -25.0, 0.0, 0.0],
     });
 
-    // Shadow 1 (smaller, sharper): rgba(0,0,0,0.2) 0px 2px 4px
+    // --- Stacked card decorative rects (below card in Y-down = below in Y-up) ---
+    // Rendered BEFORE main card shadow 1 + fill, so main card covers them where they overlap
+    // Stack 2 (bottom-most, widest offset): peeks out 8px below card bottom
+    let stack2_y = card_y + card_h;
+    prims.push(GpuUiPrimitive {
+        pos_size: rect_yu(card_x + 4.0, stack2_y, card_w - 8.0, 8.0),
+        color: rgba(0, 0, 0, 0.2),
+        params: [0.0, 0.0, 1.0, PRIM_BOX_SHADOW],
+        extra: [0.0, -1.0, 0.0, 0.0],
+    });
+    prims.push(GpuUiPrimitive {
+        pos_size: rect_yu(card_x + 4.0, stack2_y, card_w - 8.0, 8.0),
+        color: rgb(252, 252, 252),
+        params: [0.0, 0.0, 0.0, PRIM_FILLED_RECT],
+        extra: [0.0; 4],
+    });
+
+    // Stack 1 (middle, less offset): peeks out 4px below card bottom
+    let stack1_y = card_y + card_h;
+    prims.push(GpuUiPrimitive {
+        pos_size: rect_yu(card_x + 2.0, stack1_y, card_w - 4.0, 4.0),
+        color: rgba(0, 0, 0, 0.2),
+        params: [0.0, 0.0, 1.0, PRIM_BOX_SHADOW],
+        extra: [0.0, -1.0, 0.0, 0.0],
+    });
+    prims.push(GpuUiPrimitive {
+        pos_size: rect_yu(card_x + 2.0, stack1_y, card_w - 4.0, 4.0),
+        color: rgb(252, 252, 252),
+        params: [0.0, 0.0, 0.0, PRIM_FILLED_RECT],
+        extra: [0.0; 4],
+    });
+
+    // Shadow 1 (smaller, sharper): rgba(0,0,0,0.2) 0px 1px 1px
+    // Rendered AFTER stacked cards so it's visible at bottom edge
     prims.push(GpuUiPrimitive {
         pos_size: rect_yu(card_x, card_y, card_w, card_h),
         color: rgba(0, 0, 0, 0.2),
-        params: [0.0, 0.0, 4.0, PRIM_BOX_SHADOW],
-        extra: [0.0, -2.0, 0.0, 0.0],
-    });
-
-    // --- Stacked card decorative rects (below card in Y-down = below in Y-up) ---
-    let stack2_y = card_y + card_h + 8.0;
-    prims.push(GpuUiPrimitive {
-        pos_size: rect_yu(card_x + 4.0, stack2_y, card_w - 8.0, 4.0),
-        color: rgb(246, 246, 246),
-        params: [0.0, 0.0, 0.0, PRIM_FILLED_RECT],
-        extra: [0.0; 4],
-    });
-    prims.push(GpuUiPrimitive {
-        pos_size: rect_yu(card_x + 4.0, stack2_y, card_w - 8.0, 4.0),
-        color: rgba(0, 0, 0, 0.2),
-        params: [0.0, 0.0, 2.0, PRIM_BOX_SHADOW],
-        extra: [0.0, -1.0, 0.0, 0.0],
-    });
-
-    let stack1_y = card_y + card_h + 4.0;
-    prims.push(GpuUiPrimitive {
-        pos_size: rect_yu(card_x + 2.0, stack1_y, card_w - 4.0, 4.0),
-        color: rgb(246, 246, 246),
-        params: [0.0, 0.0, 0.0, PRIM_FILLED_RECT],
-        extra: [0.0; 4],
-    });
-    prims.push(GpuUiPrimitive {
-        pos_size: rect_yu(card_x + 2.0, stack1_y, card_w - 4.0, 4.0),
-        color: rgba(0, 0, 0, 0.2),
-        params: [0.0, 0.0, 2.0, PRIM_BOX_SHADOW],
+        params: [0.0, 0.0, 1.0, PRIM_BOX_SHADOW],
         extra: [0.0, -1.0, 0.0, 0.0],
     });
 
@@ -218,10 +222,10 @@ fn build_ui_primitives() -> Vec<GpuUiPrimitive> {
     // --- Toggle-all chevron (❯ rotated 90° = ∨ pointing down) ---
     // Label area: x=75, y=130.8, 45x65. Chevron center ~(97.5, 163)
     {
-        let chev_cx = card_x + 22.5;
+        let chev_cx = card_x + 26.0;
         let chev_cy_down = 130.8 + 32.5; // center in Y-down
-        let half_w = 7.0;
-        let half_h = 4.0;
+        let half_w = 10.0;
+        let half_h = 4.5;
         // ∨ shape: left-top → bottom-center, bottom-center → right-top (in Y-down)
         let left = (chev_cx - half_w, chev_cy_down - half_h);
         let bottom = (chev_cx, chev_cy_down + half_h);
@@ -229,7 +233,7 @@ fn build_ui_primitives() -> Vec<GpuUiPrimitive> {
         prims.push(GpuUiPrimitive {
             pos_size: [left.0, fy(left.1), bottom.0, fy(bottom.1)],
             color: rgb(0x94, 0x94, 0x94), // #949494
-            params: [0.0, 1.0, 0.0, PRIM_CHECKMARK_V],
+            params: [0.0, 4.0, 0.0, PRIM_CHECKMARK_V],
             extra: [right.0, fy(right.1), 0.0, 0.0],
         });
     }
@@ -257,7 +261,7 @@ fn build_ui_primitives() -> Vec<GpuUiPrimitive> {
     for cb in &checkboxes {
         let cx = card_x + 26.0;
         let cy = fy(cb.y_center); // flip to Y-up
-        let r = 14.0;
+        let r = 17.0;
         let stroke_w = 1.2;
 
         if cb.checked {
@@ -280,7 +284,7 @@ fn build_ui_primitives() -> Vec<GpuUiPrimitive> {
             prims.push(GpuUiPrimitive {
                 pos_size: [ax, ay, bx, by],
                 color: rgb(0x3E, 0xA3, 0x90),
-                params: [0.0, 1.2, 0.0, PRIM_CHECKMARK_V],
+                params: [0.0, 2.0, 0.0, PRIM_CHECKMARK_V],
                 extra: [cx2, cy2, 0.0, 0.0],
             });
         } else {
@@ -300,7 +304,7 @@ fn build_ui_primitives() -> Vec<GpuUiPrimitive> {
     prims.push(GpuUiPrimitive {
         pos_size: [135.0 + X_OFFSET, strike_y, 135.0 + 273.0 + X_OFFSET, strike_y],
         color: rgb(0x94, 0x94, 0x94),
-        params: [0.0, 0.8, 0.0, PRIM_LINE],
+        params: [0.0, 2.0, 0.0, PRIM_LINE],
         extra: [0.0; 4],
     });
 
@@ -372,7 +376,7 @@ fn build_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstanceEx> {
     let active_text = rgb3(72, 72, 72); // #484848
     let completed_text = rgb3(148, 148, 148); // #949494
     let body_text = rgb3(17, 17, 17); // #111
-    let info_text_light = rgb3(191, 191, 191); // #bfbfbf
+    let info_text_light = rgb3(77, 77, 77); // #4d4d4d (metadata computed color)
 
     // --- "todos" heading ---
     // Text bounds from metadata: x=252.1, y=8.4, w=195.7, h=89.6
@@ -440,7 +444,8 @@ fn build_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstanceEx> {
     // rgba(0,0,0,0.4) on white bg → premultiplied gray, converted to linear
     let placeholder_gray = rgb3(153, 153, 153); // ~rgba(0,0,0,0.4) on white
     // Input padding-left=60, text starts at x=75+60=135, y=130+16 (padding-top=16)
-    emit_text_with_offset(&mut instances, "What needs to be done?", 135.0 + X_OFFSET, baseline_y(146.0, 24.0), 24.0, placeholder_gray, atlas, ITALIC_CODEPOINT_OFFSET);
+    // Content area y=146, line-height=33.6, font-size=24 → half-leading ~2.4px
+    emit_text_with_offset(&mut instances, "What needs to be done?", 135.0 + X_OFFSET, baseline_y(148.4, 24.0), 24.0, placeholder_gray, atlas, ITALIC_CODEPOINT_OFFSET);
 
     // --- Todo items: 24px ---
     // Reference order (top→bottom): Read documentation, Finish TodoMVC renderer, Walk the dog, Buy groceries
@@ -477,8 +482,8 @@ fn build_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstanceEx> {
     // --- Info footer (3 lines at ~11px, #bfbfbf) ---
     // Line 1: "Double-click to edit a todo" at x=286.7, y=538.4
     emit_text(&mut instances, "Double-click to edit a todo", 286.7 + X_OFFSET, baseline_y(538.4, 11.0), 11.0, info_text_light, atlas);
-    // Line 2: "Created by Martin Kavík" at x=283.0, y=560.4
-    emit_text(&mut instances, "Created by Martin Kav\u{00ED}k", 283.0 + X_OFFSET, baseline_y(560.4, 11.0), 11.0, info_text_light, atlas);
+    // Line 2: "Created by Martin Kavík" at x=290.5, y=560.4
+    emit_text(&mut instances, "Created by Martin Kav\u{00ED}k", 291.5 + X_OFFSET, baseline_y(560.4, 11.0), 11.0, info_text_light, atlas);
     // Line 3: "Part of TodoMVC" at x=308.1, y=582.4
     emit_text(&mut instances, "Part of TodoMVC", 308.1 + X_OFFSET, baseline_y(582.4, 11.0), 11.0, info_text_light, atlas);
 
