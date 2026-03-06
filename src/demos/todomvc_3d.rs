@@ -2,6 +2,12 @@
 //!
 //! A 3D card with extruded/carved text, PBR materials, and 4 switchable themes
 //! (Professional, Neobrutalism, Glassmorphism, Neumorphism) with light/dark mode.
+//!
+//! Non-pixel-perfect AI-generated theme references (for visual direction only):
+//! - assets/todomvc_3d/reference_professional.jpg
+//! - assets/todomvc_3d/reference_neobrutalism.jpg
+//! - assets/todomvc_3d/reference_glassmorphism.jpg
+//! - assets/todomvc_3d/reference_neumorphism.jpg
 
 use super::{Demo, DemoContext, DemoId, DemoType};
 use crate::camera::FlyCamera;
