@@ -260,43 +260,43 @@ fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
             t.extra_params[1] = 0.0;
         }
         (ThemeId::Glassmorphism, false) => {
-            t.material_colors[0] = [0.75, 0.82, 0.90, 1.0];
-            t.material_colors[1] = [0.55, 0.60, 0.68, 1.0];
+            t.material_colors[0] = [0.88, 0.89, 0.93, 1.0]; // sky - lighter
+            t.material_colors[1] = [0.84, 0.86, 0.90, 1.0]; // ground - lighter
             t.material_props[1] = [0.3, 0.0, 0.0, 0.0];
-            t.material_colors[2] = [0.92, 0.94, 0.97, 0.8];
-            t.material_props[2] = [0.7, 0.0, 0.0, 0.0];
-            t.material_colors[3] = [0.90, 0.92, 0.95, 0.7];
-            t.material_props[3] = [0.6, 0.0, 0.0, 0.0];
-            t.material_colors[4] = [0.50, 0.55, 0.65, 1.0];
+            t.material_colors[2] = [0.96, 0.97, 0.99, 0.22]; // card - more transparent
+            t.material_props[2] = [0.75, 0.0, 0.0, 0.0];
+            t.material_colors[3] = [0.95, 0.96, 0.98, 0.18]; // items - more transparent
+            t.material_props[3] = [0.65, 0.0, 0.0, 0.0];
+            t.material_colors[4] = [0.45, 0.50, 0.65, 1.0]; // checkbox
             t.material_props[4] = [0.5, 0.1, 0.0, 0.0];
-            t.material_colors[5] = [0.80, 0.82, 0.86, 0.5];
+            t.material_colors[5] = [0.82, 0.84, 0.90, 0.15]; // separators
             t.material_props[5] = [0.3, 0.0, 0.0, 0.0];
-            t.material_colors[6] = [0.88, 0.90, 0.94, 0.6];
+            t.material_colors[6] = [0.92, 0.93, 0.97, 0.20]; // stack cards
             t.material_props[6] = [0.6, 0.0, 0.0, 0.0];
-            t.material_props[7] = [0.5, 0.0, 0.0, 0.0];
-            t.geometry_params = [0.018, 0.10, 0.003, 0.015];
-            t.ambient_color = [0.25, 0.27, 0.32, 1.0];
-            t.extra_params[0] = 0.20;
+            t.material_props[7] = [0.55, 0.0, 0.0, 0.0];
+            t.geometry_params = [0.060, 0.10, 0.003, 0.015];
+            t.ambient_color = [0.38, 0.40, 0.48, 1.0]; // brighter ambient
+            t.extra_params[0] = 0.015; // very shallow text relief — near-2D text appearance
             t.extra_params[1] = 0.0;
         }
         (ThemeId::Glassmorphism, true) => {
-            t.material_colors[0] = [0.08, 0.10, 0.15, 1.0];
+            t.material_colors[0] = [0.06, 0.08, 0.14, 1.0];
             t.material_colors[1] = [0.05, 0.06, 0.10, 1.0];
             t.material_props[1] = [0.3, 0.0, 0.0, 0.0];
-            t.material_colors[2] = [0.15, 0.17, 0.22, 0.8];
-            t.material_props[2] = [0.7, 0.0, 0.0, 0.0];
-            t.material_colors[3] = [0.13, 0.15, 0.20, 0.7];
-            t.material_props[3] = [0.6, 0.0, 0.0, 0.0];
+            t.material_colors[2] = [0.12, 0.14, 0.20, 0.55];
+            t.material_props[2] = [0.75, 0.0, 0.0, 0.0];
+            t.material_colors[3] = [0.13, 0.15, 0.20, 0.40];
+            t.material_props[3] = [0.65, 0.0, 0.0, 0.0];
             t.material_colors[4] = [0.40, 0.45, 0.55, 1.0];
             t.material_props[4] = [0.5, 0.1, 0.0, 0.0];
-            t.material_colors[5] = [0.20, 0.22, 0.28, 0.5];
+            t.material_colors[5] = [0.20, 0.22, 0.28, 0.20];
             t.material_props[5] = [0.3, 0.0, 0.0, 0.0];
-            t.material_colors[6] = [0.12, 0.14, 0.19, 0.6];
+            t.material_colors[6] = [0.12, 0.14, 0.19, 0.25];
             t.material_props[6] = [0.6, 0.0, 0.0, 0.0];
-            t.material_props[7] = [0.5, 0.0, 0.0, 0.0];
-            t.geometry_params = [0.018, 0.10, 0.003, 0.015];
-            t.ambient_color = [0.05, 0.06, 0.08, 1.0];
-            t.extra_params[0] = 0.20;
+            t.material_props[7] = [0.55, 0.0, 0.0, 0.0];
+            t.geometry_params = [0.060, 0.10, 0.003, 0.015];
+            t.ambient_color = [0.06, 0.07, 0.10, 1.0];
+            t.extra_params[0] = 0.015; // very shallow text relief — near-2D text appearance
             t.extra_params[1] = 0.0;
         }
         (ThemeId::Neumorphism, false) => {
@@ -355,8 +355,8 @@ fn theme_light(theme_id: ThemeId, dark_mode: bool) -> [f32; 4] {
         (ThemeId::Professional, true) => [-0.4, 0.8, -0.3, 1.2],
         (ThemeId::Neobrutalism, false) => [-0.5, 0.9, -0.2, 1.8],
         (ThemeId::Neobrutalism, true) => [-0.5, 0.9, -0.2, 1.3],
-        (ThemeId::Glassmorphism, false) => [-0.3, 0.7, -0.3, 1.3],
-        (ThemeId::Glassmorphism, true) => [-0.3, 0.7, -0.3, 1.0],
+        (ThemeId::Glassmorphism, false) => [-0.3, 0.7, -0.3, 1.1],
+        (ThemeId::Glassmorphism, true) => [-0.3, 0.7, -0.3, 0.85],
         (ThemeId::Neumorphism, false) => [-0.3, 0.6, -0.3, 1.2],
         (ThemeId::Neumorphism, true) => [-0.3, 0.6, -0.3, 0.9],
     }
@@ -382,20 +382,20 @@ fn text_colors(theme_id: ThemeId, dark_mode: bool) -> TextColors {
             info: rgb3(140, 140, 145),
         },
         (ThemeId::Glassmorphism, false) => TextColors {
-            heading: rgb3(100, 120, 180),
-            active: rgb3(50, 55, 65),
-            completed: rgb3(130, 135, 145),
-            placeholder: rgb3(140, 145, 155),
-            body: rgb3(30, 35, 45),
-            info: rgb3(100, 105, 115),
+            heading: rgb3(75, 100, 180),
+            active: rgb3(40, 45, 60),
+            completed: rgb3(130, 135, 150),
+            placeholder: rgb3(130, 135, 155),
+            body: rgb3(30, 35, 50),
+            info: rgb3(100, 105, 120),
         },
         (ThemeId::Glassmorphism, true) => TextColors {
             heading: rgb3(140, 165, 220),
             active: rgb3(200, 205, 215),
-            completed: rgb3(110, 115, 125),
-            placeholder: rgb3(120, 125, 135),
+            completed: rgb3(140, 145, 160), // brighter for contrast on dark glass
+            placeholder: rgb3(145, 150, 165),
             body: rgb3(190, 195, 205),
-            info: rgb3(130, 135, 145),
+            info: rgb3(160, 165, 180), // brighter for readability at small sizes
         },
         (ThemeId::Neumorphism, false) => TextColors {
             heading: rgb3(140, 80, 85),
@@ -512,30 +512,30 @@ fn build_text_layout(atlas: &VectorFontAtlas, colors: &TextColors) -> Vec<GpuCha
 
     // Footer: "3 items left" (15px)
     let fx = emit_text(&mut instances, "3", 90.0, baseline_z(445.0, 15.0), 15.0,
-                        colors.body, 0.0, atlas, 0);
+                        colors.body, 4.0, atlas, 0);
     let fx_px = (fx - px_to_world_x(0.0)) / PIXEL_TO_WORLD; // convert back to pixel X
     emit_text(&mut instances, " items left", fx_px, baseline_z(445.0, 15.0), 15.0,
-              colors.body, 0.0, atlas, 0);
+              colors.body, 4.0, atlas, 0);
 
     // Filter buttons
     emit_text(&mut instances, "All", 263.4, baseline_z(445.0, 15.0), 15.0,
-              colors.body, 0.0, atlas, 0);
+              colors.body, 4.0, atlas, 0);
     emit_text(&mut instances, "Active", 301.6, baseline_z(445.0, 15.0), 15.0,
-              colors.body, 0.0, atlas, 0);
+              colors.body, 4.0, atlas, 0);
     emit_text(&mut instances, "Completed", 364.1, baseline_z(445.0, 15.0), 15.0,
-              colors.body, 0.0, atlas, 0);
+              colors.body, 4.0, atlas, 0);
 
     // "Clear completed"
     emit_text(&mut instances, "Clear completed", 500.8, baseline_z(445.0, 15.0), 15.0,
-              colors.body, 0.0, atlas, 0);
+              colors.body, 4.0, atlas, 0);
 
     // Info footer (11px)
     emit_text(&mut instances, "Double-click to edit a todo", 286.7, baseline_z(538.4, 11.0), 11.0,
-              colors.info, 0.0, atlas, 0);
+              colors.info, 5.0, atlas, 0);
     emit_text(&mut instances, "Created by Martin Kav\u{00ED}k", 291.5, baseline_z(560.4, 11.0), 11.0,
-              colors.info, 0.0, atlas, 0);
+              colors.info, 5.0, atlas, 0);
     emit_text(&mut instances, "Part of TodoMVC", 308.1, baseline_z(582.4, 11.0), 11.0,
-              colors.info, 0.0, atlas, 0);
+              colors.info, 5.0, atlas, 0);
 
     instances
 }
@@ -561,6 +561,8 @@ pub struct TodoMvc3DDemo {
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     theme_buffer: wgpu::Buffer,
+    char_instances_buffer: wgpu::Buffer,
+    char_instances: Vec<GpuCharInstanceEx>,
     bind_group: wgpu::BindGroup,
     char_count: u32,
     char_grid_params: [f32; 4],
@@ -732,7 +734,7 @@ impl TodoMvc3DDemo {
             } else {
                 &char_instances
             }),
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
 
         let char_grid_cells_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -867,6 +869,8 @@ impl TodoMvc3DDemo {
             pipeline,
             uniform_buffer,
             theme_buffer,
+            char_instances_buffer,
+            char_instances,
             bind_group,
             char_count,
             char_grid_params,
@@ -891,6 +895,30 @@ impl TodoMvc3DDemo {
     fn update_theme_buffer(&self, queue: &wgpu::Queue) {
         let theme_uniforms = build_theme(self.current_theme, self.dark_mode);
         queue.write_buffer(&self.theme_buffer, 0, bytemuck::cast_slice(&[theme_uniforms]));
+
+        // Update text colors based on current theme
+        let colors = text_colors(self.current_theme, self.dark_mode);
+        let updated: Vec<GpuCharInstanceEx> = self.char_instances.iter().map(|inst| {
+            let flags = inst.color_flags[3];
+            let color = if flags == 2.0 {
+                colors.heading
+            } else if flags == 1.0 {
+                colors.completed
+            } else if flags == 3.0 {
+                colors.placeholder
+            } else if flags == 4.0 {
+                colors.body
+            } else if flags == 5.0 {
+                colors.info
+            } else {
+                colors.active
+            };
+            GpuCharInstanceEx {
+                pos_and_char: inst.pos_and_char,
+                color_flags: [color[0], color[1], color[2], flags],
+            }
+        }).collect();
+        queue.write_buffer(&self.char_instances_buffer, 0, bytemuck::cast_slice(&updated));
     }
 
     pub fn cycle_theme(&mut self) {

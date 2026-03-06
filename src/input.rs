@@ -7,7 +7,7 @@
 //! - Q/E: Roll camera
 //! - R: Reset roll to horizontal
 //! - T: Reset camera to initial position
-//! - Tab: Toggle mouse capture
+//! - Tab: Pause all keyboard input (click to resume)
 //! - Scroll: Adjust movement speed
 //! - F: Toggle app stats overlay (FPS, CPU, RAM, GPU, VRAM - app only)
 //! - G: Toggle full stats overlay (app + system values)
@@ -334,7 +334,8 @@ impl InputHandler {
                     Some(InputAction::Exit)
                 }
             }
-            KeyCode::Tab => Some(InputAction::ToggleCapture),
+            // Tab is handled at the runner level (keyboard pause toggle)
+            KeyCode::Tab => None,
             KeyCode::KeyF => Some(InputAction::ToggleOverlayApp),
             KeyCode::KeyG => Some(InputAction::ToggleOverlayFull),
             KeyCode::KeyK => Some(InputAction::ToggleKeybindings),
@@ -508,7 +509,7 @@ impl InputHandler {
 }
 
 /// Standard window title suffix for all 3D examples
-pub const CONTROLS_HINT: &str = "WASD+Space/Ctrl, Q/E, Mouse, Tab, Scroll, R/T, F/G, Esc";
+pub const CONTROLS_HINT: &str = "WASD+Space/Ctrl, Q/E, Mouse, Scroll, R/T, F/G, Tab=pause, Esc";
 
 /// Generate a standard window title for a demo
 pub fn demo_title(demo_num: u8, name: &str) -> String {

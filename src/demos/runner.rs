@@ -72,6 +72,9 @@ pub struct DemoRunner {
     overlay: SimpleOverlay,
     show_keybindings: bool,
 
+    // When true, all keyboard input is ignored (Tab to pause, mouse click to resume)
+    keyboard_paused: bool,
+
     // 2D demo controls
     pressed_keys: HashSet<KeyCode>,
 
@@ -168,6 +171,7 @@ impl DemoRunner {
             input,
             overlay,
             show_keybindings: false,
+            keyboard_paused: false,
             pressed_keys: HashSet::new(),
             start_time: std::time::Instant::now(),
             last_frame_time: std::time::Instant::now(),
@@ -473,6 +477,20 @@ impl DemoRunner {
                     "g" | "G" => self.input.toggle_overlay_full(),
                     "r" | "R" => self.input.reset_roll(&mut self.camera),
                     "t" | "T" => self.input.reset_camera(&mut self.camera),
+                    "n" | "N" => {
+                        if self.current_demo_id == DemoId::TodoMvc3D {
+                            if let Some(demo) = self.current_demo.as_any_mut().downcast_mut::<super::todomvc_3d::TodoMvc3DDemo>() {
+                                demo.cycle_theme();
+                            }
+                        }
+                    }
+                    "m" | "M" => {
+                        if self.current_demo_id == DemoId::TodoMvc3D {
+                            if let Some(demo) = self.current_demo.as_any_mut().downcast_mut::<super::todomvc_3d::TodoMvc3DDemo>() {
+                                demo.toggle_dark_mode();
+                            }
+                        }
+                    }
                     _ => {}
                 }
                 ResponseMessage::success(id, None)
@@ -876,7 +894,10 @@ impl DemoRunner {
     }
 
     fn update_overlay(&mut self) {
-        let stats = self.input.format_stats();
+        let mut stats = self.input.format_stats();
+        if !stats.is_empty() {
+            stats = format!("{} | {}x{}", stats, self.config.width, self.config.height);
+        }
         let keybindings = if self.show_keybindings {
             let demo_bindings = self.current_demo.keybindings();
             let mut all_bindings = Vec::with_capacity(demo_bindings.len() + super::KEYBINDINGS_COMMON.len());
@@ -916,7 +937,7 @@ impl DemoRunner {
         self.window.set_title(&title);
     }
 
-    fn handle_key_pressed(&mut self, code: KeyCode, event_loop: &ActiveEventLoop) {
+    fn handle_key_pressed(&mut self, code: KeyCode, _event_loop: &ActiveEventLoop) {
         // Number keys for demo switching
         match code {
             KeyCode::Digit0 => { let _ = self.switch_demo(DemoId::Empty); }
@@ -928,9 +949,7 @@ impl DemoRunner {
             KeyCode::Digit6 => { let _ = self.switch_demo(DemoId::TextShadow); }
             KeyCode::Digit7 => { let _ = self.switch_demo(DemoId::TodoMvc); }
             KeyCode::Digit8 => { let _ = self.switch_demo(DemoId::TodoMvc3D); }
-            KeyCode::Escape => {
-                event_loop.exit();
-            }
+            // Escape handled at top of window_event before keyboard_paused check
             _ => {}
         }
 
@@ -1052,6 +1071,25 @@ impl ApplicationHandler for DemoApp {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
+                    // Tab pauses keyboard input (always active, even when paused)
+                    if code == KeyCode::Tab && event.state == ElementState::Pressed {
+                        runner.keyboard_paused = !runner.keyboard_paused;
+                        if runner.keyboard_paused {
+                            runner.input.release_capture(&runner.window);
+                            runner.pressed_keys.clear();
+                            runner.input.pressed_keys.clear();
+                        }
+                        return;
+                    }
+
+                    // Escape exits when paused (capture already released)
+                    if runner.keyboard_paused {
+                        if code == KeyCode::Escape && event.state == ElementState::Pressed {
+                            event_loop.exit();
+                        }
+                        return;
+                    }
+
                     match event.state {
                         ElementState::Pressed => {
                             // Handle input actions for 3D demos
@@ -1146,6 +1184,7 @@ impl ApplicationHandler for DemoApp {
                 button: winit::event::MouseButton::Left,
                 ..
             } => {
+                runner.keyboard_paused = false;
                 if runner.current_demo.demo_type() == DemoType::Scene3D {
                     runner.input.capture(&runner.window);
                 }

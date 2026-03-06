@@ -110,6 +110,14 @@ float sdPlane(float3 p, float3 n, float h) {
     return dot(p, n) + h;
 }
 
+// ---- Hash function for glass noise ----
+
+float3 hash33(float3 p) {
+    p = frac(p * float3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return frac((p.xxy + p.yxx) * p.zyx);
+}
+
 // ---- Quadratic Bézier SDF ----
 
 float sdQuadraticBezier(float2 p, float2 p0, float2 p1, float2 p2) {
@@ -230,16 +238,21 @@ float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
 
     float minDist = 1e10;
     int winding = 0;
-    for (uint i = 0u; i < glyphCurveCount && i < 256u; i++) {
+    for (uint i = 0u; i < glyphCurveCount && i < 64u; i++) {
         BezierCurve curve = curves[glyphCurveOffset + i];
         float2 p0 = curve.points01.xy;
         float2 p1 = curve.points01.zw;
         float2 p2 = curve.points2bbox.xy;
 
-        float dist = sdQuadraticBezier(localPos, p0, p1, p2);
-        minDist = min(minDist, dist);
-
         winding += curveWindingContribution(localPos, p0, p1, p2);
+
+        float2 bboxMin = curve.points2bbox.zw;
+        float2 bboxMax = curve.bboxFlags.xy;
+        float2 dd = max(bboxMin - localPos, localPos - bboxMax);
+        float bboxDist = length(max(dd, 0.0));
+        if (bboxDist <= minDist) {
+            minDist = min(minDist, sdQuadraticBezier(localPos, p0, p1, p2));
+        }
     }
 
     float sign_val = (winding != 0) ? -1.0 : 1.0;
@@ -266,6 +279,12 @@ uint charGridCellIndex(int2 cell) {
 float opExtrusion(float sdf2d, float zDist, float depth) {
     float2 w = float2(sdf2d, abs(zDist) - depth);
     return min(max(w.x, w.y), 0.0) + length(max(w, 0.0));
+}
+
+// Rounded extrusion — softens text edges for better readability
+float opExtrusionRound(float sdf2d, float zDist, float depth, float r) {
+    float2 w = float2(sdf2d, abs(zDist) - depth);
+    return min(max(w.x, w.y), 0.0) + length(max(w, 0.0)) - r;
 }
 
 // ---- Hit struct ----
@@ -348,7 +367,9 @@ TextHit sdTextRelief3D(float3 p, float depth) {
     int2 gridDims = int2(uniforms.charGridParams.xy);
 
     for (int dy = -1; dy <= 1; dy++) {
+        if (result.dist < 0.005) break;
         for (int dx = -1; dx <= 1; dx++) {
+            if (result.dist < 0.005) break;
             int2 cell = centerCell + int2(dx, dy);
             if (cell.x < 0 || cell.y < 0 || cell.x >= gridDims.x || cell.y >= gridDims.y)
                 continue;
@@ -373,7 +394,11 @@ TextHit sdTextRelief3D(float3 p, float depth) {
                 if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
                     localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
                     float d2d = sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScale;
-                    float d3d = opExtrusion(d2d, p.y, halfDepth);
+                    // Glass theme: no rounding — keep text thin/sharp for 2D-like appearance
+                    float roundR = 0.0;
+                    float d3d = (roundR > 0.0)
+                        ? opExtrusionRound(d2d, p.y, max(halfDepth - roundR, 0.001), roundR)
+                        : opExtrusion(d2d, p.y, halfDepth);
                     if (d3d < result.dist) {
                         result.dist = d3d;
                         result.color = ch.colorFlags.xyz;
@@ -432,6 +457,8 @@ Hit mapSceneCoarse(float3 p) {
 // Thread-local for text color passing from mapScene to shading
 static float3 g_textColor = float3(0.5);
 static float g_textFlags = 0.0;
+// Set true for glass text pixels — tells fs_main to skip shader gamma
+static bool g_glassTextPixel = false;
 
 Hit mapScene(float3 p) {
     Hit result;
@@ -583,6 +610,54 @@ Hit mapScene(float3 p) {
     return result;
 }
 
+// Geometry-only scene distance (for normals on non-text materials)
+// Reuses mapScene but ignores text relief to avoid expensive text SDF in normal calc
+float mapSceneGeometryDist(float3 p) {
+    float result = 1e10;
+
+    float edgeR = theme.geometryParams.x;
+    float cardElev = theme.geometryParams.y;
+    float itemElev = theme.geometryParams.z;
+    float inputDepth = theme.geometryParams.w;
+
+    // Ground plane
+    result = min(result, sdPlane(p, float3(0, 1, 0), 0.5));
+
+    // Main card
+    float3 cardP = p - float3(0, cardElev, 0);
+    float cardDist = sdRoundBox(cardP, float3(CARD_W, 0.04, CARD_D), edgeR);
+    float inputCenterZ = (INPUT_TOP_Z + INPUT_BOT_Z) * 0.5;
+    float inputHalfZ = (INPUT_BOT_Z - INPUT_TOP_Z) * 0.5;
+    float3 inputP = cardP - float3(0, 0.02, inputCenterZ);
+    float inputWell = sdRoundBox(inputP, float3(CARD_W - 0.04, inputDepth, inputHalfZ), edgeR * 0.5);
+    cardDist = max(cardDist, -inputWell);
+
+    // Items + checkboxes
+    float itemCenters[4] = { ITEM1_Z, ITEM2_Z, ITEM3_Z, ITEM4_Z };
+    for (int i = 0; i < 4; i++) {
+        result = min(result, sdRoundBox(cardP - float3(0, 0, itemCenters[i]), float3(CARD_W - 0.04, 0.04 + itemElev, ITEM_HALF_H), edgeR * 0.3));
+        float3 cbP = cardP - float3(CB_X, 0.04, itemCenters[i]);
+        float2 torusQ = float2(length(cbP.xz) - CB_RADIUS, cbP.y);
+        result = min(result, length(torusQ) - CB_TUBE_R);
+    }
+
+    // Separators
+    float sepZs[3] = { SEP1_Z, SEP2_Z, SEP3_Z };
+    for (int s = 0; s < 3; s++)
+        result = min(result, sdRoundBox(cardP - float3(0, 0.04, sepZs[s]), float3(CARD_W - 0.06, 0.002, 0.002), 0.001));
+    result = min(result, sdRoundBox(cardP - float3(0, 0.04, INPUT_BOT_Z), float3(CARD_W - 0.06, 0.002, 0.002), 0.001));
+    result = min(result, sdRoundBox(cardP - float3(0, 0.04, FOOTER_Z), float3(CARD_W - 0.04, 0.002, 0.002), 0.001));
+
+    // Stacked cards
+    result = min(result, sdRoundBox(p - float3(0, cardElev - 0.005, 0.04), float3(CARD_W - 0.02, 0.035, CARD_D), edgeR));
+    result = min(result, sdRoundBox(p - float3(0, cardElev - 0.01, 0.08), float3(CARD_W - 0.04, 0.03, CARD_D), edgeR));
+
+    // Main card body
+    result = min(result, cardDist);
+
+    return result;
+}
+
 // ---- Normal calculation ----
 
 float3 calcNormal(float3 p) {
@@ -596,10 +671,21 @@ float3 calcNormal(float3 p) {
     );
 }
 
+float3 calcNormalGeometry(float3 p) {
+    const float h = 0.0002;
+    const float2 k = float2(1, -1);
+    return normalize(
+        k.xyy * mapSceneGeometryDist(p + k.xyy * h) +
+        k.yyx * mapSceneGeometryDist(p + k.yyx * h) +
+        k.yxy * mapSceneGeometryDist(p + k.yxy * h) +
+        k.xxx * mapSceneGeometryDist(p + k.xxx * h)
+    );
+}
+
 float calcSoftShadow(float3 ro, float3 rd, float mint, float maxt, float k) {
     float res = 1.0;
     float t = mint;
-    for (int i = 0; i < 64 && t < maxt; i++) {
+    for (int i = 0; i < 32 && t < maxt; i++) {
         float h = mapSceneCoarse(ro + rd * t).dist;
         if (h < 0.001) return 0.0;
         res = min(res, k * h / t);
@@ -639,7 +725,7 @@ RayHit raymarch(float3 ro, float3 rd) {
     float omega = 1.0;
     float prevRadius = 0.0;
 
-    for (int i = 0; i < 128 && t < 50.0; i++) {
+    for (int i = 0; i < 128 && t < 20.0; i++) {
         float3 p = ro + rd * t;
         Hit h = mapScene(p);
         float radius = abs(h.dist);
@@ -652,7 +738,7 @@ RayHit raymarch(float3 ro, float3 rd) {
             continue;
         }
 
-        if (h.dist < 0.001) {
+        if (h.dist < 0.001 + t * 0.00005) {
             result.t = t;
             result.materialId = h.materialId;
             result.hit = true;
@@ -677,6 +763,25 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
         baseColor = theme.materialColors[materialId].xyz;
     }
 
+    // For glassmorphism, tint ground with the position-based gradient
+    bool isGlassTheme = theme.extraParams.z == 2.0;
+    if (isGlassTheme && materialId == 1) {
+        baseColor = lerp(baseColor, glassGradient(pos.xz), 0.90);
+    }
+
+    // Glass: blend base color with gradient BEFORE lighting so transparency is visible
+    bool isGlassSurface = isGlassTheme && (materialId == 2 || materialId == 3 || materialId == 5 || materialId == 6);
+    float3 glassBg = float3(0);
+    if (isGlassSurface) {
+        for (int tap = 0; tap < 3; tap++) {
+            float3 jitter = hash33(pos * 31.7 + float(tap) * 17.3) * 2.0 - 1.0;
+            glassBg += glassGradient(pos.xz + jitter.xz * 0.25);
+        }
+        glassBg /= 3.0;
+        float alpha = theme.materialColors[materialId].w;
+        baseColor = lerp(glassBg, baseColor, alpha);
+    }
+
     float gloss = theme.materialProps[materialId].x;
     float metalness = theme.materialProps[materialId].y;
 
@@ -684,8 +789,15 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
     float lightIntensity = uniforms.lightDirIntensity.w;
 
     float diff = max(dot(nor, lightDir), 0.0);
-    float shadow = calcSoftShadow(pos + nor * 0.01, lightDir, 0.02, 10.0, 24.0);
+    float shadowK = isGlassTheme ? 8.0 : 24.0;
+    float shadowMaxT = isGlassTheme ? 5.0 : 10.0;
+    float shadow = calcSoftShadow(pos + nor * 0.01, lightDir, 0.02, shadowMaxT, shadowK);
+    if (isGlassTheme) shadow = lerp(1.0, shadow, 0.3);
+    // Glass text: nearly eliminate shadow/AO so text reads cleanly
+    if (isGlassTheme && materialId == 7) shadow = lerp(1.0, shadow, 0.1);
     float ao = calcAO(pos, nor);
+    if (isGlassTheme) ao = lerp(1.0, ao, 0.5);
+    if (isGlassTheme && materialId == 7) ao = lerp(1.0, ao, 0.15);
 
     // Ambient
     float3 ambient = theme.ambientColor.xyz * theme.ambientColor.w;
@@ -706,12 +818,128 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
 
     float3 col = baseColor * lin;
 
+    // Glass text: flat "ink on glass" look — almost 2D, minimal 3D lighting
+    // Uses g_glassTextPixel flag to bypass shader gamma in fs_main
+    if (isGlassTheme && materialId == 7) {
+        g_glassTextPixel = true;
+        float ndl = max(dot(nor, lightDir), 0.0);
+        col = baseColor * (0.85 + 0.15 * ndl);
+    }
+
+    // Glass: blue tint + fresnel rim + border glow
+    if (isGlassSurface) {
+        // Blue glass tint — stronger blue cast matching reference
+        col *= float3(0.85, 0.90, 1.10);
+
+        // Normal-based fresnel rim (for physical rounded edges)
+        float NdotV = max(dot(nor, -rd), 0.0);
+        float fresnelSchlick = 0.04 + 0.96 * pow(1.0 - NdotV, 5.0);
+        float edgeRim = 1.0 - abs(dot(nor, float3(0, 1, 0)));
+        float rimFactor = max(fresnelSchlick, edgeRim * 0.8);
+        col += rimFactor * float3(0.40, 0.50, 0.90) * 1.5;
+        col *= lerp(1.0, 0.80, edgeRim * 0.5);
+
+        // Card border: wide blue glow + sharp inner rim line
+        float2 cardInset = float2(CARD_W, CARD_D) - abs(pos.xz);
+        float edgeDist = min(cardInset.x, cardInset.y);
+        // Wide outer glow
+        float outerGlow = 1.0 - smoothstep(0.0, 0.80, edgeDist);
+        col.xy *= lerp(float2(1.0), float2(0.50), outerGlow);
+        col.z += outerGlow * 0.40;
+        // Sharp thin rim line (the defined blue border visible in reference)
+        float rimLine = smoothstep(0.02, 0.04, edgeDist) * (1.0 - smoothstep(0.04, 0.10, edgeDist));
+        col += rimLine * float3(0.15, 0.22, 0.55);
+        // Very edge highlight
+        float edgeHighlight = 1.0 - smoothstep(0.0, 0.04, edgeDist);
+        col += edgeHighlight * float3(0.10, 0.15, 0.35);
+
+        // Item panel borders (glass panels with thin blue rim + glow)
+        if (materialId == 3) {
+            float itemCenters[4] = { ITEM1_Z, ITEM2_Z, ITEM3_Z, ITEM4_Z };
+            float itemHW = CARD_W - 0.04;
+            float minItemEdge = 1e10;
+            for (int i = 0; i < 4; i++) {
+                float2 itemLocal = float2(abs(pos.x), abs(pos.z - itemCenters[i]));
+                float2 itemInset = float2(itemHW, ITEM_HALF_H) - itemLocal;
+                minItemEdge = min(minItemEdge, min(itemInset.x, itemInset.y));
+            }
+            // Soft glow near edges
+            float itemGlow = 1.0 - smoothstep(0.0, 0.20, minItemEdge);
+            col.xy *= lerp(float2(1.0), float2(0.65), itemGlow);
+            col.z += itemGlow * 0.20;
+            // Sharp thin border line
+            float itemRim = smoothstep(0.01, 0.03, minItemEdge) * (1.0 - smoothstep(0.03, 0.07, minItemEdge));
+            col += itemRim * float3(0.08, 0.12, 0.30);
+        }
+
+        // Input field glass panel border
+        if (materialId == 2) {
+            float inputCenterZ = (INPUT_TOP_Z + INPUT_BOT_Z) * 0.5;
+            float inputHalfZ = (INPUT_BOT_Z - INPUT_TOP_Z) * 0.5;
+            float2 inputLocal = float2(abs(pos.x), abs(pos.z - inputCenterZ));
+            float2 inputInset = float2(CARD_W - 0.04, inputHalfZ) - inputLocal;
+            float inputEdge = min(inputInset.x, inputInset.y);
+            if (inputEdge > -0.1 && inputEdge < 0.25) {
+                // Soft glow
+                float inputGlow = 1.0 - smoothstep(0.0, 0.20, max(inputEdge, 0.0));
+                col.xy *= lerp(float2(1.0), float2(0.65), inputGlow);
+                col.z += inputGlow * 0.20;
+                // Sharp thin border line
+                float inputRim = smoothstep(0.01, 0.03, max(inputEdge, 0.0)) * (1.0 - smoothstep(0.03, 0.07, max(inputEdge, 0.0)));
+                col += inputRim * float3(0.08, 0.12, 0.30);
+            }
+        }
+    }
+
+    // Glass theme: darken ground near card edges (drop shadow)
+    if (isGlassTheme && materialId == 1) {
+        float2 cardDist2 = abs(pos.xz) - float2(CARD_W, CARD_D);
+        float outsideDist = length(max(cardDist2, 0.0));
+        float cardProximity = 1.0 - smoothstep(0.0, 0.8, outsideDist);
+        col *= lerp(1.0, 0.75, cardProximity);
+    }
+
     return col;
 }
 
+// Position-based gradient for glassmorphism (used for glass background AND sky)
+float3 glassGradient(float2 worldXZ) {
+    // Normalize to card-centered UV roughly [-1,1]
+    float2 uv = worldXZ * float2(1.5, 0.5);
+    bool darkMode = theme.extraParams.w > 0.5;
+    float3 base;
+    if (darkMode) {
+        base = float3(0.04, 0.06, 0.14);
+        // Blue-purple upper-left
+        base += float3(-0.02, 0.01, 0.16) * exp(-dot(uv - float2(-1.2, 0.8), uv - float2(-1.2, 0.8)) * 0.5);
+        // Pink/warm right
+        base += float3(0.14, 0.05, -0.03) * exp(-dot(uv - float2(1.2, 0.0), uv - float2(1.2, 0.0)) * 0.5);
+        // Warm amber lower-right
+        base += float3(0.12, 0.07, -0.05) * exp(-dot(uv - float2(0.5, -1.0), uv - float2(0.5, -1.0)) * 0.6);
+    } else {
+        base = float3(0.78, 0.80, 0.88);
+        // Blue-purple blob — upper-left quadrant
+        base += float3(-0.18, -0.04, 0.30) * exp(-dot(uv - float2(-1.0, 0.6), uv - float2(-1.0, 0.6)) * 0.35);
+        // Pink/warm blob — right side
+        base += float3(0.22, 0.06, -0.14) * exp(-dot(uv - float2(1.3, 0.3), uv - float2(1.3, 0.3)) * 0.35);
+        // Warm peach blob — lower area
+        base += float3(0.20, 0.12, -0.08) * exp(-dot(uv - float2(0.4, -1.0), uv - float2(0.4, -1.0)) * 0.45);
+        // Cool blue accent — top-center
+        base += float3(-0.10, 0.02, 0.22) * exp(-dot(uv - float2(0.0, 1.2), uv - float2(0.0, 1.2)) * 0.35);
+    }
+    return saturate(base);
+}
+
 float3 getSkyColor(float3 rd) {
+    bool isGlass = theme.extraParams.z == 2.0;
+    if (isGlass) {
+        // Project ray direction to XZ world plane for sky gradient
+        float2 skyXZ = rd.xz * 3.0 / (abs(rd.y) + 0.3);
+        return glassGradient(skyXZ);
+    }
+
     float t = 0.5 * (rd.y + 1.0);
-    float3 skyLow = theme.materialColors[0].xyz;  // materialColors[0] = sky/background
+    float3 skyLow = theme.materialColors[0].xyz;
     float3 skyHigh = lerp(skyLow, float3(0.6, 0.7, 0.85), 0.3);
     return lerp(skyLow, skyHigh, t);
 }
@@ -720,20 +948,30 @@ float3 render(float3 ro, float3 rd) {
     // Reset text color globals
     g_textColor = float3(0.5);
     g_textFlags = 0.0;
+    g_glassTextPixel = false;
 
     RayHit hit = raymarch(ro, rd);
     if (!hit.hit) return getSkyColor(rd);
 
     float3 pos = ro + rd * hit.t;
 
-    // Re-evaluate mapScene at hit point to capture text color
-    mapScene(pos);
+    // Material-aware normal calculation
+    float3 nor;
+    if (hit.materialId == 1) {
+        nor = float3(0, 1, 0); // ground is always flat
+    } else if (hit.materialId == 7) {
+        nor = calcNormal(pos);
+        mapScene(pos); // recapture text color after calcNormal overwrites globals
+    } else {
+        nor = calcNormalGeometry(pos);
+    }
 
-    float3 nor = calcNormal(pos);
     float3 col = shade(pos, nor, rd, hit.materialId);
 
-    // Fog
+    // Fog (skip for glass text — fog floor dominates after double gamma)
+    bool isGlass = theme.extraParams.z == 2.0;
     float fog = 1.0 - exp(-hit.t * 0.003);
+    if (isGlass && hit.materialId == 7) fog = 0.0;
     col = lerp(col, getSkyColor(rd) * 0.9, fog);
 
     return col;
@@ -753,7 +991,16 @@ float4 fs_main(VertexOutput input) : SV_Target {
     float3 rd = normalize(farPoint.xyz - nearPoint.xyz);
 
     float3 col = render(ro, rd);
-    col = pow(col, float3(1.0 / 2.2));
+    if (g_glassTextPixel) {
+        // Glass text: color is in sRGB space — convert to linear for correct hardware sRGB encoding
+        // This bypasses the shader's pow(1/2.2) that causes double-gamma brightening
+        col = max(col, 0.0);
+        col.x = col.x <= 0.04045 ? col.x / 12.92 : pow((col.x + 0.055) / 1.055, 2.4);
+        col.y = col.y <= 0.04045 ? col.y / 12.92 : pow((col.y + 0.055) / 1.055, 2.4);
+        col.z = col.z <= 0.04045 ? col.z / 12.92 : pow((col.z + 0.055) / 1.055, 2.4);
+    } else {
+        col = pow(col, float3(1.0 / 2.2));
+    }
 
     return float4(col, 1.0);
 }
