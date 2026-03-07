@@ -259,6 +259,25 @@ float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
     return sign_val * minDist;
 }
 
+// Brute-force glyph SDF — evaluates ALL curves, no bounds approximation.
+// Avoids the +0.01 discontinuity in sdGlyph's bounds check that causes
+// rectangle artifacts with smoothstep AA and rounded extrusion.
+float sdGlyphBruteForce(float2 localPos, uint4 curveInfo) {
+    uint offset = curveInfo.x;
+    uint count = curveInfo.y;
+    float minDist = 1e10;
+    int winding = 0;
+    for (uint i = 0u; i < count && i < 64u; i++) {
+        BezierCurve curve = curves[offset + i];
+        float2 p0 = curve.points01.xy;
+        float2 p1 = curve.points01.zw;
+        float2 p2 = curve.points2bbox.xy;
+        minDist = min(minDist, sdQuadraticBezier(localPos, p0, p1, p2));
+        winding += curveWindingContribution(localPos, p0, p1, p2);
+    }
+    return (winding != 0 ? -1.0 : 1.0) * minDist;
+}
+
 // ---- Character grid lookup ----
 
 int2 charGridCellCoord(float2 p) {
@@ -332,7 +351,6 @@ static const float CB_TUBE_R = 0.006;      // tube radius for torus ring
 struct TextHit {
     float dist;
     float3 color;
-    float flags;
     bool valid;
 };
 
@@ -340,7 +358,6 @@ TextHit sdTextRelief3D(float3 p, float depth) {
     TextHit result;
     result.dist = 1e10;
     result.color = float3(0.5);
-    result.flags = 0.0;
     result.valid = false;
 
     float halfDepth = depth * 0.5;
@@ -382,6 +399,11 @@ TextHit sdTextRelief3D(float3 p, float depth) {
             for (uint i = 0u; i < count && i < 16u; i++) {
                 uint charIdx = charGridIndices[start + i];
                 CharInstanceEx ch = charInstances[charIdx];
+
+                // Glass theme: only 3D-render heading chars (flag==2), body text is decal
+                bool isGlassTheme = theme.extraParams.z == 2.0;
+                if (isGlassTheme && ch.colorFlags.w != 2.0) continue;
+
                 float2 charPos = ch.posAndChar.xy;
                 float charScale = ch.posAndChar.z;
                 uint glyphIdx = uint(ch.posAndChar.w);
@@ -393,16 +415,20 @@ TextHit sdTextRelief3D(float3 p, float depth) {
 
                 if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
                     localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
-                    float d2d = sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScale;
-                    // Glass theme: no rounding — keep text thin/sharp for 2D-like appearance
+                    float d2d = isGlassTheme
+                        ? sdGlyphBruteForce(localP, glyph.curveInfo) * charScale
+                        : sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScale;
+                    // Glass heading: subtle rounding for smooth edges
                     float roundR = 0.0;
+                    if (isGlassTheme && ch.colorFlags.w == 2.0) {
+                        roundR = 0.015;
+                    }
                     float d3d = (roundR > 0.0)
                         ? opExtrusionRound(d2d, p.y, max(halfDepth - roundR, 0.001), roundR)
                         : opExtrusion(d2d, p.y, halfDepth);
                     if (d3d < result.dist) {
                         result.dist = d3d;
                         result.color = ch.colorFlags.xyz;
-                        result.flags = ch.colorFlags.w;
                         result.valid = true;
                     }
                 }
@@ -456,9 +482,6 @@ Hit mapSceneCoarse(float3 p) {
 
 // Thread-local for text color passing from mapScene to shading
 static float3 g_textColor = float3(0.5);
-static float g_textFlags = 0.0;
-// Set true for glass text pixels — tells fs_main to skip shader gamma
-static bool g_glassTextPixel = false;
 
 Hit mapScene(float3 p) {
     Hit result;
@@ -588,7 +611,7 @@ Hit mapScene(float3 p) {
             result = opUnionHit(result, text);
             if (textDist < result.dist + 0.001) {
                 g_textColor = textHit.color;
-                g_textFlags = textHit.flags;
+
             }
         } else {
             // Carved text: subtract from card
@@ -597,7 +620,7 @@ Hit mapScene(float3 p) {
                 if (-textDist > result.dist - 0.002) {
                     result.materialId = 7;
                     g_textColor = textHit.color;
-                    g_textFlags = textHit.flags;
+    
                 }
             }
         }
@@ -793,11 +816,11 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
     float shadowMaxT = isGlassTheme ? 5.0 : 10.0;
     float shadow = calcSoftShadow(pos + nor * 0.01, lightDir, 0.02, shadowMaxT, shadowK);
     if (isGlassTheme) shadow = lerp(1.0, shadow, 0.3);
-    // Glass text: nearly eliminate shadow/AO so text reads cleanly
-    if (isGlassTheme && materialId == 7) shadow = lerp(1.0, shadow, 0.1);
+    // Glass heading: moderate shadow/AO for 3D depth
+    if (isGlassTheme && materialId == 7) shadow = lerp(1.0, shadow, 0.5);
     float ao = calcAO(pos, nor);
     if (isGlassTheme) ao = lerp(1.0, ao, 0.5);
-    if (isGlassTheme && materialId == 7) ao = lerp(1.0, ao, 0.15);
+    if (isGlassTheme && materialId == 7) ao = lerp(1.0, ao, 0.5);
 
     // Ambient
     float3 ambient = theme.ambientColor.xyz * theme.ambientColor.w;
@@ -818,12 +841,22 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
 
     float3 col = baseColor * lin;
 
-    // Glass text: flat "ink on glass" look — almost 2D, minimal 3D lighting
-    // Uses g_glassTextPixel flag to bypass shader gamma in fs_main
+    // Glass heading: glass pipe material with text color tint
     if (isGlassTheme && materialId == 7) {
-        g_glassTextPixel = true;
-        float ndl = max(dot(nor, lightDir), 0.0);
-        col = baseColor * (0.85 + 0.15 * ndl);
+        float3 glassBgText = float3(0);
+        for (int tap = 0; tap < 3; tap++) {
+            float3 jitter = hash33(pos * 31.7 + float(tap) * 17.3) * 2.0 - 1.0;
+            glassBgText += glassGradient(pos.xz + jitter.xz * 0.25);
+        }
+        glassBgText /= 3.0;
+        float3 tintedBase = lerp(glassBgText, baseColor, 0.35);
+        col = tintedBase * lin;
+        // Blue glass tint
+        col *= float3(0.85, 0.90, 1.10);
+        // Fresnel rim highlight
+        float NdotV_text = max(dot(nor, -rd), 0.0);
+        float textFresnel = 0.04 + 0.96 * pow(1.0 - NdotV_text, 5.0);
+        col += textFresnel * float3(0.30, 0.40, 0.80) * 0.8;
     }
 
     // Glass: blue tint + fresnel rim + border glow
@@ -944,35 +977,123 @@ float3 getSkyColor(float3 rd) {
     return lerp(skyLow, skyHigh, t);
 }
 
+// ---- Decal text helpers (glass theme) ----
+
+float4 blendOver(float4 bg, float4 fg) {
+    float outA = fg.a + bg.a * (1.0 - fg.a);
+    if (outA < 0.001) return float4(0);
+    float3 outRGB = (fg.rgb * fg.a + bg.rgb * bg.a * (1.0 - fg.a)) / outA;
+    return float4(outRGB, outA);
+}
+
+float3 srgbToLinear(float3 c) {
+    return float3(
+        c.x <= 0.04045 ? c.x / 12.92 : pow((c.x + 0.055) / 1.055, 2.4),
+        c.y <= 0.04045 ? c.y / 12.92 : pow((c.y + 0.055) / 1.055, 2.4),
+        c.z <= 0.04045 ? c.z / 12.92 : pow((c.z + 0.055) / 1.055, 2.4));
+}
+
+float4 evaluateTextDecal(float2 textPos, float aaScale) {
+    float4 result = float4(0.0);
+    int2 gridDims = int2(uniforms.charGridParams.xy);
+    int2 centerCell = charGridCellCoord(textPos);
+
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            int2 cell = centerCell + int2(dx, dy);
+            if (cell.x < 0 || cell.y < 0 || cell.x >= gridDims.x || cell.y >= gridDims.y)
+                continue;
+            uint cellIdx = charGridCellIndex(cell);
+            CharGridCellData cgCell = charGridCells[cellIdx];
+
+            for (uint i = 0u; i < cgCell.count && i < 16u; i++) {
+                uint charIdx = charGridIndices[cgCell.offset + i];
+                CharInstanceEx ch = charInstances[charIdx];
+
+                // Skip heading characters (rendered as 3D glass pipe)
+                if (ch.colorFlags.w == 2.0) continue;
+
+                float2 charPos = ch.posAndChar.xy;
+                float charScale = ch.posAndChar.z;
+                uint glyphIdx = uint(ch.posAndChar.w);
+                GlyphData glyph = glyphData[glyphIdx];
+                float4 bounds = glyph.bounds;
+                float2 localP = (textPos - charPos) / charScale;
+
+                if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
+                    localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
+                    float d2d = sdGlyphBruteForce(localP, glyph.curveInfo) * charScale;
+                    float alpha = smoothstep(aaScale, -aaScale, d2d);
+                    if (alpha > 0.001) {
+                        result = blendOver(result, float4(ch.colorFlags.xyz, alpha));
+                    }
+                }
+            }
+        }
+    }
+    return result;
+}
+
+// ---- Main render ----
+
 float3 render(float3 ro, float3 rd) {
     // Reset text color globals
     g_textColor = float3(0.5);
-    g_textFlags = 0.0;
-    g_glassTextPixel = false;
 
+    bool isGlass = theme.extraParams.z == 2.0;
     RayHit hit = raymarch(ro, rd);
-    if (!hit.hit) return getSkyColor(rd);
 
-    float3 pos = ro + rd * hit.t;
-
-    // Material-aware normal calculation
-    float3 nor;
-    if (hit.materialId == 1) {
-        nor = float3(0, 1, 0); // ground is always flat
-    } else if (hit.materialId == 7) {
-        nor = calcNormal(pos);
-        mapScene(pos); // recapture text color after calcNormal overwrites globals
+    float3 col;
+    if (!hit.hit) {
+        col = getSkyColor(rd);
     } else {
-        nor = calcNormalGeometry(pos);
+        float3 pos = ro + rd * hit.t;
+
+        // Material-aware normal calculation
+        float3 nor;
+        if (hit.materialId == 1) {
+            nor = float3(0, 1, 0); // ground is always flat
+        } else if (hit.materialId == 7) {
+            nor = calcNormal(pos);
+            mapScene(pos); // recapture text color after calcNormal overwrites globals
+        } else {
+            nor = calcNormalGeometry(pos);
+        }
+
+        col = shade(pos, nor, rd, hit.materialId);
+
+        // Fog
+        float fog = 1.0 - exp(-hit.t * 0.003);
+        col = lerp(col, getSkyColor(rd) * 0.9, fog);
     }
 
-    float3 col = shade(pos, nor, rd, hit.materialId);
+    // Glass decal text — composited AFTER scene shading + fog
+    if (isGlass) {
+        float cardElev = theme.geometryParams.y;
+        float textScale = uniforms.renderParams.w;
+        float textPlaneY = cardElev + 0.04;
 
-    // Fog (skip for glass text — fog floor dominates after double gamma)
-    bool isGlass = theme.extraParams.z == 2.0;
-    float fog = 1.0 - exp(-hit.t * 0.003);
-    if (isGlass && hit.materialId == 7) fog = 0.0;
-    col = lerp(col, getSkyColor(rd) * 0.9, fog);
+        if (abs(rd.y) > 0.001) {
+            float tPlane = (textPlaneY - ro.y) / rd.y;
+
+            // Visible: in front of camera AND in front of (or near) scene hit
+            if (tPlane > 0.0 && (!hit.hit || tPlane < hit.t + 0.1)) {
+                float3 planePos = ro + rd * tPlane;
+                float2 textPos2D = float2(planePos.x, -planePos.z) / textScale;
+
+                // AA scale from pixel footprint at plane distance
+                float pixelWorldSize = tPlane * 2.0 / uniforms.renderParams.y;
+                float aaScale = pixelWorldSize / textScale;
+
+                float4 decal = evaluateTextDecal(textPos2D, aaScale);
+                if (decal.a > 0.01) {
+                    // Convert sRGB text color to linear for correct blending
+                    float3 textLinear = srgbToLinear(decal.rgb);
+                    col = lerp(col, textLinear, decal.a);
+                }
+            }
+        }
+    }
 
     return col;
 }
@@ -991,16 +1112,7 @@ float4 fs_main(VertexOutput input) : SV_Target {
     float3 rd = normalize(farPoint.xyz - nearPoint.xyz);
 
     float3 col = render(ro, rd);
-    if (g_glassTextPixel) {
-        // Glass text: color is in sRGB space — convert to linear for correct hardware sRGB encoding
-        // This bypasses the shader's pow(1/2.2) that causes double-gamma brightening
-        col = max(col, 0.0);
-        col.x = col.x <= 0.04045 ? col.x / 12.92 : pow((col.x + 0.055) / 1.055, 2.4);
-        col.y = col.y <= 0.04045 ? col.y / 12.92 : pow((col.y + 0.055) / 1.055, 2.4);
-        col.z = col.z <= 0.04045 ? col.z / 12.92 : pow((col.z + 0.055) / 1.055, 2.4);
-    } else {
-        col = pow(col, float3(1.0 / 2.2));
-    }
+    col = pow(col, float3(1.0 / 2.2));
 
     return float4(col, 1.0);
 }

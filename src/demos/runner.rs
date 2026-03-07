@@ -171,7 +171,7 @@ impl DemoRunner {
             input,
             overlay,
             show_keybindings: false,
-            keyboard_paused: false,
+            keyboard_paused: true,
             pressed_keys: HashSet::new(),
             start_time: std::time::Instant::now(),
             last_frame_time: std::time::Instant::now(),

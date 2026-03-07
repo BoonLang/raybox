@@ -276,7 +276,7 @@ fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
             t.material_props[7] = [0.55, 0.0, 0.0, 0.0];
             t.geometry_params = [0.060, 0.10, 0.003, 0.015];
             t.ambient_color = [0.38, 0.40, 0.48, 1.0]; // brighter ambient
-            t.extra_params[0] = 0.015; // very shallow text relief — near-2D text appearance
+            t.extra_params[0] = 0.08; // heading glass pipe depth (body text is decal)
             t.extra_params[1] = 0.0;
         }
         (ThemeId::Glassmorphism, true) => {
@@ -296,7 +296,7 @@ fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
             t.material_props[7] = [0.55, 0.0, 0.0, 0.0];
             t.geometry_params = [0.060, 0.10, 0.003, 0.015];
             t.ambient_color = [0.06, 0.07, 0.10, 1.0];
-            t.extra_params[0] = 0.015; // very shallow text relief — near-2D text appearance
+            t.extra_params[0] = 0.08; // heading glass pipe depth (body text is decal)
             t.extra_params[1] = 0.0;
         }
         (ThemeId::Neumorphism, false) => {
@@ -575,7 +575,7 @@ pub struct TodoMvc3DDemo {
 
 impl TodoMvc3DDemo {
     pub fn new(ctx: &DemoContext) -> Result<Self> {
-        let current_theme = ThemeId::Professional;
+        let current_theme = ThemeId::Glassmorphism;
         let dark_mode = false;
         let colors = text_colors(current_theme, dark_mode);
 
