@@ -1,0 +1,36 @@
+# Repository Guidelines
+
+## Project Structure & Module Organization
+`src/` contains the Rust library and runtime code. Core rendering and app plumbing live in `src/renderer.rs`, `src/sdf_renderer.rs`, `src/demo_core/`, and `src/control/`. Interactive showcase code lives in `src/demos/`; demo entry points and tools are in `src/bin/` (`demos`, `raybox-ctl`, `raybox-mcp`, `raybox-dev`). Shader sources live in `shaders/`. Reference images and fonts live under `assets/`. Design notes and implementation logs belong in `docs/`, for example `docs/plans/todomvc_classic/`.
+
+## Build, Test, and Development Commands
+Use `just` targets when possible:
+
+- `just demos` runs the windowed demo switcher.
+- `just demos-from 8` starts directly in a specific demo.
+- `just demos-control` runs the demo app with the WebSocket control server enabled.
+- `just ctl status` queries the running control server.
+- `just dev` starts the hot-reload development binary.
+- `just build-web` builds the WASM target; `just web` serves and opens it locally.
+
+For direct Cargo usage:
+
+- `cargo build --bin demos --features windowed,control,mcp`
+- `cargo test`
+- `cargo run --bin raybox-ctl --features control -- status`
+
+## Coding Style & Naming Conventions
+Use standard Rust formatting with `cargo fmt`; no custom `rustfmt` config is checked in. Follow existing Rust naming: `snake_case` for functions/modules, `CamelCase` for types, `SCREAMING_SNAKE_CASE` for constants. Keep shader and demo names descriptive and aligned with filenames, for example `todomvc_3d.rs` and `sdf_todomvc_3d.slang`. Prefer small, focused helper functions over large monoliths.
+
+## Testing Guidelines
+There is no top-level `tests/` directory today; tests are mostly inline unit tests near the code, such as in `src/control/protocol.rs` and `src/text/`. Run `cargo test` before submitting changes. For rendering or UI work, also verify manually with `just demos` or `just demos-control`, and include screenshots when behavior is visual.
+
+## Commit & Review Guidelines
+This repository uses `jj`, not Git, for day-to-day history editing. Keep commits focused and use short imperative subjects with a scope prefix when useful, for example `todomvc3d: add classic2d default theme`. In reviews, include:
+
+- what changed and why
+- which demos or binaries were tested
+- screenshots for visual changes
+- any feature flags needed to reproduce the result
+
+Avoid mixing unrelated renderer, control, and demo changes in one commit unless they are required for the same feature.
