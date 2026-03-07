@@ -9,4 +9,5 @@ pub struct DemoContext<'a> {
     pub surface_format: wgpu::TextureFormat,
     pub width: u32,
     pub height: u32,
+    pub scale_factor: f32,
 }

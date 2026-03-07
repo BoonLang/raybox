@@ -6,7 +6,7 @@ struct Uniforms {
     float4 cameraPosTime;     // xyz = cameraPos, w = time
     float4 lightDirIntensity; // xyz = lightDir, w = intensity
     float4 renderParams;      // xy = resolution, z = textDepth, w = textScale
-    float4 textParams;        // x = charCount, y = numLines, z = lineHeight, w = reserved
+    float4 textParams;        // x = charCount, y = uiPrimCount, z = windowScaleFactor, w = classicDecalPrimStart
     float4 charGridParams;    // xy = gridDims, zw = cellSize
     float4 charGridBounds;    // xy = gridMin, zw = gridMax
 };
@@ -40,7 +40,7 @@ struct GlyphData {
 
 // Character instance with color
 struct CharInstanceEx {
-    float4 posAndChar;   // xy = position, z = scale, w = charIndex
+    float4 posAndChar;   // x = pixel x, y = pixel y (Y-up), z = fontSizePx, w = charIndex
     float4 colorFlags;   // rgb = color, w = flags (0=active, 1=completed, 2=heading, 3=placeholder)
 };
 
@@ -48,6 +48,13 @@ struct CharInstanceEx {
 struct CharGridCellData {
     uint offset;
     uint count;
+};
+
+struct UiPrimitive {
+    float4 posSize;
+    float4 color;
+    float4 params;
+    float4 extra;
 };
 
 [[vk::binding(0, 0)]]
@@ -77,6 +84,9 @@ StructuredBuffer<CharGridCellData> charGridCells;
 [[vk::binding(8, 0)]]
 StructuredBuffer<uint> charGridIndices;
 
+[[vk::binding(9, 0)]]
+StructuredBuffer<UiPrimitive> uiPrimitives;
+
 struct VertexOutput {
     float4 position : SV_Position;
     float2 uv : TEXCOORD0;
@@ -94,6 +104,20 @@ VertexOutput vs_main(uint vertexID : SV_VertexID) {
     return output;
 }
 
+static const float THEME_CLASSIC2D = 0.0;
+static const float THEME_GLASSMORPHISM = 3.0;
+static const float LAYOUT_CENTER_X = 350.0;
+static const float LAYOUT_CENTER_Y = 398.0;
+static const float LAYOUT_PIXEL_TO_WORLD = 0.01;
+
+bool isClassicTheme() {
+    return abs(theme.extraParams.z - THEME_CLASSIC2D) < 0.5;
+}
+
+bool isGlassTheme() {
+    return abs(theme.extraParams.z - THEME_GLASSMORPHISM) < 0.5;
+}
+
 // ---- SDF primitives ----
 
 float sdBox(float3 p, float3 b) {
@@ -108,6 +132,22 @@ float sdRoundBox(float3 p, float3 b, float r) {
 
 float sdPlane(float3 p, float3 n, float h) {
     return dot(p, n) + h;
+}
+
+float sdRoundedBox2D(float2 p, float2 center, float2 halfSize, float radius) {
+    float2 d = abs(p - center) - halfSize + radius;
+    return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - radius;
+}
+
+float sdCircle2D(float2 p, float2 center, float radius) {
+    return length(p - center) - radius;
+}
+
+float sdLineSegment2D(float2 p, float2 a, float2 b) {
+    float2 pa = p - a;
+    float2 ba = b - a;
+    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
 }
 
 // ---- Hash function for glass noise ----
@@ -366,8 +406,16 @@ TextHit sdTextRelief3D(float3 p, float depth) {
     float2 gridMin = uniforms.charGridBounds.xy;
     float2 gridMax = uniforms.charGridBounds.zw;
     float aabbPadY = 0.3; // extra Y padding so raymarcher sees text slab from further away
-    float3 textBoxMin = float3(gridMin.x, -halfDepth - aabbPadY, -gridMax.y);
-    float3 textBoxMax = float3(gridMax.x, halfDepth + aabbPadY, -gridMin.y);
+    float3 textBoxMin = float3(
+        (gridMin.x - LAYOUT_CENTER_X) * LAYOUT_PIXEL_TO_WORLD,
+        -halfDepth - aabbPadY,
+        -(gridMax.y - LAYOUT_CENTER_Y) * LAYOUT_PIXEL_TO_WORLD
+    );
+    float3 textBoxMax = float3(
+        (gridMax.x - LAYOUT_CENTER_X) * LAYOUT_PIXEL_TO_WORLD,
+        halfDepth + aabbPadY,
+        -(gridMin.y - LAYOUT_CENTER_Y) * LAYOUT_PIXEL_TO_WORLD
+    );
     float3 textBoxCenter = (textBoxMin + textBoxMax) * 0.5;
     float3 textBoxHalf = (textBoxMax - textBoxMin) * 0.5;
     float textBoxDist = sdBox(p - textBoxCenter, textBoxHalf);
@@ -376,8 +424,11 @@ TextHit sdTextRelief3D(float3 p, float depth) {
         return result;
     }
 
-    // Convert 3D position to text 2D coordinates (text on XZ plane, Z negated)
-    float2 textPos = float2(p.x, -p.z);
+    // Convert scene XZ to the shared 2D TodoMVC layout pixel space (Y-up)
+    float2 textPos = float2(
+        p.x / LAYOUT_PIXEL_TO_WORLD + LAYOUT_CENTER_X,
+        -p.z / LAYOUT_PIXEL_TO_WORLD + LAYOUT_CENTER_Y
+    );
 
     // Check 3x3 neighborhood of grid cells to avoid missing chars at cell boundaries
     int2 centerCell = charGridCellCoord(textPos);
@@ -401,26 +452,27 @@ TextHit sdTextRelief3D(float3 p, float depth) {
                 CharInstanceEx ch = charInstances[charIdx];
 
                 // Glass theme: only 3D-render heading chars (flag==2), body text is decal
-                bool isGlassTheme = theme.extraParams.z == 2.0;
-                if (isGlassTheme && ch.colorFlags.w != 2.0) continue;
+                bool glassTheme = isGlassTheme();
+                if (glassTheme && ch.colorFlags.w != 2.0) continue;
 
                 float2 charPos = ch.posAndChar.xy;
-                float charScale = ch.posAndChar.z;
+                float charScalePx = ch.posAndChar.z;
+                float charScaleWorld = charScalePx * LAYOUT_PIXEL_TO_WORLD;
                 uint glyphIdx = uint(ch.posAndChar.w);
 
                 GlyphData glyph = glyphData[glyphIdx];
                 float4 bounds = glyph.bounds;
 
-                float2 localP = (textPos - charPos) / charScale;
+                float2 localP = (textPos - charPos) / charScalePx;
 
                 if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
                     localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
-                    float d2d = isGlassTheme
-                        ? sdGlyphBruteForce(localP, glyph.curveInfo) * charScale
-                        : sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScale;
+                    float d2d = glassTheme
+                        ? sdGlyphBruteForce(localP, glyph.curveInfo) * charScaleWorld
+                        : sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScaleWorld;
                     // Glass heading: subtle rounding for smooth edges
                     float roundR = 0.0;
-                    if (isGlassTheme && ch.colorFlags.w == 2.0) {
+                    if (glassTheme && ch.colorFlags.w == 2.0) {
                         roundR = 0.015;
                     }
                     float d3d = (roundR > 0.0)
@@ -460,6 +512,37 @@ Hit mapSceneCoarse(float3 p) {
     float edgeR = theme.geometryParams.x;
     float cardElev = theme.geometryParams.y;
 
+    if (isClassicTheme()) {
+        Hit ground;
+        ground.dist = sdPlane(p, float3(0, 1, 0), 0.5);
+        ground.materialId = 1;
+        ground.textColor = float3(0);
+        result = opUnionHit(result, ground);
+
+        Hit stack1;
+        float3 stack1P = p - float3(0, cardElev - 0.005, 0.04);
+        stack1.dist = sdRoundBox(stack1P, float3(CARD_W - 0.02, 0.035, CARD_D), 0.0);
+        stack1.materialId = 6;
+        stack1.textColor = float3(0);
+        result = opUnionHit(result, stack1);
+
+        Hit stack2;
+        float3 stack2P = p - float3(0, cardElev - 0.01, 0.08);
+        stack2.dist = sdRoundBox(stack2P, float3(CARD_W - 0.04, 0.03, CARD_D), 0.0);
+        stack2.materialId = 6;
+        stack2.textColor = float3(0);
+        result = opUnionHit(result, stack2);
+
+        Hit card;
+        float3 cardP = p - float3(0, cardElev, 0);
+        card.dist = sdRoundBox(cardP, float3(CARD_W, 0.04, CARD_D), 0.0);
+        card.materialId = 2;
+        card.textColor = float3(0);
+        result = opUnionHit(result, card);
+
+        return result;
+    }
+
     // Ground plane
     Hit ground;
     ground.dist = sdPlane(p, float3(0, 1, 0), 0.5);
@@ -497,6 +580,37 @@ Hit mapScene(float3 p) {
     float inputDepth = theme.geometryParams.w;
     float textReliefDepth = theme.extraParams.x;
     float textReliefMode = theme.extraParams.y;
+
+    if (isClassicTheme()) {
+        Hit ground;
+        ground.dist = sdPlane(p, float3(0, 1, 0), 0.5);
+        ground.materialId = 1;
+        ground.textColor = float3(0);
+        result = opUnionHit(result, ground);
+
+        Hit stack1;
+        float3 stack1P = p - float3(0, cardElev - 0.005, 0.04);
+        stack1.dist = sdRoundBox(stack1P, float3(CARD_W - 0.02, 0.035, CARD_D), 0.0);
+        stack1.materialId = 6;
+        stack1.textColor = float3(0);
+        result = opUnionHit(result, stack1);
+
+        Hit stack2;
+        float3 stack2P = p - float3(0, cardElev - 0.01, 0.08);
+        stack2.dist = sdRoundBox(stack2P, float3(CARD_W - 0.04, 0.03, CARD_D), 0.0);
+        stack2.materialId = 6;
+        stack2.textColor = float3(0);
+        result = opUnionHit(result, stack2);
+
+        Hit card;
+        float3 cardP = p - float3(0, cardElev, 0);
+        card.dist = sdRoundBox(cardP, float3(CARD_W, 0.04, CARD_D), 0.0);
+        card.materialId = 2;
+        card.textColor = float3(0);
+        result = opUnionHit(result, card);
+
+        return result;
+    }
 
     // Ground plane
     Hit ground;
@@ -643,6 +757,14 @@ float mapSceneGeometryDist(float3 p) {
     float itemElev = theme.geometryParams.z;
     float inputDepth = theme.geometryParams.w;
 
+    if (isClassicTheme()) {
+        result = min(result, sdPlane(p, float3(0, 1, 0), 0.5));
+        result = min(result, sdRoundBox(p - float3(0, cardElev - 0.005, 0.04), float3(CARD_W - 0.02, 0.035, CARD_D), 0.0));
+        result = min(result, sdRoundBox(p - float3(0, cardElev - 0.01, 0.08), float3(CARD_W - 0.04, 0.03, CARD_D), 0.0));
+        result = min(result, sdRoundBox(p - float3(0, cardElev, 0), float3(CARD_W, 0.04, CARD_D), 0.0));
+        return result;
+    }
+
     // Ground plane
     result = min(result, sdPlane(p, float3(0, 1, 0), 0.5));
 
@@ -787,13 +909,13 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
     }
 
     // For glassmorphism, tint ground with the position-based gradient
-    bool isGlassTheme = theme.extraParams.z == 2.0;
-    if (isGlassTheme && materialId == 1) {
+    bool glassTheme = isGlassTheme();
+    if (glassTheme && materialId == 1) {
         baseColor = lerp(baseColor, glassGradient(pos.xz), 0.90);
     }
 
     // Glass: blend base color with gradient BEFORE lighting so transparency is visible
-    bool isGlassSurface = isGlassTheme && (materialId == 2 || materialId == 3 || materialId == 5 || materialId == 6);
+    bool isGlassSurface = glassTheme && (materialId == 2 || materialId == 3 || materialId == 5 || materialId == 6);
     float3 glassBg = float3(0);
     if (isGlassSurface) {
         for (int tap = 0; tap < 3; tap++) {
@@ -812,15 +934,15 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
     float lightIntensity = uniforms.lightDirIntensity.w;
 
     float diff = max(dot(nor, lightDir), 0.0);
-    float shadowK = isGlassTheme ? 8.0 : 24.0;
-    float shadowMaxT = isGlassTheme ? 5.0 : 10.0;
+    float shadowK = glassTheme ? 8.0 : 24.0;
+    float shadowMaxT = glassTheme ? 5.0 : 10.0;
     float shadow = calcSoftShadow(pos + nor * 0.01, lightDir, 0.02, shadowMaxT, shadowK);
-    if (isGlassTheme) shadow = lerp(1.0, shadow, 0.3);
+    if (glassTheme) shadow = lerp(1.0, shadow, 0.3);
     // Glass heading: moderate shadow/AO for 3D depth
-    if (isGlassTheme && materialId == 7) shadow = lerp(1.0, shadow, 0.5);
+    if (glassTheme && materialId == 7) shadow = lerp(1.0, shadow, 0.5);
     float ao = calcAO(pos, nor);
-    if (isGlassTheme) ao = lerp(1.0, ao, 0.5);
-    if (isGlassTheme && materialId == 7) ao = lerp(1.0, ao, 0.5);
+    if (glassTheme) ao = lerp(1.0, ao, 0.5);
+    if (glassTheme && materialId == 7) ao = lerp(1.0, ao, 0.5);
 
     // Ambient
     float3 ambient = theme.ambientColor.xyz * theme.ambientColor.w;
@@ -842,7 +964,7 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
     float3 col = baseColor * lin;
 
     // Glass heading: glass pipe material with text color tint
-    if (isGlassTheme && materialId == 7) {
+    if (glassTheme && materialId == 7) {
         float3 glassBgText = float3(0);
         for (int tap = 0; tap < 3; tap++) {
             float3 jitter = hash33(pos * 31.7 + float(tap) * 17.3) * 2.0 - 1.0;
@@ -925,7 +1047,7 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
     }
 
     // Glass theme: darken ground near card edges (drop shadow)
-    if (isGlassTheme && materialId == 1) {
+    if (glassTheme && materialId == 1) {
         float2 cardDist2 = abs(pos.xz) - float2(CARD_W, CARD_D);
         float outsideDist = length(max(cardDist2, 0.0));
         float cardProximity = 1.0 - smoothstep(0.0, 0.8, outsideDist);
@@ -964,7 +1086,7 @@ float3 glassGradient(float2 worldXZ) {
 }
 
 float3 getSkyColor(float3 rd) {
-    bool isGlass = theme.extraParams.z == 2.0;
+    bool isGlass = isGlassTheme();
     if (isGlass) {
         // Project ray direction to XZ world plane for sky gradient
         float2 skyXZ = rd.xz * 3.0 / (abs(rd.y) + 0.3);
@@ -993,7 +1115,7 @@ float3 srgbToLinear(float3 c) {
         c.z <= 0.04045 ? c.z / 12.92 : pow((c.z + 0.055) / 1.055, 2.4));
 }
 
-float4 evaluateTextDecal(float2 textPos, float aaScale) {
+float4 evaluateTextDecal(float2 textPos, float aaScale, bool skipHeading) {
     float4 result = float4(0.0);
     int2 gridDims = int2(uniforms.charGridParams.xy);
     int2 centerCell = charGridCellCoord(textPos);
@@ -1010,8 +1132,7 @@ float4 evaluateTextDecal(float2 textPos, float aaScale) {
                 uint charIdx = charGridIndices[cgCell.offset + i];
                 CharInstanceEx ch = charInstances[charIdx];
 
-                // Skip heading characters (rendered as 3D glass pipe)
-                if (ch.colorFlags.w == 2.0) continue;
+                if (skipHeading && ch.colorFlags.w == 2.0) continue;
 
                 float2 charPos = ch.posAndChar.xy;
                 float charScale = ch.posAndChar.z;
@@ -1034,13 +1155,93 @@ float4 evaluateTextDecal(float2 textPos, float aaScale) {
     return result;
 }
 
+float4 renderUiPrimitives2D(float2 p, uint startIndex, uint primCount) {
+    float4 result = float4(0.0);
+
+    for (uint i = startIndex; i < primCount && i < 64u; i++) {
+        UiPrimitive prim = uiPrimitives[i];
+        float primType = prim.params.w;
+        float4 col = prim.color;
+
+        float d = 1e10;
+        float alpha = 0.0;
+
+        if (primType < 0.5) {
+            float2 center = prim.posSize.xy + prim.posSize.zw * 0.5;
+            float2 halfSize = prim.posSize.zw * 0.5;
+            float radius = prim.params.x;
+            d = sdRoundedBox2D(p, center, halfSize, radius);
+            alpha = smoothstep(0.5, -0.5, d);
+        } else if (primType < 1.5) {
+            float2 center = prim.posSize.xy + prim.posSize.zw * 0.5;
+            float2 halfSize = prim.posSize.zw * 0.5;
+            float radius = prim.params.x;
+            float borderW = prim.params.y;
+            d = sdRoundedBox2D(p, center, halfSize, radius);
+            alpha = smoothstep(0.5, -0.5, abs(d) - borderW * 0.5);
+        } else if (primType < 2.5) {
+            float2 center = prim.posSize.xy;
+            float radius = prim.posSize.z;
+            d = sdCircle2D(p, center, radius);
+            alpha = smoothstep(0.5, -0.5, d);
+        } else if (primType < 3.5) {
+            float2 center = prim.posSize.xy;
+            float radius = prim.posSize.z;
+            float borderW = prim.params.y;
+            d = sdCircle2D(p, center, radius);
+            alpha = smoothstep(0.5, -0.5, abs(d) - borderW * 0.5);
+        } else if (primType < 4.5) {
+            float2 a = prim.posSize.xy;
+            float2 b = prim.posSize.zw;
+            float lineW = prim.params.y;
+            d = sdLineSegment2D(p, a, b) - lineW * 0.5;
+            alpha = smoothstep(0.5, -0.5, d);
+        } else if (primType < 5.5) {
+            float2 center = prim.posSize.xy + prim.posSize.zw * 0.5;
+            float2 halfSize = prim.posSize.zw * 0.5;
+            float2 shadowOffset = prim.extra.xy;
+            float spread = prim.extra.z;
+            float blur = prim.params.z;
+            float radius = prim.params.x;
+            float2 shadowCenter = center + shadowOffset;
+            float2 shadowHalfSize = halfSize + spread;
+            d = sdRoundedBox2D(p, shadowCenter, shadowHalfSize, radius);
+            alpha = col.a * smoothstep(blur, -blur * 0.1, d);
+            col.a = 1.0;
+        } else if (primType < 6.5) {
+            float2 a = prim.posSize.xy;
+            float2 b = prim.posSize.zw;
+            float2 c = prim.extra.xy;
+            float lineW = prim.params.y;
+            float d1 = sdLineSegment2D(p, a, b) - lineW * 0.5;
+            float d2 = sdLineSegment2D(p, b, c) - lineW * 0.5;
+            d = min(d1, d2);
+            alpha = smoothstep(0.5, -0.5, d);
+        }
+
+        result = blendOver(result, float4(col.rgb, col.a * alpha));
+    }
+
+    return result;
+}
+
+float4 renderClassicCardDecal(float2 textPos, float aaScale) {
+    float4 color = float4(0.0);
+    uint primCount = uint(uniforms.textParams.y);
+    uint overlayStart = uint(uniforms.textParams.w);
+    color = blendOver(color, renderUiPrimitives2D(textPos, overlayStart, primCount));
+    color = blendOver(color, evaluateTextDecal(textPos, aaScale, false));
+    return color;
+}
+
 // ---- Main render ----
 
 float3 render(float3 ro, float3 rd) {
     // Reset text color globals
     g_textColor = float3(0.5);
 
-    bool isGlass = theme.extraParams.z == 2.0;
+    bool isGlass = isGlassTheme();
+    bool isClassic = isClassicTheme();
     RayHit hit = raymarch(ro, rd);
 
     float3 col;
@@ -1067,10 +1268,9 @@ float3 render(float3 ro, float3 rd) {
         col = lerp(col, getSkyColor(rd) * 0.9, fog);
     }
 
-    // Glass decal text — composited AFTER scene shading + fog
-    if (isGlass) {
+    // Card-plane decals for themes that project 2D UI onto the card surface.
+    if (isGlass || isClassic) {
         float cardElev = theme.geometryParams.y;
-        float textScale = uniforms.renderParams.w;
         float textPlaneY = cardElev + 0.04;
 
         if (abs(rd.y) > 0.001) {
@@ -1079,13 +1279,18 @@ float3 render(float3 ro, float3 rd) {
             // Visible: in front of camera AND in front of (or near) scene hit
             if (tPlane > 0.0 && (!hit.hit || tPlane < hit.t + 0.1)) {
                 float3 planePos = ro + rd * tPlane;
-                float2 textPos2D = float2(planePos.x, -planePos.z) / textScale;
+                float2 textPos2D = float2(
+                    planePos.x / LAYOUT_PIXEL_TO_WORLD + LAYOUT_CENTER_X,
+                    -planePos.z / LAYOUT_PIXEL_TO_WORLD + LAYOUT_CENTER_Y
+                );
 
                 // AA scale from pixel footprint at plane distance
                 float pixelWorldSize = tPlane * 2.0 / uniforms.renderParams.y;
-                float aaScale = pixelWorldSize / textScale;
+                float aaScale = pixelWorldSize / LAYOUT_PIXEL_TO_WORLD;
 
-                float4 decal = evaluateTextDecal(textPos2D, aaScale);
+                float4 decal = isGlass
+                    ? evaluateTextDecal(textPos2D, aaScale, true)
+                    : renderClassicCardDecal(textPos2D, aaScale);
                 if (decal.a > 0.01) {
                     // Convert sRGB text color to linear for correct blending
                     float3 textLinear = srgbToLinear(decal.rgb);

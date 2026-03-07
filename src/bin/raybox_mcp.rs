@@ -3,11 +3,11 @@
 //! Provides an MCP-compatible interface for controlling raybox demos
 //! from AI assistants like Claude.
 
-use raybox::control::{
-    Command, ErrorCode, Response, ResponseMessage, BlockingWsClient, DEFAULT_WS_PORT,
-};
+use raybox::control::{BlockingWsClient, Command, Response};
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, Write};
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// MCP request structure
 #[derive(Debug, Deserialize)]
@@ -55,6 +55,34 @@ impl McpServer {
             self.client = Some(client);
         }
         Ok(())
+    }
+
+    fn send_command(&self, command: Command) -> Result<raybox::control::ResponseMessage, String> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+        client
+            .send_command_with_timeout(command, Duration::from_secs(30))
+            .map_err(|e| format!("Command failed: {}", e))
+    }
+
+    fn wait_for_demo(&self, demo_id: u8) -> Result<(), String> {
+        let started = Instant::now();
+        loop {
+            let response = self.send_command(Command::GetStatus)?;
+            match response.response {
+                Response::Status { current_demo, .. } if current_demo == demo_id => return Ok(()),
+                Response::Status { .. } => {}
+                _ => {}
+            }
+
+            if started.elapsed() >= Duration::from_secs(30) {
+                return Err(format!("Timed out waiting for demo {}", demo_id));
+            }
+
+            thread::sleep(Duration::from_millis(100));
+        }
     }
 
     fn handle_request(&mut self, request: McpRequest) -> McpResponse {
@@ -169,13 +197,13 @@ impl McpServer {
                     },
                     {
                         "name": "set_theme",
-                        "description": "Set theme for TodoMVC 3D demo. Themes: professional, neobrutalism, glassmorphism, neumorphism",
+                        "description": "Set theme for TodoMVC 3D demo. Themes: classic2d, professional, neobrutalism, glassmorphism, neumorphism",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "theme": {
                                     "type": "string",
-                                    "description": "Theme name (professional, neobrutalism, glassmorphism, neumorphism)"
+                                    "description": "Theme name (classic2d, professional, neobrutalism, glassmorphism, neumorphism)"
                                 },
                                 "dark_mode": {
                                     "type": "boolean",
@@ -183,6 +211,36 @@ impl McpServer {
                                 }
                             },
                             "required": ["theme"]
+                        }
+                    },
+                    {
+                        "name": "capture_demo_screenshot",
+                        "description": "Switch to a demo, optionally set a TodoMVC 3D theme and reset the camera, then capture a screenshot on one stable connection.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "integer",
+                                    "description": "Demo ID (0-8)",
+                                    "minimum": 0,
+                                    "maximum": 8
+                                },
+                                "theme": {
+                                    "type": "string",
+                                    "description": "Optional TodoMVC 3D theme"
+                                },
+                                "dark_mode": {
+                                    "type": "boolean",
+                                    "description": "Optional dark mode flag"
+                                },
+                                "reset_camera": {
+                                    "type": "boolean",
+                                    "description": "Press T before capturing"
+                                },
+                                "center_crop_width": { "type": "integer", "description": "Width of centered crop region" },
+                                "center_crop_height": { "type": "integer", "description": "Height of centered crop region" }
+                            },
+                            "required": ["id"]
                         }
                     }
                 ]
@@ -220,6 +278,101 @@ impl McpServer {
                     code: -32000,
                     message: e,
                 }),
+            };
+        }
+
+        if tool_name == "capture_demo_screenshot" {
+            let demo_id = arguments.get("id").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+            let center_crop = match (
+                arguments.get("center_crop_width").and_then(|v| v.as_u64()),
+                arguments.get("center_crop_height").and_then(|v| v.as_u64()),
+            ) {
+                (Some(w), Some(h)) => Some([w as u32, h as u32]),
+                _ => None,
+            };
+
+            if let Err(e) = self.send_command(Command::SwitchDemo { id: demo_id }) {
+                return McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id.clone(),
+                    result: None,
+                    error: Some(McpError { code: -32000, message: e }),
+                };
+            }
+
+            if let Err(e) = self.wait_for_demo(demo_id) {
+                return McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id.clone(),
+                    result: None,
+                    error: Some(McpError { code: -32000, message: e }),
+                };
+            }
+
+            if let Some(theme) = arguments.get("theme").and_then(|v| v.as_str()) {
+                if let Err(e) = self.send_command(Command::SetTheme {
+                    theme: theme.to_string(),
+                    dark_mode: arguments.get("dark_mode").and_then(|v| v.as_bool()),
+                }) {
+                    return McpResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id.clone(),
+                        result: None,
+                        error: Some(McpError { code: -32000, message: e }),
+                    };
+                }
+            }
+
+            if arguments
+                .get("reset_camera")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                if let Err(e) = self.send_command(Command::PressKey {
+                    key: "T".to_string(),
+                }) {
+                    return McpResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id.clone(),
+                        result: None,
+                        error: Some(McpError { code: -32000, message: e }),
+                    };
+                }
+            }
+
+            return match self.send_command(Command::Screenshot { center_crop }) {
+                Ok(response) => {
+                    let content = match response.response {
+                        Response::Screenshot { base64, .. } => serde_json::json!({
+                            "content": [{
+                                "type": "image",
+                                "data": base64,
+                                "mimeType": "image/png"
+                            }]
+                        }),
+                        Response::Error { message, .. } => serde_json::json!({
+                            "content": [{ "type": "text", "text": format!("Error: {}", message) }],
+                            "isError": true
+                        }),
+                        other => serde_json::json!({
+                            "content": [{ "type": "text", "text": format!("Unexpected response: {:?}", other) }],
+                            "isError": true
+                        }),
+                    };
+
+                    McpResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id.clone(),
+                        result: Some(content),
+                        error: None,
+                    }
+                }
+                Err(e) => McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id.clone(),
+                    result: None,
+                    error: Some(McpError { code: -32000, message: e }),
+                },
             };
         }
 
@@ -272,8 +425,7 @@ impl McpServer {
         };
 
         // Send command to demo app
-        let client = self.client.as_ref().unwrap();
-        match client.send_command(command) {
+        match self.send_command(command) {
             Ok(response) => {
                 let content = match response.response {
                     Response::Success { data } => {
@@ -293,7 +445,7 @@ impl McpServer {
                             }]
                         })
                     }
-                    Response::Screenshot { base64, width, height } => {
+                    Response::Screenshot { base64, .. } => {
                         serde_json::json!({
                             "content": [{
                                 "type": "image",
@@ -328,7 +480,7 @@ impl McpServer {
                 result: None,
                 error: Some(McpError {
                     code: -32000,
-                    message: format!("Command failed: {}", e),
+                    message: e,
                 }),
             },
         }

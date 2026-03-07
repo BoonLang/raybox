@@ -139,6 +139,7 @@ async fn handle_connection(
     // Clean up
     send_task.abort();
     if let Ok(mut s) = state.write() {
+        s.clear_queues();
         s.set_connected(false);
     }
 

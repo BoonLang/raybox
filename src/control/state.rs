@@ -59,6 +59,12 @@ impl ControlState {
         !self.pending_responses.is_empty()
     }
 
+    /// Drop stale queued commands/responses left behind by disconnected clients.
+    pub fn clear_queues(&mut self) {
+        self.pending_commands.clear();
+        self.pending_responses.clear();
+    }
+
     /// Set connection status
     pub fn set_connected(&mut self, connected: bool) {
         self.connected = connected;

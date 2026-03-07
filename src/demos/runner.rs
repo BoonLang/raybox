@@ -145,6 +145,7 @@ impl DemoRunner {
             surface_format,
             width: WIDTH,
             height: HEIGHT,
+            scale_factor: window.scale_factor() as f32,
         };
 
         // Create initial demo
@@ -345,6 +346,7 @@ impl DemoRunner {
             surface_format: self.config.format,
             width: self.config.width,
             height: self.config.height,
+            scale_factor: self.window.scale_factor() as f32,
         };
 
         let new_demo = create_demo(new_id, &ctx)?;
@@ -371,6 +373,7 @@ impl DemoRunner {
         self.last_frame_time = now;
 
         self.input.update_frame_time(dt);
+        self.sync_todomvc3d_scale_factor();
 
         // Process control commands
         #[cfg(feature = "control")]
@@ -540,7 +543,7 @@ impl DemoRunner {
                     }
                 } else {
                     ResponseMessage::error(id, ErrorCode::InvalidTheme,
-                        format!("Invalid theme: {}. Valid: professional, neobrutalism, glassmorphism, neumorphism", theme))
+                        format!("Invalid theme: {}. Valid: classic2d, professional, neobrutalism, glassmorphism, neumorphism", theme))
                 }
             }
             Command::Ping => {
@@ -924,7 +927,22 @@ impl DemoRunner {
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
             self.current_demo.resize(new_size.width, new_size.height);
+            self.sync_todomvc3d_scale_factor();
             self.overlay.resize(new_size.width, new_size.height);
+        }
+    }
+
+    fn sync_todomvc3d_scale_factor(&mut self) {
+        if self.current_demo_id != DemoId::TodoMvc3D {
+            return;
+        }
+
+        if let Some(demo) = self
+            .current_demo
+            .as_any_mut()
+            .downcast_mut::<super::todomvc_3d::TodoMvc3DDemo>()
+        {
+            demo.set_scale_factor(self.window.scale_factor() as f32);
         }
     }
 

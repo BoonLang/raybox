@@ -12,6 +12,7 @@ pub mod clay;
 pub mod text_shadow;
 pub mod todomvc;
 pub mod todomvc_3d;
+pub mod todomvc_common;
 pub mod runner;
 
 // Re-export from demo_core for backward compatibility

@@ -1,0 +1,39 @@
+# TodoMVC Classic2D Worklog
+
+## 2026-03-07
+- Created the persistent plan/worklog directory requested by the user.
+- Confirmed the accidental `screenshot.png` artifact was removed and the JJ workspace was clean before continuing.
+- Confirmed demo 7 must not be changed; all remaining implementation work will be demo-8-only.
+- Added a new shared helper module scaffold at `src/demos/todomvc_common.rs` plus module registration in `src/demos/mod.rs` for demo-8-side reuse.
+- Wired demo 8 to the new `Classic2D` theme and added the dedicated shader branch without modifying demo 7.
+- Found two concrete verification issues during screenshot review: the Classic2D branch was vertically inverted, and the fixed-size 700px mapping made the layout render as a tiny centered slab on large framebuffers.
+- Fixed the Classic2D viewport-fit path and corrected the Y mapping after confirming demo 8 uses a different fullscreen-triangle UV convention than demo 7.
+- Hardened the control path:
+  - request IDs are now process-unique enough to avoid cross-invocation collisions,
+  - the control server clears stale queued commands/responses on disconnect,
+  - `raybox-ctl` now supports `--timeout-ms` plus a stable `capture-demo` compound command,
+  - `raybox-mcp` now exposes `capture_demo_screenshot` for the same one-connection workflow.
+- Verification status:
+  - `raybox-ctl screenshot` is working reliably again for demo 8.
+  - `Classic2D` now renders upright and visually close to `assets/todomvc/reference_screenshot.png`.
+  - Existing 3D themes still render after the shared text/layout refactor; `Professional` was rechecked visually.
+  - The new one-connection `capture-demo` flow can capture both demo 7 and demo 8; demo 7 still uses its legacy fixed-size letterboxed presentation, so the most useful fidelity target for Classic2D remains the checked-in 2D reference screenshot rather than the full-window demo-7 capture.
+- Updated the plan after the user requested web-like font sizing without stretch:
+  - `Classic2D` should behave like a responsive web page, not a strict letterboxed 700px slab,
+  - canonical layout metrics stay fixed in CSS-like units,
+  - the scene should only scale down on smaller windows and should not upscale past the reference/web size.
+- Implemented the responsive/downscale-only Classic2D path:
+  - window scale factor is now passed through demo creation/runtime updates into demo 8,
+  - the Classic2D shader now lays out in logical/CSS-like pixels instead of raw framebuffer pixels,
+  - the page is horizontally centered, top-anchored, and full-bleed on the TodoMVC background color,
+  - no non-uniform stretch is used.
+- Fixed a follow-up anchoring bug in that responsive path: because the shared TodoMVC coordinates are Y-up, the first pass accidentally anchored from the bottom instead of the top.
+- Final verification on 2026-03-07:
+  - `raybox-ctl --timeout-ms 60000 capture-demo 7 ...` works.
+  - `raybox-ctl --timeout-ms 60000 capture-demo 8 --theme classic2d --reset-camera ...` works.
+  - `Classic2D` is upright, full-bleed, responsive, and keeps the canonical TodoMVC proportions.
+  - `Professional` was rechecked after the shared control/runtime changes and still renders.
+- Manual test follow-up:
+  - `Classic2D` had lost visible camera response because it was rendering through a pure screen-space shortcut.
+  - The theme now renders as a simplified 3D card scene with the TodoMVC UI projected onto the card surface as a decal layer.
+  - Verified by capturing the reset view and a moved-camera view from the same running demo; the images differ, so camera motion is affecting Classic2D again.

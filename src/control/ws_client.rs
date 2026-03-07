@@ -6,6 +6,8 @@ use super::protocol::{Command, Request, ResponseMessage, DEFAULT_WS_PORT};
 use futures_util::{SinkExt, StreamExt};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::time::Duration;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -13,7 +15,12 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 fn next_request_id() -> u64 {
-    REQUEST_ID.fetch_add(1, Ordering::SeqCst)
+    let counter = REQUEST_ID.fetch_add(1, Ordering::Relaxed) & 0xffff;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    now.wrapping_shl(16) ^ counter
 }
 
 /// WebSocket client for connecting to the control server
@@ -78,6 +85,15 @@ impl WsClient {
 
     /// Send a command and wait for response
     pub async fn send_command(&self, command: Command) -> anyhow::Result<ResponseMessage> {
+        self.send_command_with_timeout(command, Duration::from_secs(10)).await
+    }
+
+    /// Send a command and wait for response with an explicit timeout
+    pub async fn send_command_with_timeout(
+        &self,
+        command: Command,
+        timeout: Duration,
+    ) -> anyhow::Result<ResponseMessage> {
         let id = next_request_id();
         let request = Request::new(id, command);
         let json = serde_json::to_string(&request)?;
@@ -93,11 +109,7 @@ impl WsClient {
         self.write_tx.send(Message::Text(json.into())).await?;
 
         // Wait for response with timeout
-        let response = tokio::time::timeout(
-            tokio::time::Duration::from_secs(10),
-            rx,
-        )
-        .await??;
+        let response = tokio::time::timeout(timeout, rx).await??;
 
         Ok(response)
     }
@@ -144,6 +156,17 @@ impl BlockingWsClient {
     pub fn send_command(&self, command: Command) -> anyhow::Result<ResponseMessage> {
         let client = self.client.as_ref().ok_or_else(|| anyhow::anyhow!("Not connected"))?;
         self.runtime.block_on(client.send_command(command))
+    }
+
+    /// Send a command and wait for response with an explicit timeout
+    pub fn send_command_with_timeout(
+        &self,
+        command: Command,
+        timeout: Duration,
+    ) -> anyhow::Result<ResponseMessage> {
+        let client = self.client.as_ref().ok_or_else(|| anyhow::anyhow!("Not connected"))?;
+        self.runtime
+            .block_on(client.send_command_with_timeout(command, timeout))
     }
 }
 
