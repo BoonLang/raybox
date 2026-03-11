@@ -7,8 +7,8 @@ use futures_util::{SinkExt, StreamExt};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::time::Duration;
 use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::time::Duration;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 /// Request ID counter
@@ -42,9 +42,10 @@ impl WsClient {
         let (write_tx, mut write_rx) = mpsc::channel::<Message>(32);
 
         // Pending requests waiting for responses
-        let pending_requests = Arc::new(RwLock::new(
-            std::collections::HashMap::<u64, oneshot::Sender<ResponseMessage>>::new(),
-        ));
+        let pending_requests = Arc::new(RwLock::new(std::collections::HashMap::<
+            u64,
+            oneshot::Sender<ResponseMessage>,
+        >::new()));
 
         // Spawn write task
         let _write_task = tokio::spawn(async move {
@@ -85,7 +86,8 @@ impl WsClient {
 
     /// Send a command and wait for response
     pub async fn send_command(&self, command: Command) -> anyhow::Result<ResponseMessage> {
-        self.send_command_with_timeout(command, Duration::from_secs(10)).await
+        self.send_command_with_timeout(command, Duration::from_secs(10))
+            .await
     }
 
     /// Send a command and wait for response with an explicit timeout
@@ -154,7 +156,10 @@ impl BlockingWsClient {
 
     /// Send a command and wait for response
     pub fn send_command(&self, command: Command) -> anyhow::Result<ResponseMessage> {
-        let client = self.client.as_ref().ok_or_else(|| anyhow::anyhow!("Not connected"))?;
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Not connected"))?;
         self.runtime.block_on(client.send_command(command))
     }
 
@@ -164,7 +169,10 @@ impl BlockingWsClient {
         command: Command,
         timeout: Duration,
     ) -> anyhow::Result<ResponseMessage> {
-        let client = self.client.as_ref().ok_or_else(|| anyhow::anyhow!("Not connected"))?;
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Not connected"))?;
         self.runtime
             .block_on(client.send_command_with_timeout(command, timeout))
     }

@@ -3,9 +3,7 @@
 //! Watches source files and shaders, rebuilds automatically,
 //! and notifies connected demo apps to reload.
 
-use raybox::control::{
-    broadcast_event, Event, WsServer, DEFAULT_WS_PORT,
-};
+use raybox::control::{broadcast_event, Event, WsServer, DEFAULT_WS_PORT};
 use raybox::hot_reload::{BuildMode, Builder, FileChange, FileWatcher, WatcherConfig};
 use std::env;
 use std::process::{Child, Command as ProcessCommand, Stdio};
@@ -20,7 +18,10 @@ struct DevServer {
 }
 
 impl DevServer {
-    fn new(build_mode: BuildMode, event_tx: broadcast::Sender<raybox::control::EventMessage>) -> anyhow::Result<Self> {
+    fn new(
+        build_mode: BuildMode,
+        event_tx: broadcast::Sender<raybox::control::EventMessage>,
+    ) -> anyhow::Result<Self> {
         let builder = Builder::new(".");
         let watcher = FileWatcher::new(WatcherConfig::default())?;
 
@@ -37,13 +38,19 @@ impl DevServer {
         log::info!("Starting demo process...");
 
         let child = match self.build_mode {
-            BuildMode::Native => {
-                ProcessCommand::new("cargo")
-                    .args(["run", "--bin", "demos", "--features", "windowed,control", "--", "--control"])
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
-                    .spawn()?
-            }
+            BuildMode::Native => ProcessCommand::new("cargo")
+                .args([
+                    "run",
+                    "--bin",
+                    "demos",
+                    "--features",
+                    "windowed,control",
+                    "--",
+                    "--control",
+                ])
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()?,
             BuildMode::Web => {
                 // For web mode, start the miniserve server
                 ProcessCommand::new("miniserve")
@@ -110,10 +117,13 @@ impl DevServer {
             log::info!("Build succeeded in {:.2}s", result.duration.as_secs_f32());
 
             // Broadcast success
-            broadcast_event(&self.event_tx, Event::BuildCompleted {
-                success: true,
-                error: None,
-            });
+            broadcast_event(
+                &self.event_tx,
+                Event::BuildCompleted {
+                    success: true,
+                    error: None,
+                },
+            );
 
             // Restart demo for Rust changes
             if has_rust {
@@ -132,9 +142,12 @@ impl DevServer {
             // For shader changes, broadcast reload event
             if has_shader {
                 for shader in FileWatcher::changed_shaders(&changes) {
-                    broadcast_event(&self.event_tx, Event::ShaderReloaded {
-                        shader_name: shader,
-                    });
+                    broadcast_event(
+                        &self.event_tx,
+                        Event::ShaderReloaded {
+                            shader_name: shader,
+                        },
+                    );
                 }
                 // Also broadcast WASM reload for web mode shader changes
                 if self.build_mode == BuildMode::Web {
@@ -145,10 +158,13 @@ impl DevServer {
             log::error!("Build failed:\n{}", result.stderr);
 
             // Broadcast failure
-            broadcast_event(&self.event_tx, Event::BuildCompleted {
-                success: false,
-                error: Some(result.stderr),
-            });
+            broadcast_event(
+                &self.event_tx,
+                Event::BuildCompleted {
+                    success: false,
+                    error: Some(result.stderr),
+                },
+            );
         }
 
         Ok(())
@@ -157,9 +173,7 @@ impl DevServer {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info")
-    ).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let args: Vec<String> = env::args().collect();
     let build_mode = if args.contains(&"--web".to_string()) {
@@ -168,7 +182,10 @@ async fn main() -> anyhow::Result<()> {
         BuildMode::Native
     };
 
-    log::info!("Starting raybox development server (mode: {:?})", build_mode);
+    log::info!(
+        "Starting raybox development server (mode: {:?})",
+        build_mode
+    );
 
     // Create WebSocket server for event broadcasting
     let ws_server = WsServer::new();
@@ -203,7 +220,10 @@ async fn main() -> anyhow::Result<()> {
         log::error!("Initial build failed:\n{}", result.stderr);
         return Ok(());
     }
-    log::info!("Initial build succeeded in {:.2}s", result.duration.as_secs_f32());
+    log::info!(
+        "Initial build succeeded in {:.2}s",
+        result.duration.as_secs_f32()
+    );
 
     // Start demo process
     dev_server.start_demo()?;

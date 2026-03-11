@@ -3,6 +3,7 @@
 //! Simple command-line interface to control running raybox demos.
 
 use raybox::control::{BlockingWsClient, Command, Response};
+use raybox::demo_core::DemoId;
 use std::env;
 use std::fs;
 use std::thread;
@@ -13,13 +14,24 @@ fn print_usage() {
     eprintln!();
     eprintln!("Commands:");
     eprintln!("  status                  Get current demo status");
-    eprintln!("  switch <id>             Switch to demo (0-8)");
+    eprintln!("  switch <id>             Switch to demo (0-11)");
     eprintln!("  screenshot [--output <path>] [--crop WxH]  Take screenshot");
     eprintln!("  capture-demo <id> [--theme <name>] [--dark] [--reset-camera] [--output <path>] [--crop WxH] [--settle-ms <ms>]");
     eprintln!("                          Switch, optionally theme/reset, then take screenshot on one connection");
     eprintln!("  camera <x> <y> <z>      Set camera position");
     eprintln!("  pressKey <key>          Simulate key press (e.g. T, R)");
     eprintln!("  theme <name> [--dark]   Set theme (classic2d, professional, neobrutalism, glassmorphism, neumorphism)");
+    eprintln!("  list-toggle <index>     Toggle an item in a list-style retained scene");
+    eprintln!("  list-complete <index> <on|off>  Set a list item completion state");
+    eprintln!("  list-label <index> <text...>    Set a list item label");
+    eprintln!("  list-filter <name>      Set a list filter (all, active, completed)");
+    eprintln!("  list-scroll <offset-y>  Set a list scroll offset");
+    eprintln!("  todo-toggle <index>     Compatibility alias for list-toggle");
+    eprintln!("  todo-complete <index> <on|off>  Compatibility alias for list-complete");
+    eprintln!("  todo-label <index> <text...>    Compatibility alias for list-label");
+    eprintln!("  todo-filter <name>      Compatibility alias for list-filter");
+    eprintln!("  todo-scroll <offset-y>  Compatibility alias for list-scroll");
+    eprintln!("  scroll <name> <offset-y>  Set a named retained scroll root offset");
     eprintln!("  reload                  Reload shaders");
     eprintln!("  ping                    Test connection");
     eprintln!();
@@ -36,6 +48,9 @@ fn print_usage() {
     eprintln!("  6 = Text Shadow");
     eprintln!("  7 = TodoMVC");
     eprintln!("  8 = TodoMVC 3D");
+    eprintln!("  9 = Retained UI");
+    eprintln!("  10 = Retained UI Physical");
+    eprintln!("  11 = Text Physical");
 }
 
 fn parse_flag_value(args: &[String], names: &[&str]) -> Option<String> {
@@ -107,6 +122,7 @@ fn print_response(response: raybox::control::ResponseMessage, screenshot_output_
         Response::Status {
             current_demo,
             demo_name,
+            demo_family,
             camera_position,
             camera_yaw,
             camera_pitch,
@@ -116,6 +132,7 @@ fn print_response(response: raybox::control::ResponseMessage, screenshot_output_
             show_keybindings,
         } => {
             println!("Demo: {} ({})", demo_name, current_demo);
+            println!("Family: {}", demo_family);
             println!(
                 "Camera Position: [{:.2}, {:.2}, {:.2}]",
                 camera_position[0], camera_position[1], camera_position[2]
@@ -193,9 +210,9 @@ fn handle_capture_demo(
     }
 
     let demo_id: u8 = match args[command_idx + 1].parse() {
-        Ok(id) if id <= 8 => id,
+        Ok(id) if DemoId::from_u8(id).is_some() => id,
         _ => {
-            eprintln!("Invalid demo ID. Must be 0-8.");
+            eprintln!("Invalid demo ID. Must be 0-11.");
             std::process::exit(1);
         }
     };
@@ -281,7 +298,10 @@ fn main() {
     };
 
     if let Err(e) = client.connect_local() {
-        eprintln!("Failed to connect to raybox (is it running with --control?): {}", e);
+        eprintln!(
+            "Failed to connect to raybox (is it running with --control?): {}",
+            e
+        );
         std::process::exit(1);
     }
 
@@ -298,9 +318,9 @@ fn main() {
                 std::process::exit(1);
             }
             let id: u8 = match args[command_idx + 1].parse() {
-                Ok(id) if id <= 8 => id,
+                Ok(id) if DemoId::from_u8(id).is_some() => id,
                 _ => {
-                    eprintln!("Invalid demo ID. Must be 0-8.");
+                    eprintln!("Invalid demo ID. Must be 0-11.");
                     std::process::exit(1);
                 }
             };
@@ -347,6 +367,110 @@ fn main() {
                 theme: args[command_idx + 1].clone(),
                 dark_mode,
             }
+        }
+        "todo-toggle" | "list-toggle" => {
+            if args.len() <= command_idx + 1 {
+                eprintln!("Usage: raybox-ctl {} <index>", command);
+                std::process::exit(1);
+            }
+            let index: u32 = match args[command_idx + 1].parse() {
+                Ok(index) => index,
+                Err(_) => {
+                    eprintln!("Invalid list item index.");
+                    std::process::exit(1);
+                }
+            };
+            Command::SetListItem {
+                index,
+                completed: None,
+                label: None,
+                toggle: true,
+            }
+        }
+        "todo-complete" | "list-complete" => {
+            if args.len() <= command_idx + 2 {
+                eprintln!("Usage: raybox-ctl {} <index> <on|off>", command);
+                std::process::exit(1);
+            }
+            let index: u32 = match args[command_idx + 1].parse() {
+                Ok(index) => index,
+                Err(_) => {
+                    eprintln!("Invalid list item index.");
+                    std::process::exit(1);
+                }
+            };
+            let completed = match args[command_idx + 2].to_ascii_lowercase().as_str() {
+                "on" | "true" | "1" | "yes" => true,
+                "off" | "false" | "0" | "no" => false,
+                _ => {
+                    eprintln!("Completion must be on or off.");
+                    std::process::exit(1);
+                }
+            };
+            Command::SetListItem {
+                index,
+                completed: Some(completed),
+                label: None,
+                toggle: false,
+            }
+        }
+        "todo-label" | "list-label" => {
+            if args.len() <= command_idx + 2 {
+                eprintln!("Usage: raybox-ctl {} <index> <text...>", command);
+                std::process::exit(1);
+            }
+            let index: u32 = match args[command_idx + 1].parse() {
+                Ok(index) => index,
+                Err(_) => {
+                    eprintln!("Invalid list item index.");
+                    std::process::exit(1);
+                }
+            };
+            let label = args[command_idx + 2..].join(" ");
+            Command::SetListItem {
+                index,
+                completed: None,
+                label: Some(label),
+                toggle: false,
+            }
+        }
+        "todo-filter" | "list-filter" => {
+            if args.len() <= command_idx + 1 {
+                eprintln!("Usage: raybox-ctl {} <all|active|completed>", command);
+                std::process::exit(1);
+            }
+            Command::SetListFilter {
+                filter: args[command_idx + 1].clone(),
+            }
+        }
+        "todo-scroll" | "list-scroll" => {
+            if args.len() <= command_idx + 1 {
+                eprintln!("Usage: raybox-ctl {} <offset-y>", command);
+                std::process::exit(1);
+            }
+            let offset_y: f32 = match args[command_idx + 1].parse() {
+                Ok(offset_y) => offset_y,
+                Err(_) => {
+                    eprintln!("Invalid scroll offset.");
+                    std::process::exit(1);
+                }
+            };
+            Command::SetListScroll { offset_y }
+        }
+        "scroll" => {
+            if args.len() <= command_idx + 2 {
+                eprintln!("Usage: raybox-ctl scroll <name> <offset-y>");
+                std::process::exit(1);
+            }
+            let name = args[command_idx + 1].clone();
+            let offset_y: f32 = match args[command_idx + 2].parse() {
+                Ok(offset_y) => offset_y,
+                Err(_) => {
+                    eprintln!("Invalid scroll offset.");
+                    std::process::exit(1);
+                }
+            };
+            Command::SetNamedScroll { name, offset_y }
         }
         "reload" => Command::ReloadShaders,
         "ping" => Command::Ping,

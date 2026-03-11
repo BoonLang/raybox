@@ -19,7 +19,29 @@ pub enum WebCommand {
         yaw: Option<f32>,
         pitch: Option<f32>,
     },
-    Screenshot,
+    SetTheme {
+        theme: String,
+        dark_mode: Option<bool>,
+    },
+    SetListItem {
+        index: u32,
+        completed: Option<bool>,
+        label: Option<String>,
+        toggle: bool,
+    },
+    SetListFilter {
+        filter: String,
+    },
+    SetListScroll {
+        offset_y: f32,
+    },
+    SetNamedScroll {
+        name: String,
+        offset_y: f32,
+    },
+    Screenshot {
+        center_crop: Option<[u32; 2]>,
+    },
     GetStatus,
     ToggleOverlay(String),
     PressKey(String),
@@ -172,7 +194,13 @@ fn parse_command(json: &str) -> Option<(u64, WebCommand)> {
     let value: serde_json::Value = serde_json::from_str(json).ok()?;
     let id = value.get("id")?.as_u64()?;
     let command = value.get("command")?;
-    let cmd_type = command.get("type")?.as_str()?;
+    let raw_cmd_type = command.get("type")?.as_str()?;
+    let cmd_type = match raw_cmd_type {
+        "setTodoItem" => "setListItem",
+        "setTodoFilter" => "setListFilter",
+        "setTodoScroll" => "setListScroll",
+        other => other,
+    };
 
     let cmd = match cmd_type {
         "switchDemo" => {
@@ -192,11 +220,66 @@ fn parse_command(json: &str) -> Option<(u64, WebCommand)> {
                     None
                 }
             });
-            let yaw = command.get("yaw").and_then(|v| v.as_f64()).map(|v| v as f32);
-            let pitch = command.get("pitch").and_then(|v| v.as_f64()).map(|v| v as f32);
-            WebCommand::SetCamera { position, yaw, pitch }
+            let yaw = command
+                .get("yaw")
+                .and_then(|v| v.as_f64())
+                .map(|v| v as f32);
+            let pitch = command
+                .get("pitch")
+                .and_then(|v| v.as_f64())
+                .map(|v| v as f32);
+            WebCommand::SetCamera {
+                position,
+                yaw,
+                pitch,
+            }
         }
-        "screenshot" => WebCommand::Screenshot,
+        "setListItem" => {
+            let index = command.get("index")?.as_u64()? as u32;
+            let completed = command.get("completed").and_then(|v| v.as_bool());
+            let label = command
+                .get("label")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let toggle = command
+                .get("toggle")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            WebCommand::SetListItem {
+                index,
+                completed,
+                label,
+                toggle,
+            }
+        }
+        "setTheme" => {
+            let theme = command.get("theme")?.as_str()?.to_string();
+            let dark_mode = command.get("darkMode").and_then(|v| v.as_bool());
+            WebCommand::SetTheme { theme, dark_mode }
+        }
+        "setListFilter" => {
+            let filter = command.get("filter")?.as_str()?.to_string();
+            WebCommand::SetListFilter { filter }
+        }
+        "setListScroll" => {
+            let offset_y = command.get("offsetY")?.as_f64()? as f32;
+            WebCommand::SetListScroll { offset_y }
+        }
+        "setNamedScroll" => {
+            let name = command.get("name")?.as_str()?.to_string();
+            let offset_y = command.get("offsetY")?.as_f64()? as f32;
+            WebCommand::SetNamedScroll { name, offset_y }
+        }
+        "screenshot" => {
+            let center_crop = command.get("centerCrop").and_then(|crop| {
+                let arr = crop.as_array()?;
+                if arr.len() != 2 {
+                    return None;
+                }
+                Some([arr[0].as_u64()? as u32, arr[1].as_u64()? as u32])
+            });
+            WebCommand::Screenshot { center_crop }
+        }
         "getStatus" => WebCommand::GetStatus,
         "toggleOverlay" => {
             let mode = command.get("mode")?.as_str()?.to_string();
@@ -217,9 +300,15 @@ fn parse_command(json: &str) -> Option<(u64, WebCommand)> {
 /// Create a JSON response
 pub fn create_response(id: u64, response_type: &str, data: Option<&str>) -> WebResponse {
     let json = if let Some(d) = data {
-        format!(r#"{{"id":{},"response":{{"type":"{}",{}}}}}"#, id, response_type, d)
+        format!(
+            r#"{{"id":{},"response":{{"type":"{}",{}}}}}"#,
+            id, response_type, d
+        )
     } else {
-        format!(r#"{{"id":{},"response":{{"type":"{}"}}}}"#, id, response_type)
+        format!(
+            r#"{{"id":{},"response":{{"type":"{}"}}}}"#,
+            id, response_type
+        )
     };
     WebResponse { id, data: json }
 }
@@ -227,7 +316,10 @@ pub fn create_response(id: u64, response_type: &str, data: Option<&str>) -> WebR
 /// Create a success response
 pub fn success_response(id: u64, data: Option<&str>) -> WebResponse {
     let json = if let Some(d) = data {
-        format!(r#"{{"id":{},"response":{{"type":"success","data":{}}}}}"#, id, d)
+        format!(
+            r#"{{"id":{},"response":{{"type":"success","data":{}}}}}"#,
+            id, d
+        )
     } else {
         format!(r#"{{"id":{},"response":{{"type":"success"}}}}"#, id)
     };
@@ -248,16 +340,24 @@ pub fn status_response(
     id: u64,
     current_demo: u8,
     demo_name: &str,
+    demo_family: &str,
     camera_pos: [f32; 3],
     fps: f32,
     overlay_mode: &str,
     show_keybindings: bool,
 ) -> WebResponse {
     let json = format!(
-        r#"{{"id":{},"response":{{"type":"status","currentDemo":{},"demoName":"{}","cameraPosition":[{},{},{}],"fps":{},"overlayMode":"{}","showKeybindings":{}}}}}"#,
-        id, current_demo, demo_name,
-        camera_pos[0], camera_pos[1], camera_pos[2],
-        fps, overlay_mode, show_keybindings
+        r#"{{"id":{},"response":{{"type":"status","currentDemo":{},"demoName":"{}","demoFamily":"{}","cameraPosition":[{},{},{}],"fps":{},"overlayMode":"{}","showKeybindings":{}}}}}"#,
+        id,
+        current_demo,
+        demo_name,
+        demo_family,
+        camera_pos[0],
+        camera_pos[1],
+        camera_pos[2],
+        fps,
+        overlay_mode,
+        show_keybindings
     );
     WebResponse { id, data: json }
 }

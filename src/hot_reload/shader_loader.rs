@@ -43,11 +43,16 @@ impl ShaderLoader {
         let result = Command::new("slangc")
             .args([
                 &input_path,
-                "-profile", "wgsl",
-                "-target", "wgsl",
-                "-o", &output_path,
-                "-entry", "vs_main",
-                "-entry", "fs_main",
+                "-profile",
+                "wgsl",
+                "-target",
+                "wgsl",
+                "-o",
+                &output_path,
+                "-entry",
+                "vs_main",
+                "-entry",
+                "fs_main",
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -107,7 +112,9 @@ impl ShaderLoader {
         let result = self.compile_shader(shader_name);
 
         if !result.success {
-            return Err(result.error.unwrap_or_else(|| "Unknown compilation error".to_string()));
+            return Err(result
+                .error
+                .unwrap_or_else(|| "Unknown compilation error".to_string()));
         }
 
         let wgsl = result.wgsl_source.ok_or("No WGSL source produced")?;

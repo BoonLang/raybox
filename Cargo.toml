@@ -26,6 +26,36 @@ name = "raybox-dev"
 path = "src/bin/raybox_dev.rs"
 required-features = ["hot-reload"]
 
+[[example]]
+name = "demo_clay"
+path = "examples/demo_clay.rs"
+required-features = ["windowed"]
+
+[[example]]
+name = "demo_objects"
+path = "examples/demo_objects.rs"
+required-features = ["windowed"]
+
+[[example]]
+name = "demo_spheres"
+path = "examples/demo_spheres.rs"
+required-features = ["windowed"]
+
+[[example]]
+name = "demo_text2d"
+path = "examples/demo_text2d.rs"
+required-features = ["windowed"]
+
+[[example]]
+name = "demo_text_shadow"
+path = "examples/demo_text_shadow.rs"
+required-features = ["windowed"]
+
+[[example]]
+name = "demo_towers"
+path = "examples/demo_towers.rs"
+required-features = ["windowed"]
+
 [dependencies]
 wgpu = "25"
 bytemuck = { version = "1.14", features = ["derive"] }
@@ -87,7 +117,7 @@ wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
 console_log = { version = "1.0", features = ["color"] }
 web-sys = { version = "0.3", features = [
-    "Document", "Window", "HtmlCanvasElement", "Element",
+    "Document", "Window", "HtmlCanvasElement", "CanvasRenderingContext2d", "Element",
     "KeyboardEvent", "Performance", "Location",
     "WebSocket", "BinaryType", "CloseEvent", "ErrorEvent", "MessageEvent"
 ] }

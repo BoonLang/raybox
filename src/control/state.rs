@@ -5,6 +5,7 @@
 use super::protocol::{Command, Response, ResponseMessage};
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
+use tokio::sync::Notify;
 
 /// Pending command with response channel info
 #[derive(Debug)]
@@ -14,7 +15,7 @@ pub struct PendingCommand {
 }
 
 /// Control state shared between WebSocket server and demo app
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ControlState {
     /// Pending commands to be processed by the demo app
     pending_commands: VecDeque<PendingCommand>,
@@ -22,6 +23,8 @@ pub struct ControlState {
     pending_responses: VecDeque<ResponseMessage>,
     /// Whether a client is connected
     connected: bool,
+    /// Notifies WebSocket tasks that a new response is ready to send.
+    response_notify: Arc<Notify>,
 }
 
 impl ControlState {
@@ -31,7 +34,8 @@ impl ControlState {
 
     /// Add a command to be processed
     pub fn push_command(&mut self, id: u64, command: Command) {
-        self.pending_commands.push_back(PendingCommand { id, command });
+        self.pending_commands
+            .push_back(PendingCommand { id, command });
     }
 
     /// Take the next pending command (if any)
@@ -47,6 +51,7 @@ impl ControlState {
     /// Add a response to be sent
     pub fn push_response(&mut self, response: ResponseMessage) {
         self.pending_responses.push_back(response);
+        self.response_notify.notify_one();
     }
 
     /// Take the next pending response (if any)
@@ -74,6 +79,11 @@ impl ControlState {
     pub fn is_connected(&self) -> bool {
         self.connected
     }
+
+    /// Shared notifier used by WebSocket tasks waiting for responses.
+    pub fn response_notify(&self) -> Arc<Notify> {
+        Arc::clone(&self.response_notify)
+    }
 }
 
 /// Thread-safe wrapper for ControlState
@@ -89,6 +99,7 @@ pub fn new_shared_state() -> SharedControlState {
 pub struct AppStatus {
     pub current_demo: u8,
     pub demo_name: String,
+    pub demo_family: String,
     pub camera_position: [f32; 3],
     pub camera_yaw: f32,
     pub camera_pitch: f32,
@@ -103,6 +114,7 @@ impl AppStatus {
         Response::Status {
             current_demo: self.current_demo,
             demo_name: self.demo_name.clone(),
+            demo_family: self.demo_family.clone(),
             camera_position: self.camera_position,
             camera_yaw: self.camera_yaw,
             camera_pitch: self.camera_pitch,

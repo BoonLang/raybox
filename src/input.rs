@@ -52,16 +52,16 @@ pub struct SystemMonitor {
     system: System,
     pid: Pid,
     os_pid: u32,
-    cpu_usage_app: f32,                 // This app's CPU usage %
-    cpu_usage_system: f32,              // System-wide CPU usage %
-    ram_usage_app_mb: f32,              // This app's RAM usage
-    ram_usage_system_mb: u64,           // System-wide RAM usage
-    ram_total_mb: u64,                  // Total system RAM
-    gpu_usage_app: Option<u32>,         // This app's GPU SM utilization %
-    gpu_usage_system: Option<u32>,      // System-wide GPU utilization %
-    vram_usage_app_mb: Option<u64>,     // This app's VRAM usage
-    vram_usage_system_mb: Option<u64>,  // System-wide VRAM usage
-    vram_total_mb: Option<u64>,         // Total VRAM available
+    cpu_usage_app: f32,                // This app's CPU usage %
+    cpu_usage_system: f32,             // System-wide CPU usage %
+    ram_usage_app_mb: f32,             // This app's RAM usage
+    ram_usage_system_mb: u64,          // System-wide RAM usage
+    ram_total_mb: u64,                 // Total system RAM
+    gpu_usage_app: Option<u32>,        // This app's GPU SM utilization %
+    gpu_usage_system: Option<u32>,     // System-wide GPU utilization %
+    vram_usage_app_mb: Option<u64>,    // This app's VRAM usage
+    vram_usage_system_mb: Option<u64>, // System-wide VRAM usage
+    vram_total_mb: Option<u64>,        // Total VRAM available
     #[cfg(feature = "windowed")]
     nvml: Option<nvml_wrapper::Nvml>,
     #[cfg(feature = "windowed")]
@@ -191,7 +191,9 @@ impl SystemMonitor {
                 if let Ok(processes) = device.running_graphics_processes() {
                     for proc in processes {
                         if proc.pid == self.os_pid {
-                            if let nvml_wrapper::enums::device::UsedGpuMemory::Used(bytes) = proc.used_gpu_memory {
+                            if let nvml_wrapper::enums::device::UsedGpuMemory::Used(bytes) =
+                                proc.used_gpu_memory
+                            {
                                 self.vram_usage_app_mb = Some(bytes / (1024 * 1024));
                             }
                             break;
@@ -203,7 +205,9 @@ impl SystemMonitor {
                     if let Ok(processes) = device.running_compute_processes() {
                         for proc in processes {
                             if proc.pid == self.os_pid {
-                                if let nvml_wrapper::enums::device::UsedGpuMemory::Used(bytes) = proc.used_gpu_memory {
+                                if let nvml_wrapper::enums::device::UsedGpuMemory::Used(bytes) =
+                                    proc.used_gpu_memory
+                                {
                                     self.vram_usage_app_mb = Some(bytes / (1024 * 1024));
                                 }
                                 break;
@@ -252,20 +256,41 @@ impl SystemMonitor {
         let mut parts = vec![];
 
         // CPU: app%(system%)
-        parts.push(format!("CPU: {:.0}%({:.0}%)", self.cpu_usage_app, self.cpu_usage_system));
+        parts.push(format!(
+            "CPU: {:.0}%({:.0}%)",
+            self.cpu_usage_app, self.cpu_usage_system
+        ));
 
         // RAM: app(system/total)MB
-        parts.push(format!("RAM: {:.0}({}/{}MB)", self.ram_usage_app_mb, self.ram_usage_system_mb, self.ram_total_mb));
+        parts.push(format!(
+            "RAM: {:.0}({}/{}MB)",
+            self.ram_usage_app_mb, self.ram_usage_system_mb, self.ram_total_mb
+        ));
 
         // GPU: app%(system%)
-        let app_gpu = self.gpu_usage_app.map(|v| format!("{}%", v)).unwrap_or("-".into());
-        let sys_gpu = self.gpu_usage_system.map(|v| format!("{}%", v)).unwrap_or("-".into());
+        let app_gpu = self
+            .gpu_usage_app
+            .map(|v| format!("{}%", v))
+            .unwrap_or("-".into());
+        let sys_gpu = self
+            .gpu_usage_system
+            .map(|v| format!("{}%", v))
+            .unwrap_or("-".into());
         parts.push(format!("GPU: {}({})", app_gpu, sys_gpu));
 
         // VRAM: app(system/total)MB
-        let app_vram = self.vram_usage_app_mb.map(|v| v.to_string()).unwrap_or("-".into());
-        let sys_vram = self.vram_usage_system_mb.map(|v| v.to_string()).unwrap_or("-".into());
-        let total_vram = self.vram_total_mb.map(|v| v.to_string()).unwrap_or("-".into());
+        let app_vram = self
+            .vram_usage_app_mb
+            .map(|v| v.to_string())
+            .unwrap_or("-".into());
+        let sys_vram = self
+            .vram_usage_system_mb
+            .map(|v| v.to_string())
+            .unwrap_or("-".into());
+        let total_vram = self
+            .vram_total_mb
+            .map(|v| v.to_string())
+            .unwrap_or("-".into());
         parts.push(format!("VRAM: {}({}/{}MB)", app_vram, sys_vram, total_vram));
 
         parts.join(" | ")
@@ -393,6 +418,34 @@ impl InputHandler {
         }
         if self.pressed_keys.contains(&KeyCode::KeyE) {
             camera.roll_camera(dt * 2.0);
+        }
+    }
+
+    /// Update a bounded inspect-style camera.
+    ///
+    /// This keeps the familiar movement keys for physical UI scenes, but avoids
+    /// world-only actions such as camera roll.
+    pub fn update_ui_physical_camera(&self, camera: &mut FlyCamera, dt: f32) {
+        if self.pressed_keys.contains(&KeyCode::KeyW) {
+            camera.move_forward(dt, true);
+        }
+        if self.pressed_keys.contains(&KeyCode::KeyS) {
+            camera.move_forward(dt, false);
+        }
+        if self.pressed_keys.contains(&KeyCode::KeyA) {
+            camera.move_right(dt, false);
+        }
+        if self.pressed_keys.contains(&KeyCode::KeyD) {
+            camera.move_right(dt, true);
+        }
+
+        if self.pressed_keys.contains(&KeyCode::Space) {
+            camera.move_up(dt, true);
+        }
+        if self.pressed_keys.contains(&KeyCode::ControlLeft)
+            || self.pressed_keys.contains(&KeyCode::ControlRight)
+        {
+            camera.move_up(dt, false);
         }
     }
 

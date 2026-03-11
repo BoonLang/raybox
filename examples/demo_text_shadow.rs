@@ -8,11 +8,11 @@
 mod camera;
 #[path = "../src/constants.rs"]
 mod constants;
-#[path = "../src/text/mod.rs"]
-mod text;
 #[cfg(feature = "windowed")]
 #[path = "../src/input.rs"]
 mod input;
+#[path = "../src/text/mod.rs"]
+mod text;
 
 #[allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals)]
 mod shader_bindings {
@@ -21,9 +21,9 @@ mod shader_bindings {
 
 use camera::FlyCamera;
 use constants::{HEIGHT, WIDTH};
-use text::{VectorFont, VectorFontAtlas};
 #[cfg(feature = "windowed")]
 use input::{CameraConfig, InputAction, InputHandler};
+use text::{VectorFont, VectorFontAtlas};
 
 use anyhow::{Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -234,23 +234,23 @@ fn run_windowed() -> Result<()> {
 
             let surface = instance.create_surface(window.clone())?;
 
-            let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            }))
-            .context("Failed to find a suitable GPU adapter")?;
+            let adapter =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: false,
+                }))
+                .context("Failed to find a suitable GPU adapter")?;
 
-            let (device, queue) = pollster::block_on(adapter.request_device(
-                &wgpu::DeviceDescriptor {
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                     label: Some("RayBox Device"),
                     required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::default(),
                     memory_hints: wgpu::MemoryHints::default(),
                     trace: wgpu::Trace::Off,
-                },
-            ))
-            .context("Failed to create device")?;
+                }))
+                .context("Failed to create device")?;
 
             let surface_caps = surface.get_capabilities(&adapter);
             let surface_format = surface_caps
@@ -273,8 +273,8 @@ fn run_windowed() -> Result<()> {
             surface.configure(&device, &config);
 
             // Load vector font
-            let font_data = std::fs::read("assets/fonts/DejaVuSans.ttf")
-                .context("Failed to load font file")?;
+            let font_data =
+                std::fs::read("assets/fonts/DejaVuSans.ttf").context("Failed to load font file")?;
             let font = VectorFont::from_ttf(&font_data).map_err(|e| anyhow::anyhow!(e))?;
             let atlas = VectorFontAtlas::from_font(&font, 8);
 
@@ -293,7 +293,8 @@ fn run_windowed() -> Result<()> {
                 })
                 .collect();
 
-            let gpu_curve_indices: Vec<u32> = atlas.curve_indices.iter().map(|&i| i as u32).collect();
+            let gpu_curve_indices: Vec<u32> =
+                atlas.curve_indices.iter().map(|&i| i as u32).collect();
 
             let gpu_curves: Vec<GpuBezierCurve> = atlas
                 .curves
@@ -315,18 +316,8 @@ fn run_windowed() -> Result<()> {
                 .iter()
                 .map(|(_, entry)| GpuGlyphData {
                     bounds: entry.bounds,
-                    grid_info: [
-                        entry.grid_offset,
-                        entry.grid_size[0],
-                        entry.grid_size[1],
-                        0,
-                    ],
-                    curve_info: [
-                        entry.curve_offset,
-                        entry.curve_count,
-                        0,
-                        0,
-                    ],
+                    grid_info: [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
+                    curve_info: [entry.curve_offset, entry.curve_count, 0, 0],
                 })
                 .collect();
 
@@ -353,22 +344,25 @@ fn run_windowed() -> Result<()> {
             let grid_cells_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Grid Cells Buffer"),
                 contents: bytemuck::cast_slice(if gpu_grid_cells.is_empty() {
-                    &[GpuGridCell { curve_start_and_count: 0 }]
+                    &[GpuGridCell {
+                        curve_start_and_count: 0,
+                    }]
                 } else {
                     &gpu_grid_cells
                 }),
                 usage: wgpu::BufferUsages::STORAGE,
             });
 
-            let curve_indices_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Curve Indices Buffer"),
-                contents: bytemuck::cast_slice(if gpu_curve_indices.is_empty() {
-                    &[0u32]
-                } else {
-                    &gpu_curve_indices
-                }),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+            let curve_indices_buffer =
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Curve Indices Buffer"),
+                    contents: bytemuck::cast_slice(if gpu_curve_indices.is_empty() {
+                        &[0u32]
+                    } else {
+                        &gpu_curve_indices
+                    }),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
 
             let curves_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Curves Buffer"),
@@ -398,82 +392,86 @@ fn run_windowed() -> Result<()> {
                 usage: wgpu::BufferUsages::STORAGE,
             });
 
-            let char_instances_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Char Instances Buffer"),
-                contents: bytemuck::cast_slice(if char_instances.is_empty() {
-                    &[GpuCharInstance { pos_and_char: [0.0; 4] }]
-                } else {
-                    &char_instances
-                }),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+            let char_instances_buffer =
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Char Instances Buffer"),
+                    contents: bytemuck::cast_slice(if char_instances.is_empty() {
+                        &[GpuCharInstance {
+                            pos_and_char: [0.0; 4],
+                        }]
+                    } else {
+                        &char_instances
+                    }),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
 
             // Create bind group layout
-            let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Bind Group Layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+            let bind_group_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Bind Group Layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 5,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                ],
-            });
+                    ],
+                });
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Bind Group"),
@@ -566,7 +564,8 @@ fn run_windowed() -> Result<()> {
 
             self.input.update_frame_time(dt);
             self.input.update_camera(&mut self.camera, dt);
-            self.input.update_window_title(&self.window, DEMO_TITLE, &self.camera);
+            self.input
+                .update_window_title(&self.window, DEMO_TITLE, &self.camera);
         }
 
         fn render(&self) -> Result<(), wgpu::SurfaceError> {
@@ -578,11 +577,15 @@ fn run_windowed() -> Result<()> {
                 .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
             let output = self.surface.get_current_texture()?;
-            let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let view = output
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
 
-            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Render Encoder"),
+                });
 
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -655,13 +658,17 @@ fn run_windowed() -> Result<()> {
         ) {
             if let Some(renderer) = self.renderer.as_mut() {
                 if let DeviceEvent::MouseMotion { delta } = event {
-                    renderer.input.handle_mouse_motion(&mut renderer.camera, delta);
+                    renderer
+                        .input
+                        .handle_mouse_motion(&mut renderer.camera, delta);
                 }
             }
         }
 
         fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-            let Some(renderer) = self.renderer.as_mut() else { return };
+            let Some(renderer) = self.renderer.as_mut() else {
+                return;
+            };
 
             match event {
                 WindowEvent::CloseRequested => event_loop.exit(),
@@ -731,8 +738,8 @@ fn run_headless_screenshot() -> Result<()> {
     println!("Capturing headless screenshot of Floating 3D Text with Shadows...");
 
     // Load vector font
-    let font_data = std::fs::read("assets/fonts/DejaVuSans.ttf")
-        .context("Failed to load font file")?;
+    let font_data =
+        std::fs::read("assets/fonts/DejaVuSans.ttf").context("Failed to load font file")?;
     let font = VectorFont::from_ttf(&font_data).map_err(|e| anyhow::anyhow!(e))?;
     let atlas = VectorFontAtlas::from_font(&font, 8);
 
@@ -760,15 +767,13 @@ fn run_headless_screenshot() -> Result<()> {
     }))
     .context("Failed to find adapter")?;
 
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("Headless Device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-        },
-    ))
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("Headless Device"),
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::default(),
+        memory_hints: wgpu::MemoryHints::default(),
+        trace: wgpu::Trace::Off,
+    }))
     .context("Failed to create device")?;
 
     let width = WIDTH;
@@ -825,18 +830,8 @@ fn run_headless_screenshot() -> Result<()> {
         .iter()
         .map(|(_, entry)| GpuGlyphData {
             bounds: entry.bounds,
-            grid_info: [
-                entry.grid_offset,
-                entry.grid_size[0],
-                entry.grid_size[1],
-                0,
-            ],
-            curve_info: [
-                entry.curve_offset,
-                entry.curve_count,
-                0,
-                0,
-            ],
+            grid_info: [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
+            curve_info: [entry.curve_offset, entry.curve_count, 0, 0],
         })
         .collect();
 
@@ -857,7 +852,9 @@ fn run_headless_screenshot() -> Result<()> {
     let grid_cells_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Grid Cells Buffer"),
         contents: bytemuck::cast_slice(if gpu_grid_cells.is_empty() {
-            &[GpuGridCell { curve_start_and_count: 0 }]
+            &[GpuGridCell {
+                curve_start_and_count: 0,
+            }]
         } else {
             &gpu_grid_cells
         }),
@@ -905,7 +902,9 @@ fn run_headless_screenshot() -> Result<()> {
     let char_instances_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Char Instances Buffer"),
         contents: bytemuck::cast_slice(if char_instances.is_empty() {
-            &[GpuCharInstance { pos_and_char: [0.0; 4] }]
+            &[GpuCharInstance {
+                pos_and_char: [0.0; 4],
+            }]
         } else {
             &char_instances
         }),
@@ -1011,7 +1010,8 @@ fn run_headless_screenshot() -> Result<()> {
     });
 
     // Create pipeline
-    let shader_module = shader_bindings::sdf_text_shadow_vector::create_shader_module_embed_source(&device);
+    let shader_module =
+        shader_bindings::sdf_text_shadow_vector::create_shader_module_embed_source(&device);
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Pipeline Layout"),
@@ -1120,7 +1120,9 @@ fn run_headless_screenshot() -> Result<()> {
     buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
         tx.send(result).unwrap();
     });
-    pollster::block_on(async { device.poll(wgpu::PollType::Wait).unwrap(); });
+    pollster::block_on(async {
+        device.poll(wgpu::PollType::Wait).unwrap();
+    });
     rx.recv()?.context("Failed to map buffer")?;
 
     let padded_data = buffer_slice.get_mapped_range();

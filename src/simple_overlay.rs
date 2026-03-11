@@ -7,9 +7,7 @@
 //! - Has minimal impact on demo resource measurements
 
 use anyhow::{Context, Result};
-use cosmic_text::{
-    Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache,
-};
+use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache};
 use std::time::Instant;
 use wgpu::util::DeviceExt;
 
@@ -114,8 +112,8 @@ impl SimpleOverlay {
         let mut font_system = FontSystem::new();
 
         // Load the DejaVu Sans font
-        let font_data = std::fs::read("assets/fonts/DejaVuSans.ttf")
-            .context("Failed to load font file")?;
+        let font_data =
+            std::fs::read("assets/fonts/DejaVuSans.ttf").context("Failed to load font file")?;
         font_system.db_mut().load_font_data(font_data);
 
         let swash_cache = SwashCache::new();
@@ -250,12 +248,30 @@ impl SimpleOverlay {
 
         // Create vertex buffer for fullscreen quad
         let vertices: [OverlayVertex; 6] = [
-            OverlayVertex { position: [-1.0, -1.0], tex_coords: [0.0, 1.0] },
-            OverlayVertex { position: [1.0, -1.0], tex_coords: [1.0, 1.0] },
-            OverlayVertex { position: [1.0, 1.0], tex_coords: [1.0, 0.0] },
-            OverlayVertex { position: [-1.0, -1.0], tex_coords: [0.0, 1.0] },
-            OverlayVertex { position: [1.0, 1.0], tex_coords: [1.0, 0.0] },
-            OverlayVertex { position: [-1.0, 1.0], tex_coords: [0.0, 0.0] },
+            OverlayVertex {
+                position: [-1.0, -1.0],
+                tex_coords: [0.0, 1.0],
+            },
+            OverlayVertex {
+                position: [1.0, -1.0],
+                tex_coords: [1.0, 1.0],
+            },
+            OverlayVertex {
+                position: [1.0, 1.0],
+                tex_coords: [1.0, 0.0],
+            },
+            OverlayVertex {
+                position: [-1.0, -1.0],
+                tex_coords: [0.0, 1.0],
+            },
+            OverlayVertex {
+                position: [1.0, 1.0],
+                tex_coords: [1.0, 0.0],
+            },
+            OverlayVertex {
+                position: [-1.0, 1.0],
+                tex_coords: [0.0, 0.0],
+            },
         ];
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -356,7 +372,9 @@ impl SimpleOverlay {
             view_formats: &[],
         });
 
-        self.texture_view = self.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.texture_view = self
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         // Recreate bind group with new texture view
         self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -442,8 +460,7 @@ impl SimpleOverlay {
         align: TextAlign,
     ) {
         let metrics = Metrics::new(font_size, line_height);
-        let attrs = Attrs::new()
-            .family(Family::SansSerif);
+        let attrs = Attrs::new().family(Family::SansSerif);
 
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
 
@@ -491,9 +508,7 @@ impl SimpleOverlay {
                         let sx = px + dx;
                         let sy = py + dy;
 
-                        if sx >= 0 && sx < tex_width as i32
-                           && sy >= 0 && sy < tex_height as i32
-                        {
+                        if sx >= 0 && sx < tex_width as i32 && sy >= 0 && sy < tex_height as i32 {
                             let idx = ((sy as u32 * tex_width + sx as u32) * 4) as usize;
 
                             // Get glyph alpha
@@ -566,9 +581,7 @@ fn draw_outline(pixels: &mut [u8], tex_width: u32, tex_height: u32, cx: i32, cy:
             let ox = cx + dx;
             let oy = cy + dy;
 
-            if ox >= 0 && ox < tex_width as i32
-               && oy >= 0 && oy < tex_height as i32
-            {
+            if ox >= 0 && ox < tex_width as i32 && oy >= 0 && oy < tex_height as i32 {
                 let idx = ((oy as u32 * tex_width + ox as u32) * 4) as usize;
 
                 // Only draw outline if there's no existing content

@@ -1,4 +1,4 @@
-// SDF 3D TodoMVC with Vector SDF Text Relief and Theme System
+// Shared retained UiPhysical / stacked-card SDF scene with vector text support
 // Based on sdf_clay_vector.slang with theme uniforms and per-character color
 
 struct Uniforms {
@@ -9,6 +9,17 @@ struct Uniforms {
     float4 textParams;        // x = charCount, y = uiPrimCount, z = windowScaleFactor, w = classicDecalPrimStart
     float4 charGridParams;    // xy = gridDims, zw = cellSize
     float4 charGridBounds;    // xy = gridMin, zw = gridMax
+    float4 layoutParams0;     // xy = layoutCenterPx (Y-up), z = pixelToWorld, w = geometryMode (0=generic,1=stackedCard)
+    float4 layoutParams1;     // x = generic cornerRadiusPx, y = elevationPx, z = depthPx
+    float4 layoutParams2;     // generic fill rgba
+    float4 layoutParams3;     // generic outline rgba
+    float4 layoutParams4;     // generic shadow rgba
+    float4 layoutParams5;     // generic shadow offset xy in px
+    float4 layoutParams6;     // generic shadow extra size xy in px
+    float4 layoutParams7;     // generic outline width px, content inset px
+    float4 layoutParams8;     // generic accent rgba
+    float4 layoutParams9;     // generic detail rgba
+    float4 layoutBounds;      // xy = layoutMinPx, zw = layoutMaxPx
 };
 
 struct ThemeUniforms {
@@ -106,9 +117,6 @@ VertexOutput vs_main(uint vertexID : SV_VertexID) {
 
 static const float THEME_CLASSIC2D = 0.0;
 static const float THEME_GLASSMORPHISM = 3.0;
-static const float LAYOUT_CENTER_X = 350.0;
-static const float LAYOUT_CENTER_Y = 398.0;
-static const float LAYOUT_PIXEL_TO_WORLD = 0.01;
 
 bool isClassicTheme() {
     return abs(theme.extraParams.z - THEME_CLASSIC2D) < 0.5;
@@ -116,6 +124,100 @@ bool isClassicTheme() {
 
 bool isGlassTheme() {
     return abs(theme.extraParams.z - THEME_GLASSMORPHISM) < 0.5;
+}
+
+float layoutCenterX() { return uniforms.layoutParams0.x; }
+float layoutCenterY() { return uniforms.layoutParams0.y; }
+float layoutPixelToWorld() { return max(uniforms.layoutParams0.z, 1e-5); }
+bool useStackedCardGeometry() { return uniforms.layoutParams0.w > 0.5; }
+float genericCardCornerRadiusPx() { return max(uniforms.layoutParams1.x, 0.0); }
+float genericCardElevationPx() { return max(uniforms.layoutParams1.y, 0.0); }
+float genericCardDepthPx() { return max(uniforms.layoutParams1.z, 0.0); }
+float4 genericCardFillColor() { return uniforms.layoutParams2; }
+float4 genericCardOutlineColor() { return uniforms.layoutParams3; }
+float genericCardOutlineWidthPx() { return max(uniforms.layoutParams7.x, 0.0); }
+float genericCardContentInsetPx() { return max(uniforms.layoutParams7.y, 0.0); }
+float4 genericCardShadowColor() { return uniforms.layoutParams4; }
+float2 genericCardShadowOffsetPx() { return uniforms.layoutParams5.xy; }
+float2 genericCardShadowExtraSizePx() { return uniforms.layoutParams6.xy; }
+float4 genericCardAccentColor() { return uniforms.layoutParams8; }
+float4 genericCardDetailColor() { return uniforms.layoutParams9; }
+
+float2 genericCardHalfExtents() {
+    float4 bounds = uniforms.layoutBounds;
+    float minHalf = max(
+        genericCardCornerRadiusPx() * layoutPixelToWorld() +
+        max(
+            genericCardOutlineWidthPx() * layoutPixelToWorld() * 0.12,
+            genericCardCornerRadiusPx() * layoutPixelToWorld() * 0.01
+        ),
+        0.0
+    );
+    float halfW = max((bounds.z - bounds.x) * 0.5 * layoutPixelToWorld(), minHalf);
+    float halfD = max((bounds.w - bounds.y) * 0.5 * layoutPixelToWorld(), minHalf);
+    return float2(halfW, halfD);
+}
+
+float genericCardCornerRadius() {
+    float2 halfExtents = genericCardHalfExtents();
+    float radius = genericCardCornerRadiusPx() * layoutPixelToWorld();
+    float maxRadius = max(min(halfExtents.x, halfExtents.y) - 0.002, 0.0);
+    return clamp(radius, 0.0, maxRadius);
+}
+
+float genericCardElevation() {
+    float semanticLift = max(
+        genericCardOutlineWidthPx() * layoutPixelToWorld() * 0.08,
+        genericCardCornerRadiusPx() * layoutPixelToWorld() * 0.015
+    );
+    return max(genericCardElevationPx() * layoutPixelToWorld(), genericCardHalfHeight() + semanticLift);
+}
+
+float genericCardHalfHeight() {
+    float semanticMinHeight = max(
+        genericCardOutlineWidthPx() * layoutPixelToWorld() * 0.22,
+        genericCardCornerRadiusPx() * layoutPixelToWorld() * 0.045
+    );
+    return max(genericCardDepthPx() * layoutPixelToWorld() * 0.5, semanticMinHeight);
+}
+
+float genericCardShadowDrop() {
+    float spreadDrop = min(genericCardShadowSpreadWorld().x, genericCardShadowSpreadWorld().y) * 0.25;
+    float fillAlpha = saturate(genericCardFillColor().w);
+    float alphaDrop = lerp(0.55, 1.0, fillAlpha * fillAlpha);
+    return max((genericCardDepthPx() * layoutPixelToWorld() * 0.25 + spreadDrop) * alphaDrop, 0.0);
+}
+
+float3 genericCardShadowCenter() {
+    float2 shadowOffset = genericCardShadowOffsetPx() * layoutPixelToWorld();
+    float shadowY = genericCardElevation() - genericCardHalfHeight() - genericCardShadowDrop();
+    return float3(shadowOffset.x, shadowY, -shadowOffset.y);
+}
+
+float2 genericCardShadowSpreadWorld() {
+    return max(genericCardShadowExtraSizePx() * layoutPixelToWorld(), float2(0.0, 0.0));
+}
+
+float2 genericCardShadowHalfExtents() {
+    return genericCardHalfExtents() + genericCardShadowSpreadWorld();
+}
+
+float genericCardShadowHalfHeight() {
+    float spreadThickness = max(min(genericCardShadowSpreadWorld().x, genericCardShadowSpreadWorld().y) * 0.35, 0.0);
+    float semanticMinHeight = max(
+        genericCardOutlineWidthPx() * layoutPixelToWorld() * 0.12,
+        genericCardCornerRadiusPx() * layoutPixelToWorld() * 0.02
+    );
+    float fillAlpha = saturate(genericCardFillColor().w);
+    float alphaThickness = lerp(0.65, 1.0, fillAlpha * fillAlpha);
+    return max((genericCardHalfHeight() * 0.2 + spreadThickness) * alphaThickness, semanticMinHeight * alphaThickness);
+}
+
+float genericCardShadowCornerRadius() {
+    return min(
+        genericCardCornerRadius() + min(genericCardShadowSpreadWorld().x, genericCardShadowSpreadWorld().y),
+        max(min(genericCardShadowHalfExtents().x, genericCardShadowHalfExtents().y) - 0.002, 0.0)
+    );
 }
 
 // ---- SDF primitives ----
@@ -407,14 +509,14 @@ TextHit sdTextRelief3D(float3 p, float depth) {
     float2 gridMax = uniforms.charGridBounds.zw;
     float aabbPadY = 0.3; // extra Y padding so raymarcher sees text slab from further away
     float3 textBoxMin = float3(
-        (gridMin.x - LAYOUT_CENTER_X) * LAYOUT_PIXEL_TO_WORLD,
+        (gridMin.x - layoutCenterX()) * layoutPixelToWorld(),
         -halfDepth - aabbPadY,
-        -(gridMax.y - LAYOUT_CENTER_Y) * LAYOUT_PIXEL_TO_WORLD
+        -(gridMax.y - layoutCenterY()) * layoutPixelToWorld()
     );
     float3 textBoxMax = float3(
-        (gridMax.x - LAYOUT_CENTER_X) * LAYOUT_PIXEL_TO_WORLD,
+        (gridMax.x - layoutCenterX()) * layoutPixelToWorld(),
         halfDepth + aabbPadY,
-        -(gridMin.y - LAYOUT_CENTER_Y) * LAYOUT_PIXEL_TO_WORLD
+        -(gridMin.y - layoutCenterY()) * layoutPixelToWorld()
     );
     float3 textBoxCenter = (textBoxMin + textBoxMax) * 0.5;
     float3 textBoxHalf = (textBoxMax - textBoxMin) * 0.5;
@@ -424,10 +526,10 @@ TextHit sdTextRelief3D(float3 p, float depth) {
         return result;
     }
 
-    // Convert scene XZ to the shared 2D TodoMVC layout pixel space (Y-up)
+    // Convert scene XZ to the shared 2D layout pixel space (Y-up)
     float2 textPos = float2(
-        p.x / LAYOUT_PIXEL_TO_WORLD + LAYOUT_CENTER_X,
-        -p.z / LAYOUT_PIXEL_TO_WORLD + LAYOUT_CENTER_Y
+        p.x / layoutPixelToWorld() + layoutCenterX(),
+        -p.z / layoutPixelToWorld() + layoutCenterY()
     );
 
     // Check 3x3 neighborhood of grid cells to avoid missing chars at cell boundaries
@@ -457,7 +559,7 @@ TextHit sdTextRelief3D(float3 p, float depth) {
 
                 float2 charPos = ch.posAndChar.xy;
                 float charScalePx = ch.posAndChar.z;
-                float charScaleWorld = charScalePx * LAYOUT_PIXEL_TO_WORLD;
+                float charScaleWorld = charScalePx * layoutPixelToWorld();
                 uint glyphIdx = uint(ch.posAndChar.w);
 
                 GlyphData glyph = glyphData[glyphIdx];
@@ -511,6 +613,36 @@ Hit mapSceneCoarse(float3 p) {
 
     float edgeR = theme.geometryParams.x;
     float cardElev = theme.geometryParams.y;
+
+    if (!useStackedCardGeometry()) {
+        float2 halfExtents = genericCardHalfExtents();
+
+        if (genericCardShadowColor().w > 0.001) {
+            Hit shadow;
+            float3 shadowP = p - genericCardShadowCenter();
+            shadow.dist = sdRoundBox(
+                shadowP,
+                float3(genericCardShadowHalfExtents().x, genericCardShadowHalfHeight(), genericCardShadowHalfExtents().y),
+                genericCardShadowCornerRadius()
+            );
+            shadow.materialId = 6;
+            shadow.textColor = float3(0);
+            result = opUnionHit(result, shadow);
+        }
+
+        Hit card;
+        float3 cardP = p - float3(0, genericCardElevation(), 0);
+        card.dist = sdRoundBox(
+            cardP,
+            float3(halfExtents.x, genericCardHalfHeight(), halfExtents.y),
+            genericCardCornerRadius()
+        );
+        card.materialId = 2;
+        card.textColor = float3(0);
+        result = opUnionHit(result, card);
+
+        return result;
+    }
 
     if (isClassicTheme()) {
         Hit ground;
@@ -581,6 +713,36 @@ Hit mapScene(float3 p) {
     float textReliefDepth = theme.extraParams.x;
     float textReliefMode = theme.extraParams.y;
 
+    if (!useStackedCardGeometry()) {
+        float2 halfExtents = genericCardHalfExtents();
+
+        if (genericCardShadowColor().w > 0.001) {
+            Hit shadow;
+            float3 shadowP = p - genericCardShadowCenter();
+            shadow.dist = sdRoundBox(
+                shadowP,
+                float3(genericCardShadowHalfExtents().x, genericCardShadowHalfHeight(), genericCardShadowHalfExtents().y),
+                genericCardShadowCornerRadius()
+            );
+            shadow.materialId = 6;
+            shadow.textColor = float3(0);
+            result = opUnionHit(result, shadow);
+        }
+
+        Hit card;
+        float3 cardP = p - float3(0, genericCardElevation(), 0);
+        card.dist = sdRoundBox(
+            cardP,
+            float3(halfExtents.x, genericCardHalfHeight(), halfExtents.y),
+            genericCardCornerRadius()
+        );
+        card.materialId = 2;
+        card.textColor = float3(0);
+        result = opUnionHit(result, card);
+
+        return result;
+    }
+
     if (isClassicTheme()) {
         Hit ground;
         ground.dist = sdPlane(p, float3(0, 1, 0), 0.5);
@@ -631,7 +793,7 @@ Hit mapScene(float3 p) {
     float inputWell = sdRoundBox(inputP, float3(CARD_W - 0.04, inputDepth, inputHalfZ), edgeR * 0.5);
     cardDist = max(cardDist, -inputWell);  // CSG subtract
 
-    // Todo item raised panels (4 items)
+    // Raised stacked-card item panels (4 items)
     float itemCenters[4] = { ITEM1_Z, ITEM2_Z, ITEM3_Z, ITEM4_Z };
     for (int i = 0; i < 4; i++) {
         float3 itemP = cardP - float3(0, 0, itemCenters[i]);
@@ -756,6 +918,25 @@ float mapSceneGeometryDist(float3 p) {
     float cardElev = theme.geometryParams.y;
     float itemElev = theme.geometryParams.z;
     float inputDepth = theme.geometryParams.w;
+
+    if (!useStackedCardGeometry()) {
+        if (genericCardShadowColor().w > 0.001) {
+            result = min(result, sdRoundBox(
+                p - genericCardShadowCenter(),
+                float3(genericCardShadowHalfExtents().x, genericCardShadowHalfHeight(), genericCardShadowHalfExtents().y),
+                genericCardShadowCornerRadius()
+            ));
+        }
+        float2 halfExtents = genericCardHalfExtents();
+        float genericElev = genericCardElevation();
+        float genericHalfHeight = genericCardHalfHeight();
+        result = min(result, sdRoundBox(
+            p - float3(0, genericElev, 0),
+            float3(halfExtents.x, genericHalfHeight, halfExtents.y),
+            genericCardCornerRadius()
+        ));
+        return result;
+    }
 
     if (isClassicTheme()) {
         result = min(result, sdPlane(p, float3(0, 1, 0), 0.5));
@@ -904,6 +1085,10 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
     if (materialId == 7) {
         // Text: use per-character color from g_textColor
         baseColor = g_textColor;
+    } else if (!useStackedCardGeometry() && materialId == 6) {
+        baseColor = genericCardShadowColor().xyz;
+    } else if (!useStackedCardGeometry() && materialId == 2) {
+        baseColor = genericCardFillColor().xyz;
     } else {
         baseColor = theme.materialColors[materialId].xyz;
     }
@@ -963,6 +1148,135 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
 
     float3 col = baseColor * lin;
 
+    if (!useStackedCardGeometry() && materialId == 6) {
+        float fillAlpha = saturate(genericCardFillColor().w);
+        float alpha = saturate(genericCardShadowColor().w) * lerp(0.25, 1.0, fillAlpha * fillAlpha);
+        float edgeDist = -sdRoundedBox2D(
+            pos.xz,
+            genericCardShadowCenter().xz,
+            genericCardShadowHalfExtents(),
+            genericCardShadowCornerRadius()
+        );
+        float2 spreadWorld = genericCardShadowSpreadWorld();
+        float semanticCornerSoftness = genericCardShadowCornerRadius() * 0.18;
+        float edgeSoftness = max(
+            max(spreadWorld.x, spreadWorld.y),
+            max(genericCardShadowHalfHeight() * 0.75, semanticCornerSoftness)
+        );
+        float alphaEdgeScale = lerp(0.85, 1.0, fillAlpha * fillAlpha);
+        float footprintFade = smoothstep(
+            -edgeSoftness * alphaEdgeScale,
+            edgeSoftness * 0.65 * alphaEdgeScale,
+            edgeDist
+        );
+        float verticalSoftness = genericCardShadowHalfHeight() * 1.75
+            + max(spreadWorld.x, spreadWorld.y) * 0.25
+            + semanticCornerSoftness * 0.35;
+        float verticalFade = 1.0 - smoothstep(0.0, verticalSoftness, abs(pos.y - genericCardShadowCenter().y));
+        return baseColor * alpha * footprintFade * verticalFade;
+    }
+
+    if (!useStackedCardGeometry() && materialId == 2) {
+        float fillAlpha = saturate(genericCardFillColor().w);
+        float surfaceOpacity = lerp(0.25, 1.0, fillAlpha * fillAlpha);
+        if (fillAlpha < 0.999) {
+            float3 baseFill = genericCardFillColor().xyz;
+            float accentBackdrop = saturate(genericCardAccentColor().w);
+            float detailBackdrop = saturate(genericCardDetailColor().w);
+            float semanticBackdropWeight = saturate(
+                max(
+                    genericCardCornerRadiusPx() * 0.03,
+                    max(genericCardOutlineWidthPx() * 0.12, genericCardContentInsetPx() * 0.025)
+                )
+            );
+            float3 liftedFill = lerp(
+                baseFill * float3(1.02, 1.02, 1.03),
+                genericCardAccentColor().xyz,
+                accentBackdrop * (0.10 + semanticBackdropWeight * 0.20)
+            );
+            float3 shadedFill = lerp(
+                baseFill * float3(0.94, 0.95, 0.98),
+                genericCardDetailColor().xyz,
+                detailBackdrop * (0.10 + semanticBackdropWeight * 0.20)
+            );
+            float3 backdrop = lerp(
+                liftedFill,
+                shadedFill,
+                saturate(0.42 + semanticBackdropWeight * 0.08 + (detailBackdrop - accentBackdrop) * 0.08)
+            );
+            float retainedAlpha = fillAlpha * fillAlpha;
+            col = lerp(backdrop * lin, col, retainedAlpha);
+        }
+
+        float edgeDist = -sdRoundedBox2D(
+            pos.xz,
+            float2(0.0, 0.0),
+            genericCardHalfExtents(),
+            genericCardCornerRadius()
+        );
+        float outlineWidth = max(genericCardOutlineWidthPx() * layoutPixelToWorld(), 0.0);
+        float outlineBand = outlineWidth > 0.0
+            ? 1.0 - smoothstep(0.0, outlineWidth, edgeDist)
+            : 0.0;
+        col = lerp(
+            col,
+            genericCardOutlineColor().xyz * lin,
+            outlineBand * genericCardOutlineColor().w * surfaceOpacity
+        );
+
+        float semanticCornerBand = genericCardCornerRadius() * 0.22;
+        float semanticDepthBand = genericCardHalfHeight() * 0.28;
+        float bevelWidth = max(outlineWidth * 1.35, max(semanticCornerBand, semanticDepthBand));
+        float bevelBand = 1.0 - smoothstep(0.0, bevelWidth, edgeDist);
+        float semanticOutlineThreshold = max(outlineWidth, genericCardCornerRadius() * 0.06);
+        float outlineInfluence = saturate(genericCardOutlineColor().w)
+            * smoothstep(0.0, semanticOutlineThreshold, outlineWidth);
+        float bevelPresence = lerp(0.30, 1.0, outlineInfluence);
+        float semanticDepthScalePx = max(
+            genericCardContentInsetPx() * 0.45,
+            max(genericCardCornerRadiusPx() * 1.1, genericCardOutlineWidthPx() * 6.0)
+        );
+        float bevelStrength = saturate(genericCardDepthPx() / max(semanticDepthScalePx, 1.0))
+            * surfaceOpacity
+            * bevelPresence;
+        float3 rimTint = lerp(genericCardFillColor().xyz, genericCardOutlineColor().xyz, 0.28 * outlineInfluence);
+
+        float cardMinY = genericCardElevation() - genericCardHalfHeight();
+        float cardMaxY = genericCardElevation() + genericCardHalfHeight();
+        float localHeight = saturate((pos.y - cardMinY) / max(cardMaxY - cardMinY, 1e-4));
+        float depthInfluence = saturate(genericCardDepthPx() / max(semanticDepthScalePx, 1.0));
+        float semanticEdgeWeight = lerp(0.30, 1.0, outlineInfluence) * lerp(0.7, 1.0, depthInfluence);
+        col += rimTint * (bevelBand * bevelStrength * 0.08 * semanticEdgeWeight);
+        float topLight = lerp(0.94, 1.0 + 0.08 * depthInfluence, localHeight);
+        float sideShade = lerp(1.0, 1.0 - 0.08 * depthInfluence, bevelBand * bevelStrength);
+        col *= topLight * sideShade;
+
+        float semanticAlphaWeight = fillAlpha * fillAlpha;
+
+        float semanticVariationScale = saturate(
+            max(
+                genericCardCornerRadiusPx() * 0.04,
+                max(genericCardOutlineWidthPx() * 0.18, genericCardContentInsetPx() * 0.04)
+            )
+        );
+        float accentStrength = saturate(genericCardAccentColor().w)
+            * localHeight
+            * (0.02 + semanticVariationScale * 0.12 + depthInfluence * 0.04)
+            * surfaceOpacity
+            * semanticAlphaWeight;
+        col = lerp(col, genericCardAccentColor().xyz * lin, accentStrength);
+
+        float detailStrength = saturate(genericCardDetailColor().w)
+            * (
+                (0.015 + semanticVariationScale * 0.08 + depthInfluence * 0.025)
+                + bevelBand * bevelStrength * (0.035 + semanticVariationScale * 0.10 + depthInfluence * 0.04)
+            )
+            * (1.0 - localHeight * 0.35)
+            * surfaceOpacity
+            * semanticAlphaWeight;
+        col = lerp(col, genericCardDetailColor().xyz * lin, detailStrength);
+    }
+
     // Glass heading: glass pipe material with text color tint
     if (glassTheme && materialId == 7) {
         float3 glassBgText = float3(0);
@@ -983,6 +1297,7 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
 
     // Glass: blue tint + fresnel rim + border glow
     if (isGlassSurface) {
+        float2 cardHalfExtents = useStackedCardGeometry() ? float2(CARD_W, CARD_D) : genericCardHalfExtents();
         // Blue glass tint — stronger blue cast matching reference
         col *= float3(0.85, 0.90, 1.10);
 
@@ -995,7 +1310,7 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
         col *= lerp(1.0, 0.80, edgeRim * 0.5);
 
         // Card border: wide blue glow + sharp inner rim line
-        float2 cardInset = float2(CARD_W, CARD_D) - abs(pos.xz);
+        float2 cardInset = cardHalfExtents - abs(pos.xz);
         float edgeDist = min(cardInset.x, cardInset.y);
         // Wide outer glow
         float outerGlow = 1.0 - smoothstep(0.0, 0.80, edgeDist);
@@ -1009,7 +1324,7 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
         col += edgeHighlight * float3(0.10, 0.15, 0.35);
 
         // Item panel borders (glass panels with thin blue rim + glow)
-        if (materialId == 3) {
+        if (useStackedCardGeometry() && materialId == 3) {
             float itemCenters[4] = { ITEM1_Z, ITEM2_Z, ITEM3_Z, ITEM4_Z };
             float itemHW = CARD_W - 0.04;
             float minItemEdge = 1e10;
@@ -1028,7 +1343,7 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
         }
 
         // Input field glass panel border
-        if (materialId == 2) {
+        if (useStackedCardGeometry() && materialId == 2) {
             float inputCenterZ = (INPUT_TOP_Z + INPUT_BOT_Z) * 0.5;
             float inputHalfZ = (INPUT_BOT_Z - INPUT_TOP_Z) * 0.5;
             float2 inputLocal = float2(abs(pos.x), abs(pos.z - inputCenterZ));
@@ -1048,7 +1363,7 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
 
     // Glass theme: darken ground near card edges (drop shadow)
     if (glassTheme && materialId == 1) {
-        float2 cardDist2 = abs(pos.xz) - float2(CARD_W, CARD_D);
+        float2 cardDist2 = abs(pos.xz) - (useStackedCardGeometry() ? float2(CARD_W, CARD_D) : genericCardHalfExtents());
         float outsideDist = length(max(cardDist2, 0.0));
         float cardProximity = 1.0 - smoothstep(0.0, 0.8, outsideDist);
         col *= lerp(1.0, 0.75, cardProximity);
@@ -1234,6 +1549,39 @@ float4 renderClassicCardDecal(float2 textPos, float aaScale) {
     return color;
 }
 
+float4 renderGenericCardDecal(float2 textPos, float aaScale) {
+    float4 bounds = uniforms.layoutBounds;
+    float2 center = float2((bounds.x + bounds.z) * 0.5, (bounds.y + bounds.w) * 0.5);
+    float2 halfSize = float2((bounds.z - bounds.x) * 0.5, (bounds.w - bounds.y) * 0.5);
+    float radius = genericCardCornerRadiusPx();
+    float outlinePad = genericCardOutlineWidthPx() * 0.85;
+    float depthPad = genericCardDepthPx() * 0.04;
+    float contentInsetPad = genericCardContentInsetPx() * 0.5;
+    float semanticPad = max(radius * 0.06, max(outlinePad * 0.5 + depthPad, contentInsetPad));
+    float clipPad = max(outlinePad, semanticPad);
+    float2 clipHalfSize = max(halfSize - clipPad, float2(0.0, 0.0));
+    float clipRadius = max(radius - clipPad, 0.0);
+    float clipDist = sdRoundedBox2D(textPos, center, clipHalfSize, clipRadius);
+    float clipFade = max(
+        aaScale * 1.5,
+        max(
+            radius * 0.02,
+            max(outlinePad * 0.35 + depthPad * 0.5, contentInsetPad * 0.12)
+        )
+    );
+    if (clipDist > clipFade) {
+        return float4(0.0);
+    }
+    float clipAlpha = 1.0 - smoothstep(0.0, clipFade, max(clipDist, 0.0));
+
+    float4 color = float4(0.0);
+    uint primCount = uint(uniforms.textParams.y);
+    color = blendOver(color, renderUiPrimitives2D(textPos, 0u, primCount));
+    color = blendOver(color, evaluateTextDecal(textPos, aaScale, false));
+    color.a *= clipAlpha;
+    return color;
+}
+
 // ---- Main render ----
 
 float3 render(float3 ro, float3 rd) {
@@ -1269,9 +1617,17 @@ float3 render(float3 ro, float3 rd) {
     }
 
     // Card-plane decals for themes that project 2D UI onto the card surface.
-    if (isGlass || isClassic) {
-        float cardElev = theme.geometryParams.y;
-        float textPlaneY = cardElev + 0.04;
+    if (!useStackedCardGeometry() || isGlass || isClassic) {
+        float genericTextPlaneLift = max(
+            max(
+                genericCardDepthPx() * layoutPixelToWorld() * 0.035,
+                genericCardOutlineWidthPx() * layoutPixelToWorld() * 0.18
+            ),
+            genericCardCornerRadius() * 0.02
+        );
+        float textPlaneY = !useStackedCardGeometry()
+            ? genericCardElevation() + genericCardHalfHeight() + genericTextPlaneLift
+            : theme.geometryParams.y + 0.04;
 
         if (abs(rd.y) > 0.001) {
             float tPlane = (textPlaneY - ro.y) / rd.y;
@@ -1280,21 +1636,38 @@ float3 render(float3 ro, float3 rd) {
             if (tPlane > 0.0 && (!hit.hit || tPlane < hit.t + 0.1)) {
                 float3 planePos = ro + rd * tPlane;
                 float2 textPos2D = float2(
-                    planePos.x / LAYOUT_PIXEL_TO_WORLD + LAYOUT_CENTER_X,
-                    -planePos.z / LAYOUT_PIXEL_TO_WORLD + LAYOUT_CENTER_Y
+                    planePos.x / layoutPixelToWorld() + layoutCenterX(),
+                    -planePos.z / layoutPixelToWorld() + layoutCenterY()
                 );
 
                 // AA scale from pixel footprint at plane distance
                 float pixelWorldSize = tPlane * 2.0 / uniforms.renderParams.y;
-                float aaScale = pixelWorldSize / LAYOUT_PIXEL_TO_WORLD;
+                float aaScale = pixelWorldSize / layoutPixelToWorld();
 
-                float4 decal = isGlass
-                    ? evaluateTextDecal(textPos2D, aaScale, true)
-                    : renderClassicCardDecal(textPos2D, aaScale);
+                float4 decal = !useStackedCardGeometry()
+                    ? renderGenericCardDecal(textPos2D, aaScale)
+                    : (isGlass
+                        ? evaluateTextDecal(textPos2D, aaScale, true)
+                        : renderClassicCardDecal(textPos2D, aaScale));
                 if (decal.a > 0.01) {
+                    float decalOpacity = 1.0;
+                    if (!useStackedCardGeometry()) {
+                        float fillAlpha = saturate(genericCardFillColor().w);
+                        float outlinePresence = saturate(genericCardOutlineColor().w) *
+                            saturate(genericCardOutlineWidthPx() / 3.0);
+                        float semanticOutlineLift = saturate(
+                            genericCardOutlineWidthPx() * 0.035 + genericCardCornerRadiusPx() * 0.003
+                        );
+                        decalOpacity = lerp(0.70, 1.0, fillAlpha * fillAlpha);
+                        decalOpacity = lerp(
+                            decalOpacity,
+                            min(decalOpacity + semanticOutlineLift, 1.0),
+                            outlinePresence
+                        );
+                    }
                     // Convert sRGB text color to linear for correct blending
                     float3 textLinear = srgbToLinear(decal.rgb);
-                    col = lerp(col, textLinear, decal.a);
+                    col = lerp(col, textLinear, decal.a * decalOpacity);
                 }
             }
         }

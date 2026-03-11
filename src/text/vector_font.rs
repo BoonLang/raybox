@@ -169,7 +169,11 @@ impl VectorFont {
 
     /// Merge glyphs from another TTF file with a codepoint offset.
     /// Useful for adding italic/bold variants at higher codepoint ranges.
-    pub fn merge_from_ttf(&mut self, data: &[u8], codepoint_offset: u32) -> Result<(), &'static str> {
+    pub fn merge_from_ttf(
+        &mut self,
+        data: &[u8],
+        codepoint_offset: u32,
+    ) -> Result<(), &'static str> {
         let face = Face::parse(data, 0).map_err(|_| "Failed to parse TTF")?;
         let units_per_em = face.units_per_em() as f32;
 
@@ -347,6 +351,4 @@ mod tests {
         assert!(curve.intersects_aabb(&[0.5, 0.0, 1.0, 0.5]));
         assert!(!curve.intersects_aabb(&[2.0, 2.0, 3.0, 3.0]));
     }
-
 }
-

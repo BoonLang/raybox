@@ -6,6 +6,7 @@
 use super::{create_demo, Demo, DemoContext, DemoId, DemoType};
 use crate::camera::FlyCamera;
 use crate::constants::{HEIGHT, WIDTH};
+use crate::demo_core::UiPhysicalCameraPreset;
 #[allow(unused_imports)]
 use crate::input::{InputAction, InputHandler, OverlayMode};
 
@@ -17,7 +18,7 @@ use crate::control::{
 };
 
 #[cfg(feature = "hot-reload")]
-use crate::hot_reload::{ReloadableState, OverlayModeState, ShaderLoader};
+use crate::hot_reload::{OverlayModeState, ReloadableState, ShaderLoader};
 
 // Convert input::OverlayMode to OverlayModeState for hot-reload state
 #[cfg(feature = "hot-reload")]
@@ -46,11 +47,91 @@ use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
-use winit::application::ApplicationHandler;
+
+const ACTIVE_FRAME_TIME: Duration = Duration::from_micros(16_667);
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(not(feature = "control"), allow(dead_code))]
+enum DemoUserEvent {
+    Wake,
+}
+
+#[cfg(feature = "control")]
+fn parse_control_keycode(key: &str) -> Option<KeyCode> {
+    match key {
+        "0" => Some(KeyCode::Digit0),
+        "1" => Some(KeyCode::Digit1),
+        "2" => Some(KeyCode::Digit2),
+        "3" => Some(KeyCode::Digit3),
+        "4" => Some(KeyCode::Digit4),
+        "5" => Some(KeyCode::Digit5),
+        "6" => Some(KeyCode::Digit6),
+        "7" => Some(KeyCode::Digit7),
+        "8" => Some(KeyCode::Digit8),
+        "9" => Some(KeyCode::Digit9),
+        "-" => Some(KeyCode::Minus),
+        "=" => Some(KeyCode::Equal),
+        "a" | "A" => Some(KeyCode::KeyA),
+        "b" | "B" => Some(KeyCode::KeyB),
+        "c" | "C" => Some(KeyCode::KeyC),
+        "d" | "D" => Some(KeyCode::KeyD),
+        "e" | "E" => Some(KeyCode::KeyE),
+        "f" | "F" => Some(KeyCode::KeyF),
+        "g" | "G" => Some(KeyCode::KeyG),
+        "h" | "H" => Some(KeyCode::KeyH),
+        "i" | "I" => Some(KeyCode::KeyI),
+        "j" | "J" => Some(KeyCode::KeyJ),
+        "k" | "K" => Some(KeyCode::KeyK),
+        "l" | "L" => Some(KeyCode::KeyL),
+        "m" | "M" => Some(KeyCode::KeyM),
+        "n" | "N" => Some(KeyCode::KeyN),
+        "o" | "O" => Some(KeyCode::KeyO),
+        "p" | "P" => Some(KeyCode::KeyP),
+        "q" | "Q" => Some(KeyCode::KeyQ),
+        "r" | "R" => Some(KeyCode::KeyR),
+        "s" | "S" => Some(KeyCode::KeyS),
+        "t" | "T" => Some(KeyCode::KeyT),
+        "u" | "U" => Some(KeyCode::KeyU),
+        "v" | "V" => Some(KeyCode::KeyV),
+        "w" | "W" => Some(KeyCode::KeyW),
+        "x" | "X" => Some(KeyCode::KeyX),
+        "y" | "Y" => Some(KeyCode::KeyY),
+        "z" | "Z" => Some(KeyCode::KeyZ),
+        "up" | "Up" | "UP" => Some(KeyCode::ArrowUp),
+        "down" | "Down" | "DOWN" => Some(KeyCode::ArrowDown),
+        "left" | "Left" | "LEFT" => Some(KeyCode::ArrowLeft),
+        "right" | "Right" | "RIGHT" => Some(KeyCode::ArrowRight),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "control")]
+fn apply_list_item_command(
+    demo: &mut dyn Demo,
+    index: usize,
+    completed: Option<bool>,
+    label: Option<&str>,
+    toggle: bool,
+) -> bool {
+    let mut changed = false;
+
+    if toggle {
+        changed |= demo.toggle_list_item(index);
+    }
+    if let Some(completed) = completed {
+        changed |= demo.set_list_item_completed(index, completed);
+    }
+    if let Some(label) = label {
+        changed |= demo.set_list_item_label(index, label);
+    }
+
+    changed
+}
 
 /// Demo runner state
 pub struct DemoRunner {
@@ -62,7 +143,6 @@ pub struct DemoRunner {
 
     // Current demo
     current_demo: Box<dyn Demo>,
-    current_demo_id: DemoId,
 
     // Camera and input
     camera: FlyCamera,
@@ -81,6 +161,8 @@ pub struct DemoRunner {
     // Timing
     start_time: std::time::Instant,
     last_frame_time: std::time::Instant,
+    needs_redraw: bool,
+    was_continuous_redraw_active: bool,
 
     // Control server integration
     #[cfg(feature = "control")]
@@ -107,15 +189,13 @@ impl DemoRunner {
         }))
         .context("Failed to find a suitable GPU adapter")?;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("RayBox Device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::default(),
-                trace: wgpu::Trace::Off,
-            },
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("RayBox Device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::Off,
+        }))
         .context("Failed to create device")?;
 
         let surface_caps = surface.get_capabilities(&adapter);
@@ -167,7 +247,6 @@ impl DemoRunner {
             queue,
             config,
             current_demo,
-            current_demo_id: initial_demo,
             camera,
             input,
             overlay,
@@ -176,6 +255,8 @@ impl DemoRunner {
             pressed_keys: HashSet::new(),
             start_time: std::time::Instant::now(),
             last_frame_time: std::time::Instant::now(),
+            needs_redraw: true,
+            was_continuous_redraw_active: false,
             #[cfg(feature = "control")]
             control_state: None,
             #[cfg(feature = "hot-reload")]
@@ -193,7 +274,7 @@ impl DemoRunner {
     #[cfg(feature = "hot-reload")]
     pub fn save_state(&self) -> anyhow::Result<()> {
         let state = ReloadableState {
-            current_demo: self.current_demo_id as u8,
+            current_demo: self.current_demo.id() as u8,
             camera_position: self.camera.position.to_array(),
             camera_yaw: self.camera.yaw,
             camera_pitch: self.camera.pitch,
@@ -221,7 +302,7 @@ impl DemoRunner {
 
         // Restore demo
         if let Some(demo_id) = DemoId::from_u8(state.current_demo) {
-            if demo_id != self.current_demo_id {
+            if demo_id != self.current_demo.id() {
                 let _ = self.switch_demo(demo_id);
             }
         }
@@ -238,12 +319,15 @@ impl DemoRunner {
         self.show_keybindings = state.show_keybindings;
 
         // Adjust start time to maintain animation continuity
-        self.start_time = std::time::Instant::now() - std::time::Duration::from_secs_f32(state.time_offset);
+        self.start_time =
+            std::time::Instant::now() - std::time::Duration::from_secs_f32(state.time_offset);
 
         log::info!("State restored from hot-reload");
 
         // Delete the state file after successful restore
         let _ = std::fs::remove_file(&path);
+
+        self.mark_needs_redraw();
 
         Ok(())
     }
@@ -256,7 +340,11 @@ impl DemoRunner {
         // Check if this shader is used by the current demo
         let demo_shader = self.current_demo.shader_name();
         if demo_shader != Some(shader_name) {
-            log::debug!("Shader {} not used by current demo (uses {:?})", shader_name, demo_shader);
+            log::debug!(
+                "Shader {} not used by current demo (uses {:?})",
+                shader_name,
+                demo_shader
+            );
             return Ok(());
         }
 
@@ -266,10 +354,10 @@ impl DemoRunner {
         match result {
             Ok(shader_module) => {
                 // Recreate the pipeline for the current demo
-                self.current_demo.on_shader_reload(self.create_pipeline_for_shader(
-                    &shader_module,
-                    self.config.format,
-                ));
+                self.current_demo.on_shader_reload(
+                    self.create_pipeline_for_shader(&shader_module, self.config.format),
+                );
+                self.mark_needs_redraw();
                 log::info!("Shader {} reloaded successfully", shader_name);
                 Ok(())
             }
@@ -288,55 +376,60 @@ impl DemoRunner {
         surface_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
         // Create a generic pipeline layout (demos that need specific layouts will override)
-        let bind_group_layout = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Hot-reload Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+        let bind_group_layout =
+            self.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Hot-reload Bind Group Layout"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
+
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Hot-reload Pipeline Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        self.device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Hot-reload Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: shader_module,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
                 },
-                count: None,
-            }],
-        });
-
-        let pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Hot-reload Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Hot-reload Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: shader_module,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: shader_module,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        })
+                fragment: Some(wgpu::FragmentState {
+                    module: shader_module,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            })
     }
 
     fn switch_demo(&mut self, new_id: DemoId) -> Result<()> {
-        if new_id == self.current_demo_id {
+        if new_id == self.current_demo.id() {
             return Ok(());
         }
 
@@ -356,12 +449,14 @@ impl DemoRunner {
         self.input = InputHandler::new(camera_config);
         self.camera = FlyCamera::default();
         self.input.setup_camera(&mut self.camera);
+        self.enforce_ui_physical_camera_policy();
 
         // Reset 2D controls if switching to 2D demo
         self.pressed_keys.clear();
 
         self.current_demo = new_demo;
-        self.current_demo_id = new_id;
+        self.reset_frame_timing();
+        self.mark_needs_redraw();
 
         self.update_window_title();
         Ok(())
@@ -373,22 +468,218 @@ impl DemoRunner {
         self.last_frame_time = now;
 
         self.input.update_frame_time(dt);
-        self.sync_todomvc3d_scale_factor();
+        self.sync_demo_scale_factor();
 
         // Process control commands
         #[cfg(feature = "control")]
         self.process_control_commands();
 
-        match self.current_demo.demo_type() {
-            DemoType::Scene3D => {
-                self.input.update_camera(&mut self.camera, dt);
-            }
-            DemoType::Scene2D => {
-                self.update_2d_controls(dt);
-            }
+        let demo_type = self.current_demo.demo_type();
+        if demo_type == DemoType::World3D {
+            self.input.update_camera(&mut self.camera, dt);
+        } else if demo_type == DemoType::UiPhysical {
+            self.input.update_ui_physical_camera(&mut self.camera, dt);
+            self.enforce_ui_physical_camera_policy();
+        } else if demo_type.uses_2d_view_controls() {
+            self.update_2d_controls(dt);
         }
 
         self.current_demo.update(dt, &mut self.camera);
+        self.enforce_ui_physical_camera_policy();
+    }
+
+    fn ui_physical_camera_target(&self) -> glam::Vec3 {
+        self.current_demo.camera_config().look_at_target
+    }
+
+    fn ui_physical_camera_preset(&self) -> UiPhysicalCameraPreset {
+        self.current_demo
+            .ui_physical_camera_preset()
+            .unwrap_or_default()
+    }
+
+    fn orbit_ui_physical_camera(&mut self, delta: (f64, f64)) {
+        if self.current_demo.demo_type() != DemoType::UiPhysical {
+            return;
+        }
+
+        let target = self.ui_physical_camera_target();
+        let preset = self.ui_physical_camera_preset();
+        let mut rel = self.camera.position - target;
+        if !rel.is_finite() || rel.length_squared() <= f32::EPSILON {
+            rel = preset.fallback_offset;
+        }
+
+        let distance = rel.length().clamp(preset.min_distance, preset.max_distance);
+        let mut azimuth = rel.x.atan2(rel.z);
+        let mut elevation = (rel.y / distance).clamp(-1.0, 1.0).asin();
+        let sensitivity = self.camera.look_sensitivity * 2.2;
+
+        azimuth -= delta.0 as f32 * sensitivity;
+        elevation = (elevation - delta.1 as f32 * sensitivity)
+            .clamp(preset.min_elevation, preset.max_elevation);
+
+        let cos_elev = elevation.cos();
+        let new_rel = glam::Vec3::new(
+            distance * cos_elev * azimuth.sin(),
+            distance * elevation.sin(),
+            distance * cos_elev * azimuth.cos(),
+        );
+
+        self.camera.position = target + new_rel;
+        self.enforce_ui_physical_camera_policy();
+    }
+
+    fn enforce_ui_physical_camera_policy(&mut self) {
+        if self.current_demo.demo_type() != DemoType::UiPhysical {
+            return;
+        }
+
+        let target = self.ui_physical_camera_target();
+        let preset = self.ui_physical_camera_preset();
+        let mut rel = self.camera.position - target;
+        if !rel.is_finite() || rel.length_squared() <= f32::EPSILON {
+            rel = preset.fallback_offset;
+        }
+
+        rel.x = rel.x.clamp(-preset.clamp_x, preset.clamp_x);
+        rel.y = rel.y.clamp(preset.min_height, preset.max_height);
+        rel.z = rel.z.clamp(-preset.clamp_z, preset.clamp_z);
+
+        let distance = rel.length();
+        if distance < preset.min_distance {
+            rel = rel.normalize_or_zero() * preset.min_distance;
+            if rel.length_squared() <= f32::EPSILON {
+                rel = preset.fallback_offset;
+            }
+        } else if distance > preset.max_distance {
+            rel = rel.normalize() * preset.max_distance;
+        }
+
+        self.camera.position = target + rel;
+        self.camera.roll = 0.0;
+        self.camera.move_speed = self.camera.move_speed.clamp(0.5, 8.0);
+        self.camera.look_at(target);
+    }
+
+    fn adjust_ui_physical_zoom(&mut self, delta: winit::event::MouseScrollDelta) {
+        if self.current_demo.demo_type() != DemoType::UiPhysical {
+            return;
+        }
+
+        let scroll = match delta {
+            winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+            winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.02,
+        };
+
+        let target = self.ui_physical_camera_target();
+        let preset = self.ui_physical_camera_preset();
+        let mut rel = self.camera.position - target;
+        if !rel.is_finite() || rel.length_squared() <= f32::EPSILON {
+            rel = preset.fallback_offset;
+        }
+
+        let distance = rel.length().max(0.001);
+        let zoom_scale = (1.0 - scroll * 0.08).clamp(0.6, 1.4);
+        let new_distance = (distance * zoom_scale).clamp(preset.min_distance, preset.max_distance);
+        self.camera.position = target + rel.normalize_or_zero() * new_distance;
+        self.enforce_ui_physical_camera_policy();
+    }
+
+    fn mark_needs_redraw(&mut self) {
+        self.needs_redraw = true;
+    }
+
+    fn reset_frame_timing(&mut self) {
+        self.last_frame_time = Instant::now();
+    }
+
+    fn wants_continuous_redraw(&self) -> bool {
+        self.current_demo.wants_continuous_redraw()
+    }
+
+    fn demo_needs_redraw(&self) -> bool {
+        self.current_demo.needs_redraw()
+    }
+
+    fn has_active_interaction(&self) -> bool {
+        match self.current_demo.demo_type() {
+            DemoType::Ui2D => self.has_active_2d_interaction(),
+            DemoType::UiPhysical => self.has_active_ui_physical_interaction(),
+            DemoType::World3D => self.has_active_world3d_interaction(),
+        }
+    }
+
+    fn has_active_world3d_interaction(&self) -> bool {
+        const CONTINUOUS_KEYS: &[KeyCode] = &[
+            KeyCode::KeyW,
+            KeyCode::KeyA,
+            KeyCode::KeyS,
+            KeyCode::KeyD,
+            KeyCode::Space,
+            KeyCode::ControlLeft,
+            KeyCode::ControlRight,
+            KeyCode::KeyQ,
+            KeyCode::KeyE,
+        ];
+
+        CONTINUOUS_KEYS
+            .iter()
+            .any(|key| self.input.pressed_keys.contains(key))
+    }
+
+    fn has_active_ui_physical_interaction(&self) -> bool {
+        const CONTINUOUS_KEYS: &[KeyCode] = &[
+            KeyCode::KeyW,
+            KeyCode::KeyA,
+            KeyCode::KeyS,
+            KeyCode::KeyD,
+            KeyCode::Space,
+            KeyCode::ControlLeft,
+            KeyCode::ControlRight,
+        ];
+
+        CONTINUOUS_KEYS
+            .iter()
+            .any(|key| self.input.pressed_keys.contains(key))
+    }
+
+    fn has_active_2d_interaction(&self) -> bool {
+        const CONTINUOUS_KEYS: &[KeyCode] = &[
+            KeyCode::KeyW,
+            KeyCode::KeyA,
+            KeyCode::KeyS,
+            KeyCode::KeyD,
+            KeyCode::ArrowUp,
+            KeyCode::ArrowDown,
+            KeyCode::KeyQ,
+            KeyCode::KeyE,
+        ];
+
+        CONTINUOUS_KEYS
+            .iter()
+            .any(|key| self.pressed_keys.contains(key))
+    }
+
+    fn continuous_redraw_active(&self) -> bool {
+        self.wants_continuous_redraw() || self.has_active_interaction()
+    }
+
+    fn handle_continuous_redraw_transition(&mut self) {
+        let is_active = self.has_active_interaction();
+        if is_active && !self.was_continuous_redraw_active {
+            self.reset_frame_timing();
+        }
+        self.was_continuous_redraw_active = is_active;
+    }
+
+    #[cfg(feature = "control")]
+    fn has_pending_control_commands(&self) -> bool {
+        self.control_state
+            .as_ref()
+            .and_then(|state| state.read().ok())
+            .map(|state| state.has_commands())
+            .unwrap_or(false)
     }
 
     /// Process pending control commands
@@ -399,19 +690,21 @@ impl DemoRunner {
             None => return,
         };
 
-        // Get pending command
-        let pending = {
-            let mut guard = match state.write() {
-                Ok(g) => g,
-                Err(_) => return,
+        loop {
+            let pending = {
+                let mut guard = match state.write() {
+                    Ok(g) => g,
+                    Err(_) => return,
+                };
+                guard.pop_command()
             };
-            guard.pop_command()
-        };
 
-        if let Some(cmd) = pending {
+            let Some(cmd) = pending else {
+                break;
+            };
+
             let response = self.handle_control_command(cmd.id, cmd.command);
 
-            // Send response
             if let Ok(mut guard) = state.write() {
                 guard.push_response(response);
             }
@@ -422,26 +715,32 @@ impl DemoRunner {
     #[cfg(feature = "control")]
     fn handle_control_command(&mut self, id: u64, command: Command) -> ResponseMessage {
         match command {
-            Command::SwitchDemo { id: demo_id } => {
-                match DemoId::from_u8(demo_id) {
-                    Some(new_id) => {
-                        if let Err(e) = self.switch_demo(new_id) {
-                            ResponseMessage::error(id, ErrorCode::Internal, e.to_string())
-                        } else {
-                            ResponseMessage::success(id, Some(serde_json::json!({
+            Command::SwitchDemo { id: demo_id } => match DemoId::from_u8(demo_id) {
+                Some(new_id) => {
+                    if let Err(e) = self.switch_demo(new_id) {
+                        ResponseMessage::error(id, ErrorCode::Internal, e.to_string())
+                    } else {
+                        ResponseMessage::success(
+                            id,
+                            Some(serde_json::json!({
                                 "demo": demo_id,
                                 "name": new_id.name()
-                            })))
-                        }
+                            })),
+                        )
                     }
-                    None => ResponseMessage::error(
-                        id,
-                        ErrorCode::InvalidDemoId,
-                        format!("Invalid demo ID: {}", demo_id),
-                    ),
                 }
-            }
-            Command::SetCamera { position, yaw, pitch, roll } => {
+                None => ResponseMessage::error(
+                    id,
+                    ErrorCode::InvalidDemoId,
+                    format!("Invalid demo ID: {}", demo_id),
+                ),
+            },
+            Command::SetCamera {
+                position,
+                yaw,
+                pitch,
+                roll,
+            } => {
                 if let Some(pos) = position {
                     self.camera.position = glam::Vec3::from_array(pos);
                 }
@@ -454,11 +753,10 @@ impl DemoRunner {
                 if let Some(r) = roll {
                     self.camera.roll = r;
                 }
+                self.enforce_ui_physical_camera_policy();
                 ResponseMessage::success(id, None)
             }
-            Command::Screenshot { center_crop } => {
-                self.capture_screenshot(id, center_crop)
-            }
+            Command::Screenshot { center_crop } => self.capture_screenshot(id, center_crop),
             Command::GetStatus => {
                 let status = self.get_status();
                 ResponseMessage::new(id, status.to_response())
@@ -481,20 +779,16 @@ impl DemoRunner {
                     "r" | "R" => self.input.reset_roll(&mut self.camera),
                     "t" | "T" => self.input.reset_camera(&mut self.camera),
                     "n" | "N" => {
-                        if self.current_demo_id == DemoId::TodoMvc3D {
-                            if let Some(demo) = self.current_demo.as_any_mut().downcast_mut::<super::todomvc_3d::TodoMvc3DDemo>() {
-                                demo.cycle_theme();
-                            }
-                        }
+                        let _ = self.current_demo.handle_key_pressed(KeyCode::KeyN);
                     }
                     "m" | "M" => {
-                        if self.current_demo_id == DemoId::TodoMvc3D {
-                            if let Some(demo) = self.current_demo.as_any_mut().downcast_mut::<super::todomvc_3d::TodoMvc3DDemo>() {
-                                demo.toggle_dark_mode();
-                            }
+                        let _ = self.current_demo.handle_key_pressed(KeyCode::KeyM);
+                    }
+                    _ => {
+                        if let Some(code) = parse_control_keycode(&key) {
+                            let _ = self.current_demo.handle_key_pressed(code);
                         }
                     }
-                    _ => {}
                 }
                 ResponseMessage::success(id, None)
             }
@@ -504,57 +798,168 @@ impl DemoRunner {
                     // Try to reload the current demo's shader
                     if let Some(shader_name) = self.current_demo.shader_name() {
                         match self.reload_shader(shader_name) {
-                            Ok(()) => ResponseMessage::success(id, Some(serde_json::json!({
-                                "message": format!("Shader {} reloaded successfully", shader_name),
-                                "shader": shader_name
-                            }))),
-                            Err(e) => ResponseMessage::error(id, ErrorCode::Internal, e.to_string()),
+                            Ok(()) => ResponseMessage::success(
+                                id,
+                                Some(serde_json::json!({
+                                    "message": format!("Shader {} reloaded successfully", shader_name),
+                                    "shader": shader_name
+                                })),
+                            ),
+                            Err(e) => {
+                                ResponseMessage::error(id, ErrorCode::Internal, e.to_string())
+                            }
                         }
                     } else {
-                        ResponseMessage::success(id, Some(serde_json::json!({
-                            "message": "Current demo does not use a named shader"
-                        })))
+                        ResponseMessage::success(
+                            id,
+                            Some(serde_json::json!({
+                                "message": "Current demo does not use a named shader"
+                            })),
+                        )
                     }
                 }
                 #[cfg(not(feature = "hot-reload"))]
                 {
-                    ResponseMessage::success(id, Some(serde_json::json!({
-                        "message": "Shader reload requires hot-reload feature"
-                    })))
+                    ResponseMessage::success(
+                        id,
+                        Some(serde_json::json!({
+                            "message": "Shader reload requires hot-reload feature"
+                        })),
+                    )
                 }
             }
             Command::SetTheme { theme, dark_mode } => {
-                use crate::demos::todomvc_3d::ThemeId;
-                if self.current_demo_id != DemoId::TodoMvc3D {
-                    ResponseMessage::error(id, ErrorCode::InvalidCommand,
-                        "SetTheme only works with TodoMVC 3D demo (demo 8)".to_string())
-                } else if let Some(theme_id) = ThemeId::from_str(&theme) {
-                    if let Some(demo) = self.current_demo.as_any_mut().downcast_mut::<super::todomvc_3d::TodoMvc3DDemo>() {
-                        demo.set_theme(theme_id);
-                        if let Some(dm) = dark_mode {
-                            demo.set_dark_mode(dm);
-                        }
-                        ResponseMessage::success(id, Some(serde_json::json!({
-                            "theme": theme_id.name(),
-                            "dark_mode": demo.dark_mode,
-                        })))
-                    } else {
-                        ResponseMessage::error(id, ErrorCode::Internal, "Failed to downcast demo".to_string())
-                    }
+                let options = self.current_demo.named_theme_options();
+                if options.is_empty() {
+                    ResponseMessage::error(
+                        id,
+                        ErrorCode::InvalidCommand,
+                        "Current demo does not support named themes".to_string(),
+                    )
+                } else if let Some((theme_name, dark_mode)) =
+                    self.current_demo.set_named_theme(&theme, dark_mode)
+                {
+                    ResponseMessage::success(
+                        id,
+                        Some(serde_json::json!({
+                            "theme": theme_name,
+                            "dark_mode": dark_mode,
+                        })),
+                    )
                 } else {
-                    ResponseMessage::error(id, ErrorCode::InvalidTheme,
-                        format!("Invalid theme: {}. Valid: classic2d, professional, neobrutalism, glassmorphism, neumorphism", theme))
+                    let message = if options.is_empty() {
+                        format!("Invalid theme: {}", theme)
+                    } else {
+                        format!("Invalid theme: {}. Valid: {}", theme, options.join(", "))
+                    };
+                    ResponseMessage::error(id, ErrorCode::InvalidTheme, message)
                 }
             }
-            Command::Ping => {
-                ResponseMessage::new(id, Response::Pong)
+            Command::SetListItem {
+                index,
+                completed,
+                label,
+                toggle,
+            } => {
+                if !self.current_demo.has_list_command_target() {
+                    ResponseMessage::error(
+                        id,
+                        ErrorCode::InvalidCommand,
+                        "Current demo does not support list item commands".to_string(),
+                    )
+                } else {
+                    let index = index as usize;
+                    let changed = apply_list_item_command(
+                        self.current_demo.as_mut(),
+                        index,
+                        completed,
+                        label.as_deref(),
+                        toggle,
+                    );
+
+                    ResponseMessage::success(
+                        id,
+                        Some(serde_json::json!({
+                            "index": index,
+                            "changed": changed,
+                        })),
+                    )
+                }
             }
+            Command::SetListFilter { filter } => {
+                if !self.current_demo.has_list_command_target() {
+                    ResponseMessage::error(
+                        id,
+                        ErrorCode::InvalidCommand,
+                        "Current demo does not support list filter commands".to_string(),
+                    )
+                } else if let Some(filter_kind) =
+                    crate::demo_core::ListFilter::from_str(&filter.to_ascii_lowercase())
+                {
+                    let changed = self.current_demo.set_list_filter(filter_kind);
+
+                    ResponseMessage::success(
+                        id,
+                        Some(serde_json::json!({
+                            "filter": filter_kind.name(),
+                            "changed": changed,
+                        })),
+                    )
+                } else {
+                    ResponseMessage::error(
+                        id,
+                        ErrorCode::InvalidCommand,
+                        format!(
+                            "Invalid list filter: {}. Valid: all, active, completed",
+                            filter
+                        ),
+                    )
+                }
+            }
+            Command::SetListScroll { offset_y } => {
+                if !self.current_demo.has_list_command_target() {
+                    ResponseMessage::error(
+                        id,
+                        ErrorCode::InvalidCommand,
+                        "Current demo does not support list scroll commands".to_string(),
+                    )
+                } else {
+                    self.current_demo.set_list_scroll_offset(offset_y);
+
+                    ResponseMessage::success(
+                        id,
+                        Some(serde_json::json!({
+                            "offset_y": offset_y,
+                        })),
+                    )
+                }
+            }
+            Command::SetNamedScroll { name, offset_y } => {
+                if !self.current_demo.has_named_scroll_target() {
+                    ResponseMessage::error(
+                        id,
+                        ErrorCode::InvalidCommand,
+                        "Current demo does not support named scroll commands".to_string(),
+                    )
+                } else {
+                    let changed = self.current_demo.set_named_scroll_offset(&name, offset_y);
+                    ResponseMessage::success(
+                        id,
+                        Some(serde_json::json!({
+                            "name": name,
+                            "offset_y": offset_y,
+                            "changed": changed,
+                        })),
+                    )
+                }
+            }
+            Command::Ping => ResponseMessage::new(id, Response::Pong),
         }
     }
 
     /// Capture a screenshot and return as base64, optionally cropping to a centered region
     #[cfg(feature = "control")]
-    fn capture_screenshot(&self, id: u64, center_crop: Option<[u32; 2]>) -> ResponseMessage {
+    fn capture_screenshot(&mut self, id: u64, center_crop: Option<[u32; 2]>) -> ResponseMessage {
         // Create a texture to render to
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Screenshot Texture"),
@@ -574,29 +979,16 @@ impl DemoRunner {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let time = self.start_time.elapsed().as_secs_f32();
 
-        // Render to the texture
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Screenshot Encoder"),
-        });
+        self.prepare_frame(time);
 
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Screenshot Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
+        // Render to the texture
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Screenshot Encoder"),
             });
 
-            self.current_demo.render(&mut render_pass, &self.queue, time);
-        }
+        self.encode_scene_pass(&mut encoder, &view, time);
 
         // Create buffer for reading back
         let bytes_per_row = (self.config.width * 4 + 255) & !255; // Align to 256
@@ -647,7 +1039,8 @@ impl DemoRunner {
                 let data = buffer_slice.get_mapped_range();
 
                 // Remove padding from rows
-                let mut pixels = Vec::with_capacity((self.config.width * self.config.height * 4) as usize);
+                let mut pixels =
+                    Vec::with_capacity((self.config.width * self.config.height * 4) as usize);
                 for y in 0..self.config.height {
                     let start = (y * bytes_per_row) as usize;
                     let end = start + (self.config.width * 4) as usize;
@@ -673,19 +1066,26 @@ impl DemoRunner {
                 };
 
                 // Apply center crop if requested
-                let (final_img, final_w, final_h): (Box<dyn std::ops::Deref<Target = [u8]>>, u32, u32) =
-                    if let Some([crop_w, crop_h]) = center_crop {
-                        let cw = crop_w.min(self.config.width);
-                        let ch = crop_h.min(self.config.height);
-                        let cx = (self.config.width.saturating_sub(cw)) / 2;
-                        let cy = (self.config.height.saturating_sub(ch)) / 2;
-                        let cropped = image::imageops::crop_imm(&img, cx, cy, cw, ch).to_image();
-                        let w = cropped.width();
-                        let h = cropped.height();
-                        (Box::new(cropped.into_raw()), w, h)
-                    } else {
-                        (Box::new(img.into_raw()), self.config.width, self.config.height)
-                    };
+                let (final_img, final_w, final_h): (
+                    Box<dyn std::ops::Deref<Target = [u8]>>,
+                    u32,
+                    u32,
+                ) = if let Some([crop_w, crop_h]) = center_crop {
+                    let cw = crop_w.min(self.config.width);
+                    let ch = crop_h.min(self.config.height);
+                    let cx = (self.config.width.saturating_sub(cw)) / 2;
+                    let cy = (self.config.height.saturating_sub(ch)) / 2;
+                    let cropped = image::imageops::crop_imm(&img, cx, cy, cw, ch).to_image();
+                    let w = cropped.width();
+                    let h = cropped.height();
+                    (Box::new(cropped.into_raw()), w, h)
+                } else {
+                    (
+                        Box::new(img.into_raw()),
+                        self.config.width,
+                        self.config.height,
+                    )
+                };
 
                 let final_img_buf: image::ImageBuffer<image::Rgba<u8>, _> =
                     image::ImageBuffer::from_raw(final_w, final_h, final_img.to_vec()).unwrap();
@@ -704,11 +1104,14 @@ impl DemoRunner {
                 use base64::Engine;
                 let base64_str = base64::engine::general_purpose::STANDARD.encode(&png_data);
 
-                ResponseMessage::new(id, Response::Screenshot {
-                    base64: base64_str,
-                    width: final_w,
-                    height: final_h,
-                })
+                ResponseMessage::new(
+                    id,
+                    Response::Screenshot {
+                        base64: base64_str,
+                        width: final_w,
+                        height: final_h,
+                    },
+                )
             }
             _ => ResponseMessage::error(
                 id,
@@ -728,8 +1131,9 @@ impl DemoRunner {
         };
 
         AppStatus {
-            current_demo: self.current_demo_id as u8,
+            current_demo: self.current_demo.id() as u8,
             demo_name: self.current_demo.name().to_string(),
+            demo_family: self.current_demo.demo_type().family_name().to_string(),
             camera_position: self.camera.position.to_array(),
             camera_yaw: self.camera.yaw,
             camera_pitch: self.camera.pitch,
@@ -741,7 +1145,7 @@ impl DemoRunner {
     }
 
     fn update_2d_controls(&mut self, dt: f32) {
-        if self.current_demo.demo_type() != DemoType::Scene2D {
+        if !self.current_demo.demo_type().uses_2d_view_controls() {
             return;
         }
 
@@ -780,120 +1184,89 @@ impl DemoRunner {
             rotation_delta -= rot_speed;
         }
 
-        // Apply to demo (requires downcasting to each 2D demo type)
-        if let Some(text2d) = self.current_demo.as_any_mut().downcast_mut::<super::text2d::Text2DDemo>() {
-            text2d.offset[0] += offset_delta[0] / text2d.scale;
-            text2d.offset[1] += offset_delta[1] / text2d.scale;
-            text2d.scale *= scale_factor;
-            text2d.scale = text2d.scale.clamp(0.1, 10.0);
-            text2d.rotation += rotation_delta;
-        } else if let Some(todomvc) = self.current_demo.as_any_mut().downcast_mut::<super::todomvc::TodoMvcDemo>() {
-            todomvc.offset[0] += offset_delta[0] / todomvc.scale;
-            todomvc.offset[1] += offset_delta[1] / todomvc.scale;
-            todomvc.scale *= scale_factor;
-            todomvc.scale = todomvc.scale.clamp(0.1, 10.0);
-            todomvc.rotation += rotation_delta;
-        }
+        self.current_demo
+            .apply_2d_view_controls(offset_delta, scale_factor, rotation_delta);
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let time = self.start_time.elapsed().as_secs_f32();
-
-        // Update demo-specific uniforms
-        self.update_demo_uniforms(time);
-
-        // Update overlay
-        self.update_overlay();
+        self.prepare_frame(time);
 
         let output = self.surface.get_current_texture()?;
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
-
-        // Pass 1: Main scene
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Scene Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
             });
 
-            self.current_demo.render(&mut render_pass, &self.queue, time);
-        }
-
-        // Pass 2: Overlay (preserves content, blends on top)
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Overlay Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            self.overlay.render(&mut render_pass);
-        }
+        self.encode_scene_pass(&mut encoder, &view, time);
+        self.encode_overlay_pass(&mut encoder, &view);
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
         let _ = self.device.poll(wgpu::PollType::Poll);
+        self.needs_redraw = false;
 
         Ok(())
     }
 
+    fn prepare_frame(&mut self, time: f32) {
+        self.current_demo.prepare_frame(&self.queue);
+        self.update_demo_uniforms(time);
+        self.update_overlay();
+    }
+
+    fn encode_scene_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        time: f32,
+    ) {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Scene Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        self.current_demo
+            .render(&mut render_pass, &self.queue, time);
+    }
+
+    fn encode_overlay_pass(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Overlay Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        self.overlay.render(&mut render_pass);
+    }
+
     fn update_demo_uniforms(&self, time: f32) {
-        // Update uniforms for demos that need camera data
-        match self.current_demo_id {
-            DemoId::Objects => {
-                if let Some(demo) = self.current_demo.as_any().downcast_ref::<super::objects::ObjectsDemo>() {
-                    demo.update_uniforms(&self.queue, &self.camera, time);
-                }
-            }
-            DemoId::Spheres => {
-                if let Some(demo) = self.current_demo.as_any().downcast_ref::<super::spheres::SpheresDemo>() {
-                    demo.update_uniforms(&self.queue, &self.camera, time);
-                }
-            }
-            DemoId::Towers => {
-                if let Some(demo) = self.current_demo.as_any().downcast_ref::<super::towers::TowersDemo>() {
-                    demo.update_uniforms(&self.queue, &self.camera, time);
-                }
-            }
-            DemoId::Clay => {
-                if let Some(demo) = self.current_demo.as_any().downcast_ref::<super::clay::ClayDemo>() {
-                    demo.update_uniforms(&self.queue, &self.camera, time);
-                }
-            }
-            DemoId::TextShadow => {
-                if let Some(demo) = self.current_demo.as_any().downcast_ref::<super::text_shadow::TextShadowDemo>() {
-                    demo.update_uniforms(&self.queue, &self.camera, time);
-                }
-            }
-            DemoId::TodoMvc3D => {
-                if let Some(demo) = self.current_demo.as_any().downcast_ref::<super::todomvc_3d::TodoMvc3DDemo>() {
-                    demo.update_uniforms(&self.queue, &self.camera, time);
-                }
-            }
-            _ => {}
-        }
+        self.current_demo
+            .update_camera_uniforms(&self.queue, &self.camera, time);
     }
 
     fn update_overlay(&mut self) {
@@ -903,7 +1276,8 @@ impl DemoRunner {
         }
         let keybindings = if self.show_keybindings {
             let demo_bindings = self.current_demo.keybindings();
-            let mut all_bindings = Vec::with_capacity(demo_bindings.len() + super::KEYBINDINGS_COMMON.len());
+            let mut all_bindings =
+                Vec::with_capacity(demo_bindings.len() + super::KEYBINDINGS_COMMON.len());
             all_bindings.extend_from_slice(demo_bindings);
             all_bindings.extend_from_slice(super::KEYBINDINGS_COMMON);
             Some(all_bindings)
@@ -927,29 +1301,21 @@ impl DemoRunner {
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
             self.current_demo.resize(new_size.width, new_size.height);
-            self.sync_todomvc3d_scale_factor();
+            self.sync_demo_scale_factor();
             self.overlay.resize(new_size.width, new_size.height);
+            self.mark_needs_redraw();
         }
     }
 
-    fn sync_todomvc3d_scale_factor(&mut self) {
-        if self.current_demo_id != DemoId::TodoMvc3D {
-            return;
-        }
-
-        if let Some(demo) = self
-            .current_demo
-            .as_any_mut()
-            .downcast_mut::<super::todomvc_3d::TodoMvc3DDemo>()
-        {
-            demo.set_scale_factor(self.window.scale_factor() as f32);
-        }
+    fn sync_demo_scale_factor(&mut self) {
+        self.current_demo
+            .set_window_scale_factor(self.window.scale_factor() as f32);
     }
 
     fn update_window_title(&self) {
         let title = format!(
             "Demo {}: {} | K: show keys",
-            self.current_demo_id as u8,
+            self.current_demo.id() as u8,
             self.current_demo.name()
         );
         self.window.set_title(&title);
@@ -958,18 +1324,47 @@ impl DemoRunner {
     fn handle_key_pressed(&mut self, code: KeyCode, _event_loop: &ActiveEventLoop) {
         // Number keys for demo switching
         match code {
-            KeyCode::Digit0 => { let _ = self.switch_demo(DemoId::Empty); }
-            KeyCode::Digit1 => { let _ = self.switch_demo(DemoId::Objects); }
-            KeyCode::Digit2 => { let _ = self.switch_demo(DemoId::Spheres); }
-            KeyCode::Digit3 => { let _ = self.switch_demo(DemoId::Towers); }
-            KeyCode::Digit4 => { let _ = self.switch_demo(DemoId::Text2D); }
-            KeyCode::Digit5 => { let _ = self.switch_demo(DemoId::Clay); }
-            KeyCode::Digit6 => { let _ = self.switch_demo(DemoId::TextShadow); }
-            KeyCode::Digit7 => { let _ = self.switch_demo(DemoId::TodoMvc); }
-            KeyCode::Digit8 => { let _ = self.switch_demo(DemoId::TodoMvc3D); }
+            KeyCode::Digit0 => {
+                let _ = self.switch_demo(DemoId::Empty);
+            }
+            KeyCode::Digit1 => {
+                let _ = self.switch_demo(DemoId::Objects);
+            }
+            KeyCode::Digit2 => {
+                let _ = self.switch_demo(DemoId::Spheres);
+            }
+            KeyCode::Digit3 => {
+                let _ = self.switch_demo(DemoId::Towers);
+            }
+            KeyCode::Digit4 => {
+                let _ = self.switch_demo(DemoId::Text2D);
+            }
+            KeyCode::Digit5 => {
+                let _ = self.switch_demo(DemoId::Clay);
+            }
+            KeyCode::Digit6 => {
+                let _ = self.switch_demo(DemoId::TextShadow);
+            }
+            KeyCode::Digit7 => {
+                let _ = self.switch_demo(DemoId::TodoMvc);
+            }
+            KeyCode::Digit8 => {
+                let _ = self.switch_demo(DemoId::TodoMvc3D);
+            }
+            KeyCode::Digit9 => {
+                let _ = self.switch_demo(DemoId::RetainedUi);
+            }
+            KeyCode::Minus => {
+                let _ = self.switch_demo(DemoId::RetainedUiPhysical);
+            }
+            KeyCode::Equal => {
+                let _ = self.switch_demo(DemoId::TextPhysical);
+            }
             // Escape handled at top of window_event before keyboard_paused check
             _ => {}
         }
+
+        let _ = self.current_demo.handle_key_pressed(code);
 
         // Track pressed keys for 2D controls
         self.pressed_keys.insert(code);
@@ -984,7 +1379,6 @@ impl DemoRunner {
 pub struct DemoApp {
     runner: Option<DemoRunner>,
     initial_demo: DemoId,
-    last_render: Instant,
     #[cfg(feature = "control")]
     control_state: Option<SharedControlState>,
 }
@@ -994,7 +1388,6 @@ impl DemoApp {
         Self {
             runner: None,
             initial_demo,
-            last_render: Instant::now(),
             #[cfg(feature = "control")]
             control_state: None,
         }
@@ -1008,7 +1401,7 @@ impl DemoApp {
     }
 }
 
-impl ApplicationHandler for DemoApp {
+impl ApplicationHandler<DemoUserEvent> for DemoApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.runner.is_none() {
             let window_attrs = Window::default_attributes()
@@ -1033,6 +1426,7 @@ impl ApplicationHandler for DemoApp {
                     }
 
                     runner.update_window_title();
+                    runner.mark_needs_redraw();
                     self.runner = Some(runner);
                 }
                 Err(e) => {
@@ -1044,14 +1438,30 @@ impl ApplicationHandler for DemoApp {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.runner.is_some() {
-            let target_frametime = Duration::from_secs_f64(1.0 / 60.0);
-            let next_frame = self.last_render + target_frametime;
-            let now = Instant::now();
-            if now >= next_frame {
-                self.runner.as_ref().unwrap().window.request_redraw();
+        if let Some(runner) = self.runner.as_mut() {
+            runner.handle_continuous_redraw_transition();
+
+            #[cfg(feature = "control")]
+            let has_pending_control = runner.has_pending_control_commands();
+            #[cfg(not(feature = "control"))]
+            let has_pending_control = false;
+
+            let should_draw = runner.needs_redraw
+                || has_pending_control
+                || runner.continuous_redraw_active()
+                || runner.demo_needs_redraw();
+
+            if should_draw {
+                runner.window.request_redraw();
             }
-            event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame));
+
+            let control_flow = if runner.continuous_redraw_active() {
+                ControlFlow::WaitUntil(Instant::now() + ACTIVE_FRAME_TIME)
+            } else {
+                ControlFlow::Wait
+            };
+
+            event_loop.set_control_flow(control_flow);
         }
     }
 
@@ -1067,6 +1477,19 @@ impl ApplicationHandler for DemoApp {
         self.runner.take();
     }
 
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: DemoUserEvent) {
+        let Some(runner) = self.runner.as_mut() else {
+            return;
+        };
+
+        match event {
+            DemoUserEvent::Wake => {
+                runner.mark_needs_redraw();
+                runner.window.request_redraw();
+            }
+        }
+    }
+
     fn device_event(
         &mut self,
         _event_loop: &ActiveEventLoop,
@@ -1074,16 +1497,28 @@ impl ApplicationHandler for DemoApp {
         event: DeviceEvent,
     ) {
         if let Some(runner) = self.runner.as_mut() {
-            if runner.current_demo.demo_type() == DemoType::Scene3D {
+            if runner.current_demo.demo_type().uses_camera_controls() {
                 if let DeviceEvent::MouseMotion { delta } = event {
-                    runner.input.handle_mouse_motion(&mut runner.camera, delta);
+                    if runner.current_demo.demo_type() == DemoType::UiPhysical {
+                        if runner.input.mouse_captured {
+                            runner.orbit_ui_physical_camera(delta);
+                        }
+                    } else {
+                        runner.input.handle_mouse_motion(&mut runner.camera, delta);
+                    }
+                    runner.enforce_ui_physical_camera_policy();
+                    if runner.input.mouse_captured {
+                        runner.mark_needs_redraw();
+                    }
                 }
             }
         }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        let Some(runner) = self.runner.as_mut() else { return };
+        let Some(runner) = self.runner.as_mut() else {
+            return;
+        };
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -1097,6 +1532,7 @@ impl ApplicationHandler for DemoApp {
                             runner.pressed_keys.clear();
                             runner.input.pressed_keys.clear();
                         }
+                        runner.mark_needs_redraw();
                         return;
                     }
 
@@ -1111,23 +1547,7 @@ impl ApplicationHandler for DemoApp {
                     match event.state {
                         ElementState::Pressed => {
                             // Handle input actions for 3D demos
-                            if runner.current_demo.demo_type() == DemoType::Scene3D {
-                                // TodoMvc3D-specific keys
-                                if runner.current_demo_id == DemoId::TodoMvc3D {
-                                    match code {
-                                        KeyCode::KeyN => {
-                                            if let Some(demo) = runner.current_demo.as_any_mut().downcast_mut::<super::todomvc_3d::TodoMvc3DDemo>() {
-                                                demo.cycle_theme();
-                                            }
-                                        }
-                                        KeyCode::KeyM => {
-                                            if let Some(demo) = runner.current_demo.as_any_mut().downcast_mut::<super::todomvc_3d::TodoMvc3DDemo>() {
-                                                demo.toggle_dark_mode();
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
+                            if runner.current_demo.demo_type().uses_camera_controls() {
                                 if let Some(action) = runner.input.handle_key(event.clone()) {
                                     match action {
                                         InputAction::Exit => event_loop.exit(),
@@ -1155,18 +1575,10 @@ impl ApplicationHandler for DemoApp {
                                 // Handle 2D demo specific keys
                                 match code {
                                     KeyCode::KeyR => {
-                                        if let Some(text2d) = runner.current_demo.as_any_mut().downcast_mut::<super::text2d::Text2DDemo>() {
-                                            text2d.reset_rotation();
-                                        } else if let Some(todomvc) = runner.current_demo.as_any_mut().downcast_mut::<super::todomvc::TodoMvcDemo>() {
-                                            todomvc.reset_rotation();
-                                        }
+                                        runner.current_demo.reset_2d_rotation();
                                     }
                                     KeyCode::KeyT => {
-                                        if let Some(text2d) = runner.current_demo.as_any_mut().downcast_mut::<super::text2d::Text2DDemo>() {
-                                            text2d.reset_all();
-                                        } else if let Some(todomvc) = runner.current_demo.as_any_mut().downcast_mut::<super::todomvc::TodoMvcDemo>() {
-                                            todomvc.reset_all();
-                                        }
+                                        runner.current_demo.reset_2d_all();
                                     }
                                     KeyCode::KeyF => {
                                         runner.input.toggle_overlay_app();
@@ -1182,19 +1594,26 @@ impl ApplicationHandler for DemoApp {
                             }
 
                             runner.handle_key_pressed(code, event_loop);
+                            runner.mark_needs_redraw();
                         }
                         ElementState::Released => {
-                            if runner.current_demo.demo_type() == DemoType::Scene3D {
+                            if runner.current_demo.demo_type().uses_camera_controls() {
                                 runner.input.handle_key(event);
                             }
                             runner.handle_key_released(code);
+                            runner.mark_needs_redraw();
                         }
                     }
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                if runner.current_demo.demo_type() == DemoType::Scene3D {
-                    runner.input.handle_scroll(&mut runner.camera, delta);
+                if runner.current_demo.demo_type().uses_camera_controls() {
+                    if runner.current_demo.demo_type() == DemoType::UiPhysical {
+                        runner.adjust_ui_physical_zoom(delta);
+                    } else {
+                        runner.input.handle_scroll(&mut runner.camera, delta);
+                    }
+                    runner.mark_needs_redraw();
                 }
             }
             WindowEvent::MouseInput {
@@ -1203,13 +1622,17 @@ impl ApplicationHandler for DemoApp {
                 ..
             } => {
                 runner.keyboard_paused = false;
-                if runner.current_demo.demo_type() == DemoType::Scene3D {
+                if runner.current_demo.demo_type().uses_camera_controls() {
                     runner.input.capture(&runner.window);
                 }
+                runner.mark_needs_redraw();
             }
             WindowEvent::Resized(size) => runner.resize(size),
+            WindowEvent::ScaleFactorChanged { .. } => {
+                runner.sync_demo_scale_factor();
+                runner.mark_needs_redraw();
+            }
             WindowEvent::RedrawRequested => {
-                self.last_render = Instant::now();
                 runner.update();
                 if let Err(e) = runner.render() {
                     eprintln!("Render error: {:?}", e);
@@ -1222,7 +1645,7 @@ impl ApplicationHandler for DemoApp {
 
 /// Run the demo application
 pub fn run(initial_demo: DemoId) -> Result<()> {
-    let event_loop = EventLoop::new()?;
+    let event_loop = EventLoop::<DemoUserEvent>::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = DemoApp::new(initial_demo);
     event_loop.run_app(&mut app)?;
@@ -1232,15 +1655,19 @@ pub fn run(initial_demo: DemoId) -> Result<()> {
 /// Run the demo application with control server enabled
 #[cfg(feature = "control")]
 pub fn run_with_control(initial_demo: DemoId, port: Option<u16>) -> Result<()> {
-    use crate::control::{new_shared_state, WsServer, DEFAULT_WS_PORT};
+    use crate::control::{WsServer, DEFAULT_WS_PORT};
 
     let port = port.unwrap_or(DEFAULT_WS_PORT);
 
-    // Create shared state
-    let _state = new_shared_state();
+    let event_loop = EventLoop::<DemoUserEvent>::with_user_event().build()?;
+    event_loop.set_control_flow(ControlFlow::Wait);
+    let proxy = event_loop.create_proxy();
+    let command_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        let _ = proxy.send_event(DemoUserEvent::Wake);
+    });
 
     // Create WebSocket server
-    let ws_server = WsServer::new();
+    let ws_server = WsServer::with_command_waker(command_waker);
     let ws_state = ws_server.state();
 
     // We need to copy our state to the WS server's state
@@ -1259,9 +1686,6 @@ pub fn run_with_control(initial_demo: DemoId, port: Option<u16>) -> Result<()> {
 
     log::info!("Control server started on ws://127.0.0.1:{}", port);
 
-    // Run the event loop
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = DemoApp::new(initial_demo).with_control(control_state);
     event_loop.run_app(&mut app)?;
     Ok(())

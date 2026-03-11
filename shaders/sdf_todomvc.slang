@@ -3,7 +3,7 @@
 // and exact Bézier SDF text computation from vector font data
 
 struct Uniforms {
-    float2 screenSize;
+    float4 screenParams;  // xy = screenSize, zw = virtualSize
     float2 offset;       // pan offset in pixels (x, y)
     float4 textParams;   // x = charCount, y = scale, z = rotation, w = uiPrimCount
     float4 charGridParams;  // xy = gridDims, zw = cellSize
@@ -409,9 +409,8 @@ float4 renderText(float2 pixelPos, float scale) {
 
 [shader("fragment")]
 float4 fs_main(VertexOutput input) : SV_Target {
-    // Virtual viewport: matches metadata 700x700 capture size
-    static const float2 VIRTUAL_SIZE = float2(700.0, 700.0);
-    float2 actualSize = uniforms.screenSize;
+    float2 VIRTUAL_SIZE = uniforms.screenParams.zw;
+    float2 actualSize = uniforms.screenParams.xy;
 
     // 1:1 pixel mapping — center 700x700 content in actual viewport
     float2 margin = (actualSize - VIRTUAL_SIZE) * 0.5;

@@ -13,9 +13,9 @@ pub mod ws_client;
 pub mod ws_server;
 
 pub use protocol::{
-    Command, ErrorCode, Event, EventMessage, Request, Response, ResponseMessage,
-    DEFAULT_WS_PORT, PROTOCOL_VERSION,
+    Command, ErrorCode, Event, EventMessage, Request, Response, ResponseMessage, DEFAULT_WS_PORT,
+    PROTOCOL_VERSION,
 };
-pub use state::{AppStatus, ControlState, PendingCommand, SharedControlState, new_shared_state};
+pub use state::{new_shared_state, AppStatus, ControlState, PendingCommand, SharedControlState};
 pub use ws_client::{BlockingWsClient, WsClient};
-pub use ws_server::{WsServer, broadcast_event, run_standalone};
+pub use ws_server::{broadcast_event, run_standalone, WsServer};

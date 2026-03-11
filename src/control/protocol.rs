@@ -66,12 +66,35 @@ pub enum Command {
     /// Reload shaders (for hot-reload)
     ReloadShaders,
 
-    /// Set theme for TodoMVC 3D demo
+    /// Set a named theme on demos that support theme switching
     SetTheme {
         theme: String,
         #[serde(default)]
         dark_mode: Option<bool>,
     },
+
+    /// Mutate an item in a list-style retained scene
+    #[serde(alias = "setTodoItem")]
+    SetListItem {
+        index: u32,
+        #[serde(default)]
+        completed: Option<bool>,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        toggle: bool,
+    },
+
+    /// Select the visible list filter
+    #[serde(alias = "setTodoFilter")]
+    SetListFilter { filter: String },
+
+    /// Set list scroll offset in logical pixels
+    #[serde(alias = "setTodoScroll")]
+    SetListScroll { offset_y: f32 },
+
+    /// Set a named retained scroll root offset in logical pixels
+    SetNamedScroll { name: String, offset_y: f32 },
 
     /// Ping for connection testing
     Ping,
@@ -111,6 +134,7 @@ pub enum Response {
     Status {
         current_demo: u8,
         demo_name: String,
+        demo_family: String,
         camera_position: [f32; 3],
         camera_yaw: f32,
         camera_pitch: f32,
@@ -171,7 +195,10 @@ pub enum Event {
     BuildStarted,
 
     /// Build completed (for hot-reload)
-    BuildCompleted { success: bool, error: Option<String> },
+    BuildCompleted {
+        success: bool,
+        error: Option<String>,
+    },
 
     /// WASM module should be reloaded (web hot-reload)
     WasmReload,
@@ -206,5 +233,67 @@ mod tests {
         let resp = ResponseMessage::success(1, None);
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("success"));
+    }
+
+    #[test]
+    fn test_todo_command_deserialization_alias() {
+        let json = r#"{
+            "id": 2,
+            "version": 1,
+            "command": {
+                "type": "setTodoItem",
+                "index": 1,
+                "completed": true,
+                "toggle": false
+            }
+        }"#;
+        let req: Request = serde_json::from_str(json).unwrap();
+        match req.command {
+            Command::SetListItem {
+                index,
+                completed,
+                label,
+                toggle,
+            } => {
+                assert_eq!(index, 1);
+                assert_eq!(completed, Some(true));
+                assert_eq!(label, None);
+                assert!(!toggle);
+            }
+            other => panic!("expected SetListItem alias, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_named_scroll_command_serialization() {
+        let req = Request::new(
+            3,
+            Command::SetNamedScroll {
+                name: "feed_scroll".to_string(),
+                offset_y: 48.0,
+            },
+        );
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("setNamedScroll"));
+        assert!(json.contains("\"name\":\"feed_scroll\""));
+        assert!(json.contains("\"offsetY\":48.0"));
+    }
+
+    #[test]
+    fn test_list_command_serialization() {
+        let req = Request::new(
+            4,
+            Command::SetListItem {
+                index: 1,
+                completed: Some(false),
+                label: Some("alpha".to_string()),
+                toggle: false,
+            },
+        );
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("setListItem"));
+        assert!(json.contains("\"index\":1"));
+        assert!(json.contains("\"completed\":false"));
+        assert!(json.contains("\"label\":\"alpha\""));
     }
 }

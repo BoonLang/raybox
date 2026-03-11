@@ -26,66 +26,39 @@ fn main() -> Result<()> {
     let shaders = [
         ShaderConfig {
             name: "rectangle",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },
         ShaderConfig {
             name: "sdf_raymarch",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },
         ShaderConfig {
             name: "sdf_spheres",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },
         ShaderConfig {
             name: "sdf_towers",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },
         ShaderConfig {
             name: "sdf_clay_vector",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },
         ShaderConfig {
             name: "sdf_text_shadow_vector",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },
         ShaderConfig {
             name: "sdf_text2d_vector",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },
         ShaderConfig {
             name: "sdf_todomvc",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },
         ShaderConfig {
             name: "sdf_todomvc_3d",
-            entries: vec![
-                ("vs_main", "vertex"),
-                ("fs_main", "fragment"),
-            ],
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },
     ];
 
@@ -117,10 +90,7 @@ fn compile_shader(
     // Tell Cargo to rerun if shader changes
     println!("cargo:rerun-if-changed={}", slang_file.display());
 
-    let mut combined_wgsl = format!(
-        "// Generated from {}.slang - DO NOT EDIT\n\n",
-        config.name
-    );
+    let mut combined_wgsl = format!("// Generated from {}.slang - DO NOT EDIT\n\n", config.name);
 
     // Compile each entry point
     for (entry_point, stage) in &config.entries {
@@ -176,11 +146,10 @@ fn generate_bindings(out_dir: &PathBuf, shaders: &[ShaderConfig]) -> Result<()> 
     builder.build()?.generate()?;
 
     // Post-process: convert inner attributes (#![...]) to outer attributes (#[...])
-    let bindings_content = std::fs::read_to_string(&bindings_file)
-        .context("Failed to read generated bindings")?;
+    let bindings_content =
+        std::fs::read_to_string(&bindings_file).context("Failed to read generated bindings")?;
     let fixed_content = bindings_content.replace("#![allow(", "#[allow(");
-    std::fs::write(&bindings_file, fixed_content)
-        .context("Failed to write fixed bindings")?;
+    std::fs::write(&bindings_file, fixed_content).context("Failed to write fixed bindings")?;
 
     Ok(())
 }

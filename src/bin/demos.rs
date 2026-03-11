@@ -4,7 +4,7 @@
 //! With control server: cargo run --bin demos --features windowed,control -- --control
 //!
 //! Controls:
-//! - 0-6: Switch between demos
+//! - 0-9/-/=: Switch between demos
 //! - F: Toggle app stats overlay
 //! - G: Toggle full system stats
 //! - K: Toggle keybindings display
@@ -25,8 +25,12 @@ fn main() -> anyhow::Result<()> {
         .and_then(DemoId::from_u8)
         .unwrap_or(DemoId::Objects);
 
-    println!("Starting unified demos with Demo {}: {}", initial_demo as u8, initial_demo.name());
-    println!("Controls: 0-6 switch demos, F/G stats, K keybindings, Esc exit");
+    println!(
+        "Starting unified demos with Demo {}: {}",
+        initial_demo as u8,
+        initial_demo.name()
+    );
+    println!("Controls: 0-9/-/= switch demos, F/G stats, K keybindings, Esc exit");
 
     #[cfg(feature = "control")]
     if control_mode {

@@ -45,10 +45,7 @@ pub struct WatcherConfig {
 impl Default for WatcherConfig {
     fn default() -> Self {
         Self {
-            watch_paths: vec![
-                "src".to_string(),
-                "shaders".to_string(),
-            ],
+            watch_paths: vec!["src".to_string(), "shaders".to_string()],
             debounce: Duration::from_millis(500),
         }
     }
@@ -129,10 +126,10 @@ impl FileWatcher {
                         FileChange::Shader(p) => p,
                         FileChange::Unknown(p) => p,
                     };
-                    if !unique_changes.iter().any(|c| {
-                        match c {
-                            FileChange::RustSource(p2) | FileChange::Shader(p2) | FileChange::Unknown(p2) => path == p2,
-                        }
+                    if !unique_changes.iter().any(|c| match c {
+                        FileChange::RustSource(p2)
+                        | FileChange::Shader(p2)
+                        | FileChange::Unknown(p2) => path == p2,
                     }) {
                         unique_changes.push(change);
                     }
@@ -146,7 +143,9 @@ impl FileWatcher {
 
     /// Check if any Rust source files changed
     pub fn has_rust_changes(changes: &[FileChange]) -> bool {
-        changes.iter().any(|c| matches!(c, FileChange::RustSource(_)))
+        changes
+            .iter()
+            .any(|c| matches!(c, FileChange::RustSource(_)))
     }
 
     /// Check if any shader files changed

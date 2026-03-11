@@ -2,12 +2,14 @@
 //!
 //! 3D extruded text casting soft shadows on ground plane.
 
-use super::{Demo, DemoContext, DemoId, DemoType, KEYBINDINGS_3D};
-use std::any::Any;
+use super::{
+    world3d_runtime::{vector_text_storage_bindings, VectorTextStorageBuffers, World3dStorageHost},
+    Demo, DemoContext, DemoId, DemoType, KEYBINDINGS_3D,
+};
 use crate::camera::FlyCamera;
 use crate::input::CameraConfig;
 use crate::shader_bindings::sdf_text_shadow_vector;
-use crate::text::{VectorFont, VectorFontAtlas, build_char_grid};
+use crate::text::{build_char_grid, VectorFont, VectorFontAtlas};
 use anyhow::{Context, Result};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -90,7 +92,10 @@ fn build_shadow_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstance> {
 
     let full_text = format!(
         "VECTOR SDF TEXT\n\n{}",
-        format!("{} {} {} {} {} {}", LOREM, LOREM, LOREM, LOREM, LOREM, LOREM)
+        format!(
+            "{} {} {} {} {} {}",
+            LOREM, LOREM, LOREM, LOREM, LOREM, LOREM
+        )
     );
 
     let scale = 0.12;
@@ -184,22 +189,18 @@ fn compute_text_aabb(instances: &[GpuCharInstance], atlas: &VectorFontAtlas) -> 
 }
 
 pub struct TextShadowDemo {
-    pipeline: wgpu::RenderPipeline,
-    uniform_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
+    host: World3dStorageHost<Uniforms>,
     char_count: u32,
     text_aabb: [f32; 4],
     char_grid_params: [f32; 4],
     char_grid_bounds: [f32; 4],
-    width: u32,
-    height: u32,
 }
 
 impl TextShadowDemo {
     pub fn new(ctx: &DemoContext) -> Result<Self> {
         // Load vector font
-        let font_data = std::fs::read("assets/fonts/DejaVuSans.ttf")
-            .context("Failed to load font file")?;
+        let font_data =
+            std::fs::read("assets/fonts/DejaVuSans.ttf").context("Failed to load font file")?;
         let font = VectorFont::from_ttf(&font_data).map_err(|e| anyhow::anyhow!(e))?;
         let atlas = VectorFontAtlas::from_font(&font, 32);
 
@@ -253,18 +254,8 @@ impl TextShadowDemo {
             .iter()
             .map(|(_, entry)| GpuGlyphData {
                 bounds: entry.bounds,
-                grid_info: [
-                    entry.grid_offset,
-                    entry.grid_size[0],
-                    entry.grid_size[1],
-                    0,
-                ],
-                curve_info: [
-                    entry.curve_offset,
-                    entry.curve_count,
-                    0,
-                    0,
-                ],
+                grid_info: [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
+                curve_info: [entry.curve_offset, entry.curve_count, 0, 0],
             })
             .collect();
 
@@ -274,223 +265,138 @@ impl TextShadowDemo {
         uniforms.char_grid_params = char_grid_params;
         uniforms.char_grid_bounds = char_grid_bounds;
 
-        let uniform_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("TextShadow Demo Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[uniforms]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let grid_cells_buffer = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Grid Cells Buffer"),
+                contents: bytemuck::cast_slice(if gpu_grid_cells.is_empty() {
+                    &[GpuGridCell {
+                        curve_start_and_count: 0,
+                    }]
+                } else {
+                    &gpu_grid_cells
+                }),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
-        let grid_cells_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Grid Cells Buffer"),
-            contents: bytemuck::cast_slice(if gpu_grid_cells.is_empty() {
-                &[GpuGridCell { curve_start_and_count: 0 }]
-            } else {
-                &gpu_grid_cells
-            }),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let curve_indices_buffer =
+            ctx.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Curve Indices Buffer"),
+                    contents: bytemuck::cast_slice(if gpu_curve_indices.is_empty() {
+                        &[0u32]
+                    } else {
+                        &gpu_curve_indices
+                    }),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
 
-        let curve_indices_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Curve Indices Buffer"),
-            contents: bytemuck::cast_slice(if gpu_curve_indices.is_empty() {
-                &[0u32]
-            } else {
-                &gpu_curve_indices
-            }),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let curves_buffer = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Curves Buffer"),
+                contents: bytemuck::cast_slice(if gpu_curves.is_empty() {
+                    &[GpuBezierCurve {
+                        points01: [0.0; 4],
+                        points2bbox: [0.0; 4],
+                        bbox_flags: [0.0; 4],
+                    }]
+                } else {
+                    &gpu_curves
+                }),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
-        let curves_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Curves Buffer"),
-            contents: bytemuck::cast_slice(if gpu_curves.is_empty() {
-                &[GpuBezierCurve {
-                    points01: [0.0; 4],
-                    points2bbox: [0.0; 4],
-                    bbox_flags: [0.0; 4],
-                }]
-            } else {
-                &gpu_curves
-            }),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let glyph_data_buffer = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Glyph Data Buffer"),
+                contents: bytemuck::cast_slice(if gpu_glyph_data.is_empty() {
+                    &[GpuGlyphData {
+                        bounds: [0.0; 4],
+                        grid_info: [0; 4],
+                        curve_info: [0; 4],
+                    }]
+                } else {
+                    &gpu_glyph_data
+                }),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
-        let glyph_data_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Glyph Data Buffer"),
-            contents: bytemuck::cast_slice(if gpu_glyph_data.is_empty() {
-                &[GpuGlyphData {
-                    bounds: [0.0; 4],
-                    grid_info: [0; 4],
-                    curve_info: [0; 4],
-                }]
-            } else {
-                &gpu_glyph_data
-            }),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let char_instances_buffer =
+            ctx.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Char Instances Buffer"),
+                    contents: bytemuck::cast_slice(if char_instances.is_empty() {
+                        &[GpuCharInstance {
+                            pos_and_char: [0.0; 4],
+                        }]
+                    } else {
+                        &char_instances
+                    }),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
 
-        let char_instances_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Char Instances Buffer"),
-            contents: bytemuck::cast_slice(if char_instances.is_empty() {
-                &[GpuCharInstance { pos_and_char: [0.0; 4] }]
-            } else {
-                &char_instances
-            }),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let char_grid_cells_buffer =
+            ctx.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Char Grid Cells Buffer"),
+                    contents: bytemuck::cast_slice(&char_grid.cells),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
 
-        let char_grid_cells_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Char Grid Cells Buffer"),
-            contents: bytemuck::cast_slice(&char_grid.cells),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let char_grid_indices_buffer =
+            ctx.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Char Grid Indices Buffer"),
+                    contents: bytemuck::cast_slice(&char_grid.char_indices),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
 
-        let char_grid_indices_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Char Grid Indices Buffer"),
-            contents: bytemuck::cast_slice(&char_grid.char_indices),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let char_grid_dist_buffer =
+            ctx.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Char Grid Distance Field Buffer"),
+                    contents: bytemuck::cast_slice(&char_grid.cell_distances),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
 
-        let char_grid_dist_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Char Grid Distance Field Buffer"),
-            contents: bytemuck::cast_slice(&char_grid.cell_distances),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        // Create bind group layout
-        let storage_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-
-        let bind_group_layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("TextShadow Demo Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                storage_entry(1),
-                storage_entry(2),
-                storage_entry(3),
-                storage_entry(4),
-                storage_entry(5),
-                storage_entry(6),
-                storage_entry(7),
-                storage_entry(8),
-            ],
-        });
-
-        let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("TextShadow Demo Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: grid_cells_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: curve_indices_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: curves_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: glyph_data_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: char_instances_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: char_grid_cells_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: char_grid_indices_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: char_grid_dist_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
-        // Create pipeline
         let shader_module = sdf_text_shadow_vector::create_shader_module_embed_source(ctx.device);
-
-        let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("TextShadow Demo Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+        let storage_bindings = vector_text_storage_bindings(VectorTextStorageBuffers {
+            grid_cells: &grid_cells_buffer,
+            curve_indices: &curve_indices_buffer,
+            curves: &curves_buffer,
+            glyph_data: &glyph_data_buffer,
+            char_instances: &char_instances_buffer,
+            char_grid_cells: &char_grid_cells_buffer,
+            char_grid_indices: &char_grid_indices_buffer,
+            char_grid_distances: Some(&char_grid_dist_buffer),
         });
-
-        let pipeline = ctx.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("TextShadow Demo Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader_module,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader_module,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: ctx.surface_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let host = World3dStorageHost::new(
+            ctx,
+            "TextShadow Demo",
+            &shader_module,
+            &uniforms,
+            &storage_bindings,
+        )?;
 
         Ok(Self {
-            pipeline,
-            uniform_buffer,
-            bind_group,
+            host,
             char_count,
             text_aabb,
             char_grid_params,
             char_grid_bounds,
-            width: ctx.width,
-            height: ctx.height,
         })
     }
 
     pub fn update_uniforms(&self, queue: &wgpu::Queue, camera: &FlyCamera, time: f32) {
         let mut uniforms = Uniforms::default();
-        uniforms.update_from_camera(camera, self.width, self.height, time);
+        uniforms.update_from_camera(camera, self.host.width(), self.host.height(), time);
         uniforms.text_params[0] = self.char_count as f32;
         uniforms.text_aabb = self.text_aabb;
         uniforms.char_grid_params = self.char_grid_params;
         uniforms.char_grid_bounds = self.char_grid_bounds;
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        self.host.write_uniforms(queue, &uniforms);
     }
 }
 
@@ -504,7 +410,7 @@ impl Demo for TextShadowDemo {
     }
 
     fn demo_type(&self) -> DemoType {
-        DemoType::Scene3D
+        DemoType::World3D
     }
 
     fn keybindings(&self) -> &[(&'static str, &'static str)] {
@@ -522,22 +428,20 @@ impl Demo for TextShadowDemo {
         // No updates needed
     }
 
-    fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, _queue: &wgpu::Queue, _time: f32) {
-        render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.draw(0..3, 0..1);
+    fn update_camera_uniforms(&self, queue: &wgpu::Queue, camera: &FlyCamera, time: f32) {
+        self.update_uniforms(queue, camera, time);
+    }
+
+    fn render<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        _queue: &wgpu::Queue,
+        _time: f32,
+    ) {
+        self.host.render(render_pass);
     }
 
     fn resize(&mut self, width: u32, height: u32) {
-        self.width = width;
-        self.height = height;
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
+        self.host.resize(width, height);
     }
 }

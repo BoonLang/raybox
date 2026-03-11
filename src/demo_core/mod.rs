@@ -4,15 +4,54 @@
 //! native (windowed) and web platforms.
 
 mod camera_config;
-mod context;
 mod camera_impls;
+mod context;
 
-pub use camera_config::CameraConfig;
+pub use camera_config::{
+    ui_physical_card_camera_config, ui_physical_card_camera_preset, CameraConfig,
+    UiPhysicalCameraPreset,
+};
 pub use context::DemoContext;
 
-use std::any::Any;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ListFilter {
+    All,
+    Active,
+    Completed,
+}
 
-/// Demo identifier (0-8)
+impl ListFilter {
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "all" => Some(Self::All),
+            "active" => Some(Self::Active),
+            "completed" => Some(Self::Completed),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Active => "active",
+            Self::Completed => "completed",
+        }
+    }
+}
+
+pub trait ListCommandTarget {
+    fn toggle_item(&mut self, index: usize) -> bool;
+    fn set_item_completed(&mut self, index: usize, completed: bool) -> bool;
+    fn set_item_label(&mut self, index: usize, label: &str) -> bool;
+    fn set_filter(&mut self, filter: ListFilter) -> bool;
+    fn set_scroll_offset(&mut self, offset_y: f32);
+}
+
+pub trait NamedScrollTarget {
+    fn set_named_scroll_offset(&mut self, name: &str, offset_y: f32) -> bool;
+}
+
+/// Demo identifier (0-11)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum DemoId {
@@ -25,6 +64,9 @@ pub enum DemoId {
     TextShadow = 6,
     TodoMvc = 7,
     TodoMvc3D = 8,
+    RetainedUi = 9,
+    RetainedUiPhysical = 10,
+    TextPhysical = 11,
 }
 
 impl DemoId {
@@ -39,6 +81,9 @@ impl DemoId {
             6 => Some(Self::TextShadow),
             7 => Some(Self::TodoMvc),
             8 => Some(Self::TodoMvc3D),
+            9 => Some(Self::RetainedUi),
+            10 => Some(Self::RetainedUiPhysical),
+            11 => Some(Self::TextPhysical),
             _ => None,
         }
     }
@@ -54,11 +99,14 @@ impl DemoId {
             Self::TextShadow => "Text Shadow",
             Self::TodoMvc => "TodoMVC",
             Self::TodoMvc3D => "TodoMVC 3D",
+            Self::RetainedUi => "Retained UI",
+            Self::RetainedUiPhysical => "Retained UI Physical",
+            Self::TextPhysical => "Text Physical",
         }
     }
 
     pub fn count() -> u8 {
-        9
+        12
     }
 
     /// Get all demo IDs in order
@@ -73,17 +121,44 @@ impl DemoId {
             DemoId::TextShadow,
             DemoId::TodoMvc,
             DemoId::TodoMvc3D,
+            DemoId::RetainedUi,
+            DemoId::RetainedUiPhysical,
+            DemoId::TextPhysical,
         ]
     }
 }
 
-/// Demo type enumeration for 2D vs 3D demos
+/// Internal demo family used by the runner/runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DemoType {
-    /// 3D demo with FlyCamera (WASD + mouse look)
-    Scene3D,
-    /// 2D demo with pan/zoom/rotate controls
-    Scene2D,
+    /// Retained 2D UI with pan/zoom/rotate controls.
+    Ui2D,
+    /// Physicalized retained UI with inspect-camera controls.
+    UiPhysical,
+    /// Free-camera world-space 3D scene.
+    World3D,
+}
+
+impl DemoType {
+    pub fn family_name(self) -> &'static str {
+        match self {
+            Self::Ui2D => "ui2d",
+            Self::UiPhysical => "uiPhysical",
+            Self::World3D => "world3d",
+        }
+    }
+
+    pub fn uses_2d_view_controls(self) -> bool {
+        matches!(self, Self::Ui2D)
+    }
+
+    pub fn uses_camera_controls(self) -> bool {
+        matches!(self, Self::UiPhysical | Self::World3D)
+    }
+
+    pub fn is_world3d(self) -> bool {
+        matches!(self, Self::World3D)
+    }
 }
 
 /// Overlay display mode
@@ -107,7 +182,7 @@ pub trait Demo: Send {
     /// Get the demo ID
     fn id(&self) -> DemoId;
 
-    /// Get the demo type (2D or 3D)
+    /// Get the internal demo family.
     fn demo_type(&self) -> DemoType;
 
     /// Get keybindings specific to this demo
@@ -126,12 +201,6 @@ pub trait Demo: Send {
 
     /// Handle window resize
     fn resize(&mut self, width: u32, height: u32);
-
-    /// Get as Any for downcasting
-    fn as_any(&self) -> &dyn Any;
-
-    /// Get as Any mut for downcasting
-    fn as_any_mut(&mut self) -> &mut dyn Any;
 
     /// Optional: Get shader name for hot-reload support
     fn shader_name(&self) -> Option<&'static str> {
@@ -182,7 +251,7 @@ pub const KEYBINDINGS_2D: &[(&str, &str)] = &[
 
 /// Common keybindings shown for all demos
 pub const KEYBINDINGS_COMMON: &[(&str, &str)] = &[
-    ("0-8", "Switch demo"),
+    ("0-9/-/=", "Switch demo"),
     ("F", "Toggle stats"),
     ("G", "Full stats"),
     ("K", "Keybindings"),

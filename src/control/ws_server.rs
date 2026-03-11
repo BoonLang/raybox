@@ -4,10 +4,10 @@
 //! and responses back to connected clients.
 
 use super::protocol::{
-    Command, ErrorCode, Event, EventMessage, Request, Response, ResponseMessage,
-    DEFAULT_WS_PORT, PROTOCOL_VERSION,
+    Command, ErrorCode, Event, EventMessage, Request, Response, ResponseMessage, DEFAULT_WS_PORT,
+    PROTOCOL_VERSION,
 };
-use super::state::{SharedControlState, new_shared_state};
+use super::state::{new_shared_state, SharedControlState};
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -19,6 +19,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 pub struct WsServer {
     state: SharedControlState,
     event_tx: broadcast::Sender<EventMessage>,
+    command_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl WsServer {
@@ -28,7 +29,15 @@ impl WsServer {
         Self {
             state: new_shared_state(),
             event_tx,
+            command_waker: None,
         }
+    }
+
+    /// Create a new WebSocket server that wakes the app when commands arrive.
+    pub fn with_command_waker(command_waker: Arc<dyn Fn() + Send + Sync>) -> Self {
+        let mut server = Self::new();
+        server.command_waker = Some(command_waker);
+        server
     }
 
     /// Get a clone of the shared state for the demo app
@@ -51,9 +60,10 @@ impl WsServer {
             log::info!("New WebSocket connection from {}", peer_addr);
             let state = Arc::clone(&self.state);
             let event_rx = self.event_tx.subscribe();
+            let command_waker = self.command_waker.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(stream, state, event_rx).await {
+                if let Err(e) = handle_connection(stream, state, event_rx, command_waker).await {
                     log::error!("WebSocket error for {}: {}", peer_addr, e);
                 }
                 log::info!("WebSocket connection closed for {}", peer_addr);
@@ -75,6 +85,7 @@ async fn handle_connection(
     stream: TcpStream,
     state: SharedControlState,
     mut event_rx: broadcast::Receiver<EventMessage>,
+    command_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> anyhow::Result<()> {
     let ws_stream = accept_async(stream).await?;
     let (mut write, mut read) = ws_stream.split();
@@ -86,8 +97,26 @@ async fn handle_connection(
 
     // Spawn a task to send events and responses
     let state_clone = Arc::clone(&state);
+    let response_notify = state
+        .read()
+        .ok()
+        .map(|state| state.response_notify())
+        .unwrap_or_else(|| Arc::new(tokio::sync::Notify::new()));
     let send_task = tokio::spawn(async move {
         loop {
+            let response = {
+                let mut s = state_clone.write().ok();
+                s.as_mut().and_then(|s| s.pop_response())
+            };
+
+            if let Some(resp) = response {
+                let json = serde_json::to_string(&resp).unwrap_or_default();
+                if write.send(Message::Text(json.into())).await.is_err() {
+                    break;
+                }
+                continue;
+            }
+
             tokio::select! {
                 // Check for events to broadcast
                 Ok(event) = event_rx.recv() => {
@@ -96,18 +125,7 @@ async fn handle_connection(
                         break;
                     }
                 }
-                // Check for pending responses
-                _ = tokio::time::sleep(tokio::time::Duration::from_millis(10)) => {
-                    let response = {
-                        let mut s = state_clone.write().ok();
-                        s.as_mut().and_then(|s| s.pop_response())
-                    };
-                    if let Some(resp) = response {
-                        let json = serde_json::to_string(&resp).unwrap_or_default();
-                        if write.send(Message::Text(json.into())).await.is_err() {
-                            break;
-                        }
-                    }
+                _ = response_notify.notified() => {
                 }
             }
         }
@@ -117,7 +135,7 @@ async fn handle_connection(
     while let Some(msg) = read.next().await {
         match msg {
             Ok(Message::Text(text)) => {
-                if let Some(response) = process_message(&text, &state) {
+                if let Some(response) = process_message(&text, &state, command_waker.as_deref()) {
                     if let Ok(mut s) = state.write() {
                         s.push_response(response);
                     }
@@ -148,7 +166,11 @@ async fn handle_connection(
 
 /// Process a single message, returning a response only for immediate commands.
 /// Demo-bound commands are queued in state and the demo pushes the response.
-fn process_message(text: &str, state: &SharedControlState) -> Option<ResponseMessage> {
+fn process_message(
+    text: &str,
+    state: &SharedControlState,
+    command_waker: Option<&(dyn Fn() + Send + Sync)>,
+) -> Option<ResponseMessage> {
     // Parse the request
     let request: Result<Request, _> = serde_json::from_str(text);
 
@@ -174,6 +196,9 @@ fn process_message(text: &str, state: &SharedControlState) -> Option<ResponseMes
                     // Demo will push the response when it handles the command
                     if let Ok(mut s) = state.write() {
                         s.push_command(req.id, req.command);
+                    }
+                    if let Some(wake) = command_waker {
+                        wake();
                     }
                     None
                 }

@@ -75,23 +75,23 @@ fn run_windowed() -> anyhow::Result<()> {
 
             let surface = instance.create_surface(window.clone())?;
 
-            let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            }))
-            .context("Failed to find a suitable GPU adapter")?;
+            let adapter =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: false,
+                }))
+                .context("Failed to find a suitable GPU adapter")?;
 
-            let (device, queue) = pollster::block_on(adapter.request_device(
-                &wgpu::DeviceDescriptor {
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                     label: Some("RayBox Device"),
                     required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::default(),
                     memory_hints: wgpu::MemoryHints::default(),
                     trace: wgpu::Trace::Off,
-                },
-            ))
-            .context("Failed to create device")?;
+                }))
+                .context("Failed to create device")?;
 
             let surface_caps = surface.get_capabilities(&adapter);
             let surface_format = surface_caps
@@ -134,19 +134,20 @@ fn run_windowed() -> anyhow::Result<()> {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
-            let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Uniform Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+            let bind_group_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Uniform Bind Group Layout"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
 
             let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Uniform Bind Group"),
@@ -212,22 +213,32 @@ fn run_windowed() -> anyhow::Result<()> {
 
             self.input.update_frame_time(dt);
             self.input.update_camera(&mut self.camera, dt);
-            self.input.update_window_title(&self.window, DEMO_TITLE, &self.camera);
+            self.input
+                .update_window_title(&self.window, DEMO_TITLE, &self.camera);
         }
 
         fn render(&self) -> Result<(), wgpu::SurfaceError> {
             let time = self.start_time.elapsed().as_secs_f32();
             let mut uniforms = Uniforms::default();
-            uniforms.update_from_fly_camera(&self.camera, self.config.width, self.config.height, time);
+            uniforms.update_from_fly_camera(
+                &self.camera,
+                self.config.width,
+                self.config.height,
+                time,
+            );
             self.queue
                 .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
             let output = self.surface.get_current_texture()?;
-            let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let view = output
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
 
-            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Render Encoder"),
+                });
 
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -300,13 +311,17 @@ fn run_windowed() -> anyhow::Result<()> {
         ) {
             if let Some(renderer) = self.renderer.as_mut() {
                 if let DeviceEvent::MouseMotion { delta } = event {
-                    renderer.input.handle_mouse_motion(&mut renderer.camera, delta);
+                    renderer
+                        .input
+                        .handle_mouse_motion(&mut renderer.camera, delta);
                 }
             }
         }
 
         fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-            let Some(renderer) = self.renderer.as_mut() else { return };
+            let Some(renderer) = self.renderer.as_mut() else {
+                return;
+            };
 
             match event {
                 WindowEvent::CloseRequested => event_loop.exit(),

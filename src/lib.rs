@@ -4,10 +4,25 @@ pub mod shader_bindings {
     include!(concat!(env!("OUT_DIR"), "/shader_bindings.rs"));
 }
 
+pub mod ui2d_shader_bindings {
+    pub use crate::shader_bindings::sdf_todomvc::*;
+}
+
+pub mod ui_physical_shader_bindings {
+    pub use crate::shader_bindings::sdf_todomvc_3d::*;
+}
+
 pub mod camera;
 pub mod constants;
 pub mod demo_core;
+pub mod gpu_runtime_common;
+pub mod retained;
 pub mod text;
+#[path = "demos/todomvc_retained.rs"]
+pub mod todomvc_retained;
+pub mod todomvc_shared;
+#[path = "demos/ui_physical_theme.rs"]
+pub mod ui_physical_theme;
 
 #[cfg(feature = "windowed")]
 pub mod input;

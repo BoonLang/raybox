@@ -48,9 +48,10 @@ impl McpServer {
 
     fn ensure_connected(&mut self) -> Result<(), String> {
         if self.client.is_none() {
-            let mut client = BlockingWsClient::new()
-                .map_err(|e| format!("Failed to create client: {}", e))?;
-            client.connect_local()
+            let mut client =
+                BlockingWsClient::new().map_err(|e| format!("Failed to create client: {}", e))?;
+            client
+                .connect_local()
                 .map_err(|e| format!("Failed to connect: {}", e))?;
             self.client = Some(client);
         }
@@ -130,15 +131,15 @@ impl McpServer {
                 "tools": [
                     {
                         "name": "switch_demo",
-                        "description": "Switch to a specific demo (0-8). Demos: 0=Empty, 1=Objects, 2=Spheres, 3=Towers, 4=2DText, 5=Clay, 6=TextShadow, 7=TodoMVC, 8=TodoMVC3D",
+                        "description": "Switch to a specific demo (0-11). Demos: 0=Empty, 1=Objects, 2=Spheres, 3=Towers, 4=2DText, 5=Clay, 6=TextShadow, 7=TodoMVC, 8=TodoMVC3D, 9=RetainedUI, 10=RetainedUiPhysical, 11=TextPhysical",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "id": {
                                     "type": "integer",
-                                    "description": "Demo ID (0-8)",
+                                    "description": "Demo ID (0-11)",
                                     "minimum": 0,
-                                    "maximum": 8
+                                    "maximum": 11
                                 }
                             },
                             "required": ["id"]
@@ -197,7 +198,7 @@ impl McpServer {
                     },
                     {
                         "name": "set_theme",
-                        "description": "Set theme for TodoMVC 3D demo. Themes: classic2d, professional, neobrutalism, glassmorphism, neumorphism",
+                        "description": "Set a named theme for demos that support theme switching. Themes: classic2d, professional, neobrutalism, glassmorphism, neumorphism",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -214,20 +215,92 @@ impl McpServer {
                         }
                     },
                     {
+                        "name": "set_list_item",
+                        "description": "Update an item in a list-style retained scene.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "index": {
+                                    "type": "integer",
+                                    "description": "Zero-based item index"
+                                },
+                                "completed": {
+                                    "type": "boolean",
+                                    "description": "Optional completion state"
+                                },
+                                "toggle": {
+                                    "type": "boolean",
+                                    "description": "Toggle completion state instead of setting it explicitly"
+                                },
+                                "label": {
+                                    "type": "string",
+                                    "description": "Optional replacement label"
+                                }
+                            },
+                            "required": ["index"]
+                        }
+                    },
+                    {
+                        "name": "set_list_filter",
+                        "description": "Set the active filter for a list-style retained scene. Supported values: all, active, completed.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "filter": {
+                                    "type": "string",
+                                    "description": "List filter name (all, active, completed)"
+                                }
+                            },
+                            "required": ["filter"]
+                        }
+                    },
+                    {
+                        "name": "set_list_scroll",
+                        "description": "Set the scroll offset for a list-style retained scene.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "offset_y": {
+                                    "type": "number",
+                                    "description": "Vertical list scroll offset in pixels"
+                                }
+                            },
+                            "required": ["offset_y"]
+                        }
+                    },
+                    {
+                        "name": "set_named_scroll",
+                        "description": "Set the scroll offset for a named retained scroll root.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "Named retained scroll root"
+                                },
+                                "offset_y": {
+                                    "type": "number",
+                                    "description": "Vertical scroll offset in pixels"
+                                }
+                            },
+                            "required": ["name", "offset_y"]
+                        }
+                    },
+                    {
                         "name": "capture_demo_screenshot",
-                        "description": "Switch to a demo, optionally set a TodoMVC 3D theme and reset the camera, then capture a screenshot on one stable connection.",
+                        "description": "Switch to a demo, optionally set a named theme and reset the camera, then capture a screenshot on one stable connection.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "id": {
                                     "type": "integer",
-                                    "description": "Demo ID (0-8)",
+                                    "description": "Demo ID (0-11)",
                                     "minimum": 0,
-                                    "maximum": 8
+                                    "maximum": 11
                                 },
                                 "theme": {
                                     "type": "string",
-                                    "description": "Optional TodoMVC 3D theme"
+                                    "description": "Optional theme name for demos that support themes"
                                 },
                                 "dark_mode": {
                                     "type": "boolean",
@@ -266,7 +339,10 @@ impl McpServer {
         };
 
         let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let arguments = params.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+        let arguments = params
+            .get("arguments")
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
 
         // Ensure connected
         if let Err(e) = self.ensure_connected() {
@@ -296,7 +372,10 @@ impl McpServer {
                     jsonrpc: "2.0".to_string(),
                     id: request.id.clone(),
                     result: None,
-                    error: Some(McpError { code: -32000, message: e }),
+                    error: Some(McpError {
+                        code: -32000,
+                        message: e,
+                    }),
                 };
             }
 
@@ -305,7 +384,10 @@ impl McpServer {
                     jsonrpc: "2.0".to_string(),
                     id: request.id.clone(),
                     result: None,
-                    error: Some(McpError { code: -32000, message: e }),
+                    error: Some(McpError {
+                        code: -32000,
+                        message: e,
+                    }),
                 };
             }
 
@@ -318,7 +400,10 @@ impl McpServer {
                         jsonrpc: "2.0".to_string(),
                         id: request.id.clone(),
                         result: None,
-                        error: Some(McpError { code: -32000, message: e }),
+                        error: Some(McpError {
+                            code: -32000,
+                            message: e,
+                        }),
                     };
                 }
             }
@@ -335,7 +420,10 @@ impl McpServer {
                         jsonrpc: "2.0".to_string(),
                         id: request.id.clone(),
                         result: None,
-                        error: Some(McpError { code: -32000, message: e }),
+                        error: Some(McpError {
+                            code: -32000,
+                            message: e,
+                        }),
                     };
                 }
             }
@@ -371,7 +459,10 @@ impl McpServer {
                     jsonrpc: "2.0".to_string(),
                     id: request.id.clone(),
                     result: None,
-                    error: Some(McpError { code: -32000, message: e }),
+                    error: Some(McpError {
+                        code: -32000,
+                        message: e,
+                    }),
                 },
             };
         }
@@ -390,9 +481,20 @@ impl McpServer {
                         [x, y, z]
                     })
                 });
-                let yaw = arguments.get("yaw").and_then(|v| v.as_f64()).map(|v| (v as f32).to_radians());
-                let pitch = arguments.get("pitch").and_then(|v| v.as_f64()).map(|v| (v as f32).to_radians());
-                Command::SetCamera { position, yaw, pitch, roll: None }
+                let yaw = arguments
+                    .get("yaw")
+                    .and_then(|v| v.as_f64())
+                    .map(|v| (v as f32).to_radians());
+                let pitch = arguments
+                    .get("pitch")
+                    .and_then(|v| v.as_f64())
+                    .map(|v| (v as f32).to_radians());
+                Command::SetCamera {
+                    position,
+                    yaw,
+                    pitch,
+                    roll: None,
+                }
             }
             "screenshot" => {
                 let center_crop = match (
@@ -407,9 +509,58 @@ impl McpServer {
             "get_status" => Command::GetStatus,
             "reload_shaders" => Command::ReloadShaders,
             "set_theme" => {
-                let theme = arguments.get("theme").and_then(|v| v.as_str()).unwrap_or("professional").to_string();
+                let theme = arguments
+                    .get("theme")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("professional")
+                    .to_string();
                 let dark_mode = arguments.get("dark_mode").and_then(|v| v.as_bool());
                 Command::SetTheme { theme, dark_mode }
+            }
+            "set_list_filter" => {
+                let filter = arguments
+                    .get("filter")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("all")
+                    .to_string();
+                Command::SetListFilter { filter }
+            }
+            "set_list_item" => {
+                let index = arguments.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let completed = arguments.get("completed").and_then(|v| v.as_bool());
+                let toggle = arguments
+                    .get("toggle")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let label = arguments
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                Command::SetListItem {
+                    index,
+                    completed,
+                    toggle,
+                    label,
+                }
+            }
+            "set_list_scroll" => {
+                let offset_y = arguments
+                    .get("offset_y")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0) as f32;
+                Command::SetListScroll { offset_y }
+            }
+            "set_named_scroll" => {
+                let name = arguments
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let offset_y = arguments
+                    .get("offset_y")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0) as f32;
+                Command::SetNamedScroll { name, offset_y }
             }
             _ => {
                 return McpResponse {
@@ -433,12 +584,19 @@ impl McpServer {
                             "content": [{ "type": "text", "text": data.map(|d| d.to_string()).unwrap_or("OK".to_string()) }]
                         })
                     }
-                    Response::Status { current_demo, demo_name, camera_position, fps, .. } => {
+                    Response::Status {
+                        current_demo,
+                        demo_name,
+                        demo_family,
+                        camera_position,
+                        fps,
+                        ..
+                    } => {
                         serde_json::json!({
                             "content": [{
                                 "type": "text",
-                                "text": format!("Demo: {} ({})\nCamera: [{:.2}, {:.2}, {:.2}]\nFPS: {:.1}",
-                                    demo_name, current_demo,
+                                "text": format!("Demo: {} ({})\nFamily: {}\nCamera: [{:.2}, {:.2}, {:.2}]\nFPS: {:.1}",
+                                    demo_name, current_demo, demo_family,
                                     camera_position[0], camera_position[1], camera_position[2],
                                     fps
                                 )
