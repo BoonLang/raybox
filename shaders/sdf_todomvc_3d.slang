@@ -130,6 +130,11 @@ float layoutCenterX() { return uniforms.layoutParams0.x; }
 float layoutCenterY() { return uniforms.layoutParams0.y; }
 float layoutPixelToWorld() { return max(uniforms.layoutParams0.z, 1e-5); }
 bool useStackedCardGeometry() { return uniforms.layoutParams0.w > 0.5; }
+// Shared UiPhysical scenes are still authored in the original floor/XZ scene
+// model. Rotate world space into that legacy scene model at the raymarch
+// boundary so the rendered result becomes wall-facing in user space.
+float3 worldToLegacyScene(float3 p) { return float3(p.x, p.z, -p.y); }
+float3 worldToLegacyDirection(float3 d) { return float3(d.x, d.z, -d.y); }
 float genericCardCornerRadiusPx() { return max(uniforms.layoutParams1.x, 0.0); }
 float genericCardElevationPx() { return max(uniforms.layoutParams1.y, 0.0); }
 float genericCardDepthPx() { return max(uniforms.layoutParams1.z, 0.0); }
@@ -1115,7 +1120,7 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
     float gloss = theme.materialProps[materialId].x;
     float metalness = theme.materialProps[materialId].y;
 
-    float3 lightDir = normalize(uniforms.lightDirIntensity.xyz);
+    float3 lightDir = normalize(worldToLegacyDirection(uniforms.lightDirIntensity.xyz));
     float lightIntensity = uniforms.lightDirIntensity.w;
 
     float diff = max(dot(nor, lightDir), 0.0);
@@ -1686,8 +1691,8 @@ float4 fs_main(VertexOutput input) : SV_Target {
     nearPoint /= nearPoint.w;
     farPoint /= farPoint.w;
 
-    float3 ro = uniforms.cameraPosTime.xyz;
-    float3 rd = normalize(farPoint.xyz - nearPoint.xyz);
+    float3 ro = worldToLegacyScene(uniforms.cameraPosTime.xyz);
+    float3 rd = normalize(worldToLegacyDirection(farPoint.xyz - nearPoint.xyz));
 
     float3 col = render(ro, rd);
     col = pow(col, float3(1.0 / 2.2));

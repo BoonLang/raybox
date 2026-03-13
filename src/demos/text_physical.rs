@@ -158,9 +158,11 @@ impl Demo for TextPhysicalDemo {
 
     fn ui_physical_camera_preset(&self) -> Option<UiPhysicalCameraPreset> {
         let mut preset = ui_physical_card_camera_preset(TEXT_PHYSICAL_FRAME_SIZE);
-        preset.fallback_offset = glam::Vec3::new(0.0, 9.2, 0.01);
+        preset.fallback_offset = glam::Vec3::new(0.0, 0.0, 8.2);
         preset.min_distance = 4.6;
         preset.max_distance = 9.4;
+        preset.min_elevation = -1.0;
+        preset.max_elevation = 1.0;
         preset.clamp_x = 5.4;
         preset.max_height = 8.4;
         preset.clamp_z = 7.8;

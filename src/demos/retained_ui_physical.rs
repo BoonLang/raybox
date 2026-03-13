@@ -98,12 +98,14 @@ impl Demo for RetainedUiPhysicalDemo {
     }
 
     fn camera_config(&self) -> CameraConfig {
-        CameraConfig::new(glam::Vec3::new(0.0, 7.8, 0.01), glam::Vec3::ZERO)
+        CameraConfig::new(glam::Vec3::new(0.0, 0.0, 7.4), glam::Vec3::ZERO)
     }
 
     fn ui_physical_camera_preset(&self) -> Option<UiPhysicalCameraPreset> {
         let mut preset = ui_physical_card_camera_preset(SHOWCASE_PHYSICAL_CARD_SIZE);
-        preset.fallback_offset = glam::Vec3::new(0.0, 7.8, 0.01);
+        preset.fallback_offset = glam::Vec3::new(0.0, 0.0, 7.4);
+        preset.min_elevation = -1.0;
+        preset.max_elevation = 1.0;
         Some(preset)
     }
 

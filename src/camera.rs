@@ -1,5 +1,7 @@
 use glam::{Mat4, Quat, Vec3};
 
+const MAX_PITCH: f32 = 1.553; // ~89°
+
 /// Fly camera with game-style WASD + mouse look controls.
 ///
 /// Uses decoupled yaw/pitch/roll angles (not a single quaternion) to eliminate
@@ -114,8 +116,6 @@ impl FlyCamera {
         self.yaw -= yaw_delta;
         self.pitch -= pitch_delta;
 
-        // Clamp pitch to ±89° to avoid gimbal lock singularity at poles
-        const MAX_PITCH: f32 = 1.553; // ~89°
         self.pitch = self.pitch.clamp(-MAX_PITCH, MAX_PITCH);
     }
 
@@ -174,7 +174,9 @@ impl FlyCamera {
         self.roll = 0.0;
         let dir = (target - self.position).normalize();
         self.yaw = -dir.x.atan2(-dir.z);
-        self.pitch = dir.y.asin();
+        // Keep explicit look-at poses inside the same safe range used by
+        // mouse look so top-down reset views do not snap on first motion.
+        self.pitch = dir.y.asin().clamp(-MAX_PITCH, MAX_PITCH);
     }
 
     /// Get yaw angle (for debug display)

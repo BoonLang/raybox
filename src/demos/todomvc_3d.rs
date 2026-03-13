@@ -83,18 +83,18 @@ impl Demo for TodoMvc3DDemo {
 
     fn camera_config(&self) -> CameraConfig {
         CameraConfig {
-            initial_position: glam::Vec3::new(0.0, 10.0, 0.01),
+            initial_position: glam::Vec3::new(0.0, 0.0, 8.5),
             look_at_target: glam::Vec3::new(0.0, 0.0, 0.0),
         }
     }
 
     fn ui_physical_camera_preset(&self) -> Option<UiPhysicalCameraPreset> {
         Some(UiPhysicalCameraPreset {
-            fallback_offset: glam::Vec3::new(0.0, 10.0, 0.01),
+            fallback_offset: glam::Vec3::new(0.0, 0.0, 8.5),
             min_distance: 4.0,
             max_distance: 14.0,
-            min_elevation: -0.9,
-            max_elevation: 0.35,
+            min_elevation: -1.0,
+            max_elevation: 1.0,
             clamp_x: 7.0,
             min_height: 1.5,
             max_height: 11.0,

@@ -2604,12 +2604,19 @@ impl WebDemo for WebRetainedUiPhysicalDemo {
     }
 
     fn camera_config(&self) -> (glam::Vec3, glam::Vec3) {
-        let preset = ui_physical_card_camera_preset(SHOWCASE_PHYSICAL_CARD_SIZE);
+        let mut preset = ui_physical_card_camera_preset(SHOWCASE_PHYSICAL_CARD_SIZE);
+        preset.fallback_offset = glam::Vec3::new(0.0, 0.0, 7.4);
+        preset.min_elevation = -1.0;
+        preset.max_elevation = 1.0;
         (preset.fallback_offset, glam::Vec3::ZERO)
     }
 
     fn ui_physical_camera_preset(&self) -> Option<UiPhysicalCameraPreset> {
-        Some(ui_physical_card_camera_preset(SHOWCASE_PHYSICAL_CARD_SIZE))
+        let mut preset = ui_physical_card_camera_preset(SHOWCASE_PHYSICAL_CARD_SIZE);
+        preset.fallback_offset = glam::Vec3::new(0.0, 0.0, 7.4);
+        preset.min_elevation = -1.0;
+        preset.max_elevation = 1.0;
+        Some(preset)
     }
 
     fn update(&mut self, _dt: f32) {}
@@ -2715,9 +2722,11 @@ impl WebDemo for WebTextPhysicalDemo {
 
     fn ui_physical_camera_preset(&self) -> Option<UiPhysicalCameraPreset> {
         let mut preset = ui_physical_card_camera_preset(TEXT_PHYSICAL_FRAME_SIZE);
-        preset.fallback_offset = glam::Vec3::new(0.0, 6.4, 7.6);
+        preset.fallback_offset = glam::Vec3::new(0.0, 0.0, 8.2);
         preset.min_distance = 4.6;
         preset.max_distance = 9.4;
+        preset.min_elevation = -1.0;
+        preset.max_elevation = 1.0;
         preset.clamp_x = 5.4;
         preset.max_height = 8.4;
         preset.clamp_z = 7.8;
@@ -2816,16 +2825,16 @@ impl WebDemo for WebTodoMvc3DDemo {
     }
 
     fn camera_config(&self) -> (glam::Vec3, glam::Vec3) {
-        (glam::Vec3::new(0.0, 6.5, 7.0), glam::Vec3::ZERO)
+        (glam::Vec3::new(0.0, 0.0, 8.5), glam::Vec3::ZERO)
     }
 
     fn ui_physical_camera_preset(&self) -> Option<UiPhysicalCameraPreset> {
         Some(UiPhysicalCameraPreset {
-            fallback_offset: glam::Vec3::new(0.0, 6.5, 7.0),
+            fallback_offset: glam::Vec3::new(0.0, 0.0, 8.5),
             min_distance: 4.0,
             max_distance: 14.0,
-            min_elevation: -0.9,
-            max_elevation: 0.35,
+            min_elevation: -1.0,
+            max_elevation: 1.0,
             clamp_x: 7.0,
             min_height: 1.5,
             max_height: 11.0,
