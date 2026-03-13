@@ -385,6 +385,7 @@ impl McpServer {
                                 "app_mode": { "type": "boolean", "description": "Launch Chromium in app-window mode without normal browser chrome (default false)" },
                                 "debug_port": { "type": "integer", "description": "Chromium remote-debugging port (default 9222)" },
                                 "chrome_bin": { "type": "string", "description": "Explicit Chromium binary path" },
+                                "browser_log_path": { "type": "string", "description": "Optional file path for Chromium stdout/stderr logs" },
                                 "chrome_args": {
                                     "type": "array",
                                     "items": { "type": "string" },
@@ -473,6 +474,10 @@ impl McpServer {
                     .get("chrome_bin")
                     .and_then(|v| v.as_str())
                     .map(PathBuf::from),
+                log_path: arguments
+                    .get("browser_log_path")
+                    .and_then(|v| v.as_str())
+                    .map(PathBuf::from),
                 debug_port: arguments
                     .get("debug_port")
                     .and_then(|v| v.as_u64())
@@ -551,6 +556,7 @@ impl McpServer {
             };
             let summary = serde_json::json!({
                 "chrome_bin": launch.chrome_bin.display().to_string(),
+                "browser_log_path": launch.log_path.as_ref().map(|path| path.display().to_string()),
                 "debug_port": launch.debug_port,
                 "url": launch.url,
                 "profile_dir": launch.owned_profile_dir.as_ref().map(|path| path.display().to_string()),

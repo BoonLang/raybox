@@ -68,6 +68,24 @@
             border-radius: 6px;
             overflow: auto;
         }
+        #runtime-error {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            max-width: min(560px, calc(100vw - 32px));
+            max-height: min(40vh, calc(100vh - 32px));
+            display: none;
+            z-index: 1200;
+            padding: 12px 14px;
+            background: rgba(60, 12, 12, 0.94);
+            color: #fff3f3;
+            border: 1px solid rgba(255, 190, 190, 0.35);
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 12px;
+            overflow: auto;
+            white-space: pre-wrap;
+        }
     </style>
 </head>
 <body>
@@ -75,6 +93,7 @@
     <div id="overlay"></div>
     <div id="reload-indicator">Reloading...</div>
     <div id="startup-error"></div>
+    <div id="runtime-error"></div>
     <script type="module">
         // Parse URL parameters
         const params = new URLSearchParams(window.location.search);
@@ -87,6 +106,80 @@
         let wasmModule = null;
         let savedStateJson = null;
         let hotReloadWs = null;
+        const debugEvents = [];
+
+        function formatDebugArg(value) {
+            if (value instanceof Error) {
+                return `${value.name}: ${value.message}${value.stack ? `\n${value.stack}` : ''}`;
+            }
+            if (typeof value === 'string') {
+                return value;
+            }
+            try {
+                return JSON.stringify(value);
+            } catch (_) {
+                return String(value);
+            }
+        }
+
+        function recordDebugEvent(level, message, detail = null) {
+            debugEvents.push({
+                timestamp: new Date().toISOString(),
+                level,
+                message: String(message),
+                detail,
+            });
+            if (debugEvents.length > 200) {
+                debugEvents.shift();
+            }
+        }
+
+        const originalConsole = {
+            log: console.log.bind(console),
+            info: console.info.bind(console),
+            warn: console.warn.bind(console),
+            error: console.error.bind(console),
+        };
+
+        console.log = (...args) => {
+            recordDebugEvent('log', args.map(formatDebugArg).join(' '));
+            originalConsole.log(...args);
+        };
+        console.info = (...args) => {
+            recordDebugEvent('info', args.map(formatDebugArg).join(' '));
+            originalConsole.info(...args);
+        };
+        console.warn = (...args) => {
+            recordDebugEvent('warn', args.map(formatDebugArg).join(' '));
+            originalConsole.warn(...args);
+        };
+        console.error = (...args) => {
+            recordDebugEvent('error', args.map(formatDebugArg).join(' '));
+            originalConsole.error(...args);
+        };
+
+        function showRuntimeError(title, detail) {
+            const element = document.getElementById('runtime-error');
+            element.textContent = `${title}\n\n${detail}`;
+            element.style.display = 'block';
+        }
+
+        function clearRuntimeError() {
+            const element = document.getElementById('runtime-error');
+            element.style.display = 'none';
+            element.textContent = '';
+        }
+
+        window.rayboxGetDebugLog = () => JSON.stringify(debugEvents, null, 2);
+        window.rayboxClearDebugLog = () => {
+            debugEvents.length = 0;
+            clearRuntimeError();
+            return true;
+        };
+        window.rayboxReportRuntimeError = (title, detail) => {
+            recordDebugEvent('runtime-error', title, detail);
+            showRuntimeError(title, detail);
+        };
 
         window.rayboxDebugControlState = () => {
             if (!wasmModule || typeof wasmModule.debug_control_state !== 'function') {
@@ -94,6 +187,22 @@
             }
             return wasmModule.debug_control_state();
         };
+
+        window.addEventListener('error', (event) => {
+            const detail = [
+                `message: ${event.message || '(no message)'}`,
+                event.filename ? `file: ${event.filename}:${event.lineno || 0}:${event.colno || 0}` : '',
+                event.error && event.error.stack ? `stack:\n${event.error.stack}` : '',
+            ].filter(Boolean).join('\n');
+            recordDebugEvent('window-error', event.message || 'Unhandled error', detail);
+            showRuntimeError('Raybox runtime error', detail);
+        });
+
+        window.addEventListener('unhandledrejection', (event) => {
+            const detail = formatDebugArg(event.reason);
+            recordDebugEvent('unhandledrejection', 'Unhandled promise rejection', detail);
+            showRuntimeError('Raybox unhandled promise rejection', detail);
+        });
 
         // Show/hide reload indicator
         function showReloadIndicator(show) {
@@ -196,6 +305,7 @@ If Chromium is already running on another profile, use the commands above so Ray
         async function init() {
             try {
                 clearStartupError();
+                clearRuntimeError();
                 await preflightWebGpu();
                 wasmModule = await loadWasm();
 
@@ -226,8 +336,9 @@ If Chromium is already running on another profile, use the commands above so Ray
                 return;
             }
 
-            console.log('Hot-reload triggered');
-            showReloadIndicator(true);
+                console.log('Hot-reload triggered');
+                showReloadIndicator(true);
+                clearRuntimeError();
 
             try {
                 // Save current state

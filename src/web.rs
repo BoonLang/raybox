@@ -4225,6 +4225,13 @@ impl WebRenderer {
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to create device: {}", e)))?;
 
+        device.set_device_lost_callback(|reason, message| {
+            log::error!("WebGPU device lost: reason={reason:?}, message={message}");
+        });
+        device.on_uncaptured_error(Box::new(|error| {
+            log::error!("WebGPU uncaptured error: {error}");
+        }));
+
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
             .formats

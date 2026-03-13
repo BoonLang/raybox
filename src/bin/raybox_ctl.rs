@@ -54,6 +54,7 @@ fn print_usage() {
     eprintln!("Global options:");
     eprintln!("  --timeout-ms <ms>       Command timeout in milliseconds (default: 30000)");
     eprintln!("  --chrome-bin <path>     Chromium/Chrome binary override for web-open/web-smoke");
+    eprintln!("  --browser-log <path>    Write Chromium stdout/stderr to this log file");
     eprintln!("  --chrome-arg <arg>      Extra Chromium argument (repeatable)");
     eprintln!("  --app                   Launch visible Chromium in app-window mode");
     eprintln!("  --no-app                Launch a normal Chromium window with browser chrome");
@@ -225,6 +226,7 @@ fn parse_browser_launch_config(args: &[String], default_control: bool) -> Browse
     BrowserLaunchConfig {
         url,
         chrome_bin: parse_flag_value(args, &["--chrome-bin"]).map(PathBuf::from),
+        log_path: parse_flag_value(args, &["--browser-log"]).map(PathBuf::from),
         debug_port: parse_flag_value(args, &["--debug-port"])
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(raybox::browser_launch::DEFAULT_DEBUG_PORT),
@@ -432,6 +434,9 @@ fn handle_web_open(args: &[String]) {
     println!("Launched Chromium: {}", launch.chrome_bin.display());
     println!("URL: {}", launch.url);
     println!("Debug Port: {}", launch.debug_port);
+    if let Some(log_path) = &launch.log_path {
+        println!("Browser Log: {}", log_path.display());
+    }
     if let Some(profile) = &launch.owned_profile_dir {
         println!("Profile: {}", profile.display());
     }

@@ -4,6 +4,8 @@ use crate::control::{BlockingWsClient, Command, Response, ResponseMessage};
 use anyhow::{anyhow, bail, Context, Result};
 use std::env;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -21,6 +23,7 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(250);
 pub struct BrowserLaunchConfig {
     pub url: String,
     pub chrome_bin: Option<PathBuf>,
+    pub log_path: Option<PathBuf>,
     pub debug_port: u16,
     pub headless: bool,
     pub app_mode: bool,
@@ -35,6 +38,7 @@ impl Default for BrowserLaunchConfig {
         Self {
             url: "http://127.0.0.1:8000".to_string(),
             chrome_bin: None,
+            log_path: None,
             debug_port: DEFAULT_DEBUG_PORT,
             headless: false,
             app_mode: false,
@@ -50,6 +54,7 @@ impl Default for BrowserLaunchConfig {
 pub struct BrowserLaunch {
     pub child: Child,
     pub chrome_bin: PathBuf,
+    pub log_path: Option<PathBuf>,
     pub url: String,
     pub debug_port: u16,
     pub args: Vec<String>,
@@ -99,13 +104,30 @@ pub fn resolve_chrome_bin(explicit: Option<&Path>) -> Result<PathBuf> {
 pub fn spawn_chromium(config: &BrowserLaunchConfig) -> Result<BrowserLaunch> {
     let chrome_bin = resolve_chrome_bin(config.chrome_bin.as_deref())?;
     let (args, owned_profile_dir) = build_chromium_args(config)?;
+    let log_path = resolve_browser_log_path(config)?;
 
     let mut command = ProcessCommand::new(&chrome_bin);
     command.args(&args);
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    command.stdin(Stdio::null());
+
+    if let Some(path) = log_path.as_ref() {
+        let mut log_file = open_browser_log_file(path)?;
+        writeln!(
+            log_file,
+            "Raybox Chromium launch\nurl: {}\nbinary: {}\nargs: {}\n",
+            config.url,
+            chrome_bin.display(),
+            args.join(" ")
+        )?;
+        let stdout_file = log_file
+            .try_clone()
+            .with_context(|| format!("failed to clone browser log file {}", path.display()))?;
+        command
+            .stdout(Stdio::from(stdout_file))
+            .stderr(Stdio::from(log_file));
+    } else {
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+    }
     #[cfg(unix)]
     command.process_group(0);
 
@@ -116,6 +138,7 @@ pub fn spawn_chromium(config: &BrowserLaunchConfig) -> Result<BrowserLaunch> {
     Ok(BrowserLaunch {
         child,
         chrome_bin,
+        log_path,
         url: config.url.clone(),
         debug_port: config.debug_port,
         args,
@@ -176,6 +199,38 @@ pub fn wait_for_control_ready(timeout: Duration) -> Result<ResponseMessage> {
 
 pub fn default_control_ready_timeout() -> Duration {
     DEFAULT_CONTROL_READY_TIMEOUT
+}
+
+fn resolve_browser_log_path(config: &BrowserLaunchConfig) -> Result<Option<PathBuf>> {
+    if let Some(path) = &config.log_path {
+        return Ok(Some(path.clone()));
+    }
+
+    let cwd = env::current_dir().context("failed to resolve current directory for browser log")?;
+    let log_dir = cwd.join("output").join("browser_logs");
+    fs::create_dir_all(&log_dir)
+        .with_context(|| format!("failed to create browser log dir {}", log_dir.display()))?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    Ok(Some(log_dir.join(format!(
+        "chromium-{}-{stamp}.log",
+        std::process::id()
+    ))))
+}
+
+fn open_browser_log_file(path: &Path) -> Result<fs::File> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create browser log dir {}", parent.display()))?;
+    }
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .with_context(|| format!("failed to open browser log file {}", path.display()))
 }
 
 fn build_chromium_args(config: &BrowserLaunchConfig) -> Result<(Vec<String>, Option<PathBuf>)> {
