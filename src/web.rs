@@ -3956,13 +3956,12 @@ impl WebRenderer {
         if width == 0 || height == 0 {
             return;
         }
-        if self.config.width == width && self.config.height == height {
-            return;
+        let surface_size_changed = self.config.width != width || self.config.height != height;
+        if surface_size_changed {
+            self.config.width = width;
+            self.config.height = height;
+            self.surface.configure(&self.device, &self.config);
         }
-
-        self.config.width = width;
-        self.config.height = height;
-        self.surface.configure(&self.device, &self.config);
         self.current_demo.resize(width, height);
     }
 
@@ -4287,6 +4286,9 @@ impl WebRenderer {
             renderer.text2d_scale,
             renderer.text2d_rotation,
         );
+        renderer
+            .current_demo
+            .resize(renderer.config.width, renderer.config.height);
         renderer.setup_camera_from_demo();
         renderer.sync_canvas_size_to_window();
         Ok(renderer)
@@ -4642,6 +4644,7 @@ impl WebRenderer {
         self.text2d_scale = 1.0;
         self.text2d_rotation = 0.0;
         new_demo.set_ui2d_view_state(self.text2d_offset, self.text2d_scale, self.text2d_rotation);
+        new_demo.resize(self.config.width, self.config.height);
 
         self.current_demo = new_demo;
         self.current_demo_id = new_id;

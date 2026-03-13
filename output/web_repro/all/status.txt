@@ -1,0 +1,96 @@
+DEMO 0
+Demo: Empty (0)
+Family: world3d
+Camera Position: [0.00, 0.00, 4.00]
+Camera Angles: yaw=-0.0°, pitch=0.0°, roll=0.0°
+FPS: 60.0
+Overlay: off
+Show Keybindings: false
+DEMO 1
+Demo: Objects (1)
+Family: world3d
+Camera Position: [0.00, 1.50, 5.00]
+Camera Angles: yaw=-0.0°, pitch=-11.3°, roll=0.0°
+FPS: 60.0
+Overlay: off
+Show Keybindings: false
+DEMO 2
+Demo: Spheres (2)
+Family: world3d
+Camera Position: [0.00, 2.00, 8.00]
+Camera Angles: yaw=-0.0°, pitch=-10.6°, roll=0.0°
+FPS: 60.1
+Overlay: off
+Show Keybindings: false
+DEMO 3
+Demo: Towers (3)
+Family: world3d
+Camera Position: [4.00, 6.00, 10.00]
+Camera Angles: yaw=21.8°, pitch=-29.1°, roll=0.0°
+FPS: 60.0
+Overlay: off
+Show Keybindings: false
+DEMO 4
+Demo: 2D Text (4)
+Family: ui2d
+Camera Position: [0.00, 0.00, 0.00]
+Camera Angles: yaw=0.0°, pitch=0.0°, roll=0.0°
+FPS: 60.0
+Overlay: off
+Show Keybindings: false
+DEMO 5
+Demo: Clay Tablet (5)
+Family: world3d
+Camera Position: [0.00, 5.50, 2.00]
+Camera Angles: yaw=-0.0°, pitch=-70.0°, roll=0.0°
+FPS: 60.0
+Overlay: off
+Show Keybindings: false
+DEMO 6
+Demo: Text Shadow (6)
+Family: world3d
+Camera Position: [0.00, 0.00, 4.50]
+Camera Angles: yaw=-0.0°, pitch=0.0°, roll=0.0°
+FPS: 60.0
+Overlay: off
+Show Keybindings: false
+DEMO 7
+Demo: TodoMVC (7)
+Family: ui2d
+Camera Position: [0.00, 0.00, 0.00]
+Camera Angles: yaw=0.0°, pitch=0.0°, roll=0.0°
+FPS: 59.9
+Overlay: off
+Show Keybindings: false
+DEMO 8
+Demo: TodoMVC 3D (8)
+Family: uiPhysical
+Camera Position: [0.00, 0.00, 8.50]
+Camera Angles: yaw=-0.0°, pitch=0.0°, roll=0.0°
+FPS: 60.0
+Overlay: off
+Show Keybindings: false
+DEMO 9
+Demo: Retained UI (9)
+Family: ui2d
+Camera Position: [0.00, 0.00, 0.00]
+Camera Angles: yaw=0.0°, pitch=0.0°, roll=0.0°
+FPS: 60.0
+Overlay: off
+Show Keybindings: false
+DEMO 10
+Demo: Retained UI Physical (10)
+Family: uiPhysical
+Camera Position: [0.00, 0.00, 7.40]
+Camera Angles: yaw=-0.0°, pitch=0.0°, roll=0.0°
+FPS: 60.0
+Overlay: off
+Show Keybindings: false
+DEMO 11
+Demo: Text Physical (11)
+Family: uiPhysical
+Camera Position: [0.00, 0.00, 8.20]
+Camera Angles: yaw=-0.0°, pitch=0.0°, roll=0.0°
+FPS: 60.0
+Overlay: off
+Show Keybindings: false

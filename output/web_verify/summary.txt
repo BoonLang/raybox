@@ -1,0 +1,8 @@
+DEMO 0
+Demo: Empty (0)
+Family: world3d
+Camera Position: [0.00, 0.00, 4.00]
+Camera Angles: yaw=-0.0°, pitch=0.0°, roll=0.0°
+FPS: 41.2
+Overlay: off
+Show Keybindings: false
