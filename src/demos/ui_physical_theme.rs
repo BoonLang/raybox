@@ -94,6 +94,32 @@ fn classic_text_colors() -> TextColors {
     }
 }
 
+fn tune_generic_ui_physical_text_color(color: [f32; 3]) -> [f32; 3] {
+    let luminance = 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2];
+    let target = if luminance > 0.5 {
+        [0.07, 0.07, 0.08]
+    } else {
+        [0.94, 0.95, 0.97]
+    };
+    let strength = if luminance > 0.5 { 0.22 } else { 0.12 };
+    [
+        color[0] * (1.0 - strength) + target[0] * strength,
+        color[1] * (1.0 - strength) + target[1] * strength,
+        color[2] * (1.0 - strength) + target[2] * strength,
+    ]
+}
+
+pub fn tune_generic_ui_physical_text_colors(colors: TextColors) -> TextColors {
+    TextColors {
+        heading: tune_generic_ui_physical_text_color(colors.heading),
+        active: tune_generic_ui_physical_text_color(colors.active),
+        completed: tune_generic_ui_physical_text_color(colors.completed),
+        placeholder: tune_generic_ui_physical_text_color(colors.placeholder),
+        body: tune_generic_ui_physical_text_color(colors.body),
+        info: tune_generic_ui_physical_text_color(colors.info),
+    }
+}
+
 pub fn canonical_dark_mode(theme_id: ThemeId, dark_mode: bool) -> bool {
     if theme_id.supports_dark_mode() {
         dark_mode

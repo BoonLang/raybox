@@ -9,8 +9,8 @@ use super::{
 };
 use crate::camera::FlyCamera;
 use crate::input::CameraConfig;
-use crate::retained::showcase::ShowcaseSceneDeckTarget;
-use crate::retained::text::{TextColors, TextRenderSpace};
+use crate::retained::showcase::{showcase_text_colors, ShowcaseSceneDeckTarget};
+use crate::retained::text::TextRenderSpace;
 use crate::retained::ui::UiRenderSpace;
 use anyhow::Result;
 use winit::keyboard::KeyCode;
@@ -45,22 +45,11 @@ impl RetainedUiDemo {
             deck: create_showcase_ui2d_deck(
                 ctx,
                 atlas,
-                retained_text_colors(),
+                showcase_text_colors(),
                 text_render_space(ctx.height as f32),
                 render_space(ctx.height as f32),
             ),
         })
-    }
-}
-
-fn retained_text_colors() -> TextColors {
-    TextColors {
-        heading: [0.13, 0.16, 0.23],
-        active: [0.20, 0.24, 0.31],
-        completed: [0.39, 0.45, 0.55],
-        placeholder: [0.58, 0.64, 0.72],
-        body: [0.23, 0.29, 0.36],
-        info: [0.42, 0.48, 0.58],
     }
 }
 

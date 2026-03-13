@@ -111,6 +111,17 @@ impl ShowcaseSceneModel {
     }
 }
 
+pub fn showcase_text_colors() -> TextColors {
+    TextColors {
+        heading: [0.13, 0.16, 0.23],
+        active: [0.20, 0.24, 0.31],
+        completed: [0.39, 0.45, 0.55],
+        placeholder: [0.58, 0.64, 0.72],
+        body: [0.23, 0.29, 0.36],
+        info: [0.42, 0.48, 0.58],
+    }
+}
+
 impl NamedScrollSceneModel for ShowcaseSceneModel {
     fn set_named_scroll_offset(
         &self,

@@ -36,6 +36,9 @@ pub mod demos;
 #[cfg(feature = "control")]
 pub mod control;
 
+#[cfg(feature = "control")]
+pub mod browser_launch;
+
 #[cfg(feature = "hot-reload")]
 pub mod hot_reload;
 

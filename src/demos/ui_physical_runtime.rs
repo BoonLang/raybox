@@ -3,7 +3,9 @@ use super::{
         build_font_gpu_data, create_bind_group_layout_with_storage, create_bind_group_with_storage,
         create_fullscreen_pipeline, create_storage_buffers, UiStorageBuffers,
     },
-    ui_physical_theme::{ThemeUniforms, UiPhysicalThemeState},
+    ui_physical_theme::{
+        tune_generic_ui_physical_text_colors, ThemeUniforms, UiPhysicalThemeState,
+    },
     DemoContext,
 };
 use crate::camera::FlyCamera;
@@ -483,32 +485,6 @@ pub fn recolor_physical_char_instances(
             }
         })
         .collect()
-}
-
-fn tune_generic_ui_physical_text_color(color: [f32; 3]) -> [f32; 3] {
-    let luminance = 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2];
-    let target = if luminance > 0.5 {
-        [0.07, 0.07, 0.08]
-    } else {
-        [0.94, 0.95, 0.97]
-    };
-    let strength = if luminance > 0.5 { 0.22 } else { 0.12 };
-    [
-        color[0] * (1.0 - strength) + target[0] * strength,
-        color[1] * (1.0 - strength) + target[1] * strength,
-        color[2] * (1.0 - strength) + target[2] * strength,
-    ]
-}
-
-fn tune_generic_ui_physical_text_colors(colors: TextColors) -> TextColors {
-    TextColors {
-        heading: tune_generic_ui_physical_text_color(colors.heading),
-        active: tune_generic_ui_physical_text_color(colors.active),
-        completed: tune_generic_ui_physical_text_color(colors.completed),
-        placeholder: tune_generic_ui_physical_text_color(colors.placeholder),
-        body: tune_generic_ui_physical_text_color(colors.body),
-        info: tune_generic_ui_physical_text_color(colors.info),
-    }
 }
 
 impl UiPhysicalRuntimeUpdate {

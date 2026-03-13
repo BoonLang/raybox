@@ -47,17 +47,7 @@ serve:
 
 # Open Chromium with local user data (no prompts)
 open-browser:
-    chromium \
-        --user-data-dir=./chromium_data \
-        --no-first-run \
-        --no-default-browser-check \
-        --disable-session-crashed-bubble \
-        --hide-crash-restore-bubble \
-        --test-type \
-        --enable-unsafe-webgpu \
-        --enable-features=Vulkan,WebGPU,UseSkiaRenderer \
-        --use-angle=vulkan \
-        http://localhost:8000
+    cargo run --bin raybox-ctl --features control -- web-open
 
 # Build, serve, and open browser
 web: build-web
@@ -78,16 +68,7 @@ _web-screenshot-capture:
     #!/usr/bin/env bash
     set -e
     mkdir -p output
-    chromium \
-        --user-data-dir=./chromium_data \
-        --no-first-run \
-        --test-type \
-        --enable-unsafe-webgpu \
-        --enable-features=Vulkan,WebGPU,UseSkiaRenderer \
-        --use-angle=vulkan \
-        --window-size=800,600 \
-        --remote-debugging-port=9222 \
-        http://localhost:8000 &
+    cargo run --bin raybox-ctl --features control -- web-open --headless --debug-port 9222 --wait-for-control-ms 0 &
     PID=$!
     sleep 3
     # Get WebSocket URL and take screenshot via CDP
@@ -98,6 +79,7 @@ _web-screenshot-capture:
         jq -r '.result.data' | \
         base64 -d > output/web_screenshot.png
     kill $PID 2>/dev/null || true
+    lsof -ti :9222 2>/dev/null | xargs -r kill
 
 # Web screenshot (build, serve, capture)
 web-screenshot: build-web
@@ -171,15 +153,11 @@ bench:
 
 # Open browser with hot-reload enabled (use with dev-web)
 open-browser-hotreload:
-    chromium \
-        --user-data-dir=./chromium_data \
-        --no-first-run \
-        --no-default-browser-check \
-        --disable-session-crashed-bubble \
-        --hide-crash-restore-bubble \
-        --test-type \
-        --enable-unsafe-webgpu \
-        --enable-features=Vulkan,WebGPU,UseSkiaRenderer \
-        --use-angle=vulkan \
-        "http://localhost:8000?hotreload=1&control=1"
+    cargo run --bin raybox-ctl --features control -- web-open --control --hotreload
 
+web-smoke: build-web
+    pkill miniserve || true
+    miniserve . --port 8000 --index index.html &
+    sleep 2
+    cargo run --bin raybox-ctl --features control -- web-smoke --control --output output/web_smoke.png
+    pkill miniserve || true

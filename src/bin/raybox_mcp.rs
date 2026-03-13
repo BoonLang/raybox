@@ -3,15 +3,21 @@
 //! Provides an MCP-compatible interface for controlling raybox demos
 //! from AI assistants like Claude.
 
-use raybox::control::{BlockingWsClient, Command, Response};
+use raybox::browser_launch::{
+    build_launch_url, default_control_ready_timeout, spawn_chromium, stop_browser,
+    wait_for_control_ready, BrowserLaunch, BrowserLaunchConfig,
+};
+use raybox::control::{run_standalone, BlockingWsClient, Command, Response};
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
 /// MCP request structure
 #[derive(Debug, Deserialize)]
 struct McpRequest {
+    #[allow(dead_code)]
     jsonrpc: String,
     id: Option<serde_json::Value>,
     method: String,
@@ -39,11 +45,54 @@ struct McpError {
 /// MCP server state
 struct McpServer {
     client: Option<BlockingWsClient>,
+    browser: Option<BrowserLaunch>,
+    control_server_started: bool,
 }
 
 impl McpServer {
     fn new() -> Self {
-        Self { client: None }
+        Self {
+            client: None,
+            browser: None,
+            control_server_started: false,
+        }
+    }
+
+    fn local_control_server_available() -> bool {
+        match BlockingWsClient::new() {
+            Ok(mut client) => client.connect_local().is_ok(),
+            Err(_) => false,
+        }
+    }
+
+    fn wait_for_control_server_socket(timeout: Duration) -> Result<(), String> {
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            if Self::local_control_server_available() {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        Err("Timed out waiting for the local control server to start".to_string())
+    }
+
+    fn ensure_control_server(&mut self) -> Result<(), String> {
+        if Self::local_control_server_available() {
+            return Ok(());
+        }
+
+        if !self.control_server_started {
+            self.control_server_started = true;
+            thread::spawn(|| {
+                let runtime =
+                    tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+                if let Err(error) = runtime.block_on(run_standalone(None)) {
+                    log::error!("Embedded control server failed: {error:#}");
+                }
+            });
+        }
+
+        Self::wait_for_control_server_socket(Duration::from_secs(5))
     }
 
     fn ensure_connected(&mut self) -> Result<(), String> {
@@ -83,6 +132,12 @@ impl McpServer {
             }
 
             thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn stop_browser(&mut self) {
+        if let Some(mut browser) = self.browser.take() {
+            stop_browser(&mut browser);
         }
     }
 
@@ -315,6 +370,40 @@ impl McpServer {
                             },
                             "required": ["id"]
                         }
+                    },
+                    {
+                        "name": "launch_web_browser",
+                        "description": "Launch Chromium for the Raybox web app with the supported WebGPU flags and optionally wait for the control connection.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "url": { "type": "string", "description": "Base web URL (default http://127.0.0.1:8000)" },
+                                "demo": { "type": "integer", "description": "Optional demo ID appended as a query parameter" },
+                                "control": { "type": "boolean", "description": "Enable ?control=1 and wait for control readiness (default true)" },
+                                "hotreload": { "type": "boolean", "description": "Enable ?hotreload=1" },
+                                "headless": { "type": "boolean", "description": "Launch headless Chromium" },
+                                "app_mode": { "type": "boolean", "description": "Launch Chromium in app-window mode without normal browser chrome (default false)" },
+                                "debug_port": { "type": "integer", "description": "Chromium remote-debugging port (default 9222)" },
+                                "chrome_bin": { "type": "string", "description": "Explicit Chromium binary path" },
+                                "chrome_args": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "Extra Chromium arguments"
+                                },
+                                "user_data_dir": { "type": "string", "description": "Explicit browser profile directory" },
+                                "use_default_profile": { "type": "boolean", "description": "Use the default browser profile instead of an isolated temp profile" },
+                                "compat": { "type": "boolean", "description": "Enable the Raybox Linux/WebGPU compatibility flag pack (default true)" },
+                                "wait_for_control_ms": { "type": "integer", "description": "Control readiness timeout in milliseconds" }
+                            }
+                        }
+                    },
+                    {
+                        "name": "close_web_browser",
+                        "description": "Close the browser launched by this raybox-mcp instance.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
+                        }
                     }
                 ]
             })),
@@ -344,7 +433,189 @@ impl McpServer {
             .cloned()
             .unwrap_or(serde_json::json!({}));
 
-        // Ensure connected
+        if tool_name == "launch_web_browser" {
+            self.stop_browser();
+
+            let control = arguments
+                .get("control")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let hotreload = arguments
+                .get("hotreload")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let demo = arguments
+                .get("demo")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u8);
+            let base_url = arguments
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("http://127.0.0.1:8000");
+            let url = match build_launch_url(base_url, demo, control, hotreload) {
+                Ok(url) => url,
+                Err(error) => {
+                    return McpResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id.clone(),
+                        result: None,
+                        error: Some(McpError {
+                            code: -32602,
+                            message: error.to_string(),
+                        }),
+                    }
+                }
+            };
+
+            let config = BrowserLaunchConfig {
+                url,
+                chrome_bin: arguments
+                    .get("chrome_bin")
+                    .and_then(|v| v.as_str())
+                    .map(PathBuf::from),
+                debug_port: arguments
+                    .get("debug_port")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u16)
+                    .unwrap_or(raybox::browser_launch::DEFAULT_DEBUG_PORT),
+                headless: arguments
+                    .get("headless")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                app_mode: arguments
+                    .get("app_mode")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                compat: arguments
+                    .get("compat")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(cfg!(target_os = "linux")),
+                use_default_profile: arguments
+                    .get("use_default_profile")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                user_data_dir: arguments
+                    .get("user_data_dir")
+                    .and_then(|v| v.as_str())
+                    .map(PathBuf::from),
+                extra_args: arguments
+                    .get("chrome_args")
+                    .and_then(|v| v.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item.as_str().map(str::to_string))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default(),
+            };
+
+            let wait_for_control_ms = arguments
+                .get("wait_for_control_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_else(|| {
+                    if control {
+                        default_control_ready_timeout().as_millis() as u64
+                    } else {
+                        0
+                    }
+                });
+
+            if control {
+                if let Err(error) = self.ensure_control_server() {
+                    return McpResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id.clone(),
+                        result: None,
+                        error: Some(McpError {
+                            code: -32000,
+                            message: error,
+                        }),
+                    };
+                }
+            }
+
+            let launch = match spawn_chromium(&config) {
+                Ok(launch) => launch,
+                Err(error) => {
+                    return McpResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id.clone(),
+                        result: None,
+                        error: Some(McpError {
+                            code: -32000,
+                            message: error.to_string(),
+                        }),
+                    }
+                }
+            };
+            let summary = serde_json::json!({
+                "chrome_bin": launch.chrome_bin.display().to_string(),
+                "debug_port": launch.debug_port,
+                "url": launch.url,
+                "profile_dir": launch.owned_profile_dir.as_ref().map(|path| path.display().to_string()),
+            });
+            self.browser = Some(launch);
+
+            if control && wait_for_control_ms > 0 {
+                if let Err(error) =
+                    wait_for_control_ready(Duration::from_millis(wait_for_control_ms))
+                {
+                    self.stop_browser();
+                    return McpResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id.clone(),
+                        result: None,
+                        error: Some(McpError {
+                            code: -32000,
+                            message: format!(
+                                "browser launched but raybox control never became ready: {}",
+                                error
+                            ),
+                        }),
+                    };
+                }
+                self.client = None;
+                if let Err(error) = self.ensure_connected() {
+                    return McpResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id.clone(),
+                        result: None,
+                        error: Some(McpError {
+                            code: -32000,
+                            message: error,
+                        }),
+                    };
+                }
+            }
+
+            return McpResponse {
+                jsonrpc: "2.0".to_string(),
+                id: request.id.clone(),
+                result: Some(serde_json::json!({
+                    "content": [{
+                        "type": "text",
+                        "text": serde_json::to_string_pretty(&summary).unwrap_or_else(|_| summary.to_string())
+                    }]
+                })),
+                error: None,
+            };
+        }
+
+        if tool_name == "close_web_browser" {
+            self.stop_browser();
+            self.client = None;
+            return McpResponse {
+                jsonrpc: "2.0".to_string(),
+                id: request.id.clone(),
+                result: Some(serde_json::json!({
+                    "content": [{ "type": "text", "text": "Closed launched browser" }]
+                })),
+                error: None,
+            };
+        }
+
+        // Ensure connected for app-control tools.
         if let Err(e) = self.ensure_connected() {
             return McpResponse {
                 jsonrpc: "2.0".to_string(),

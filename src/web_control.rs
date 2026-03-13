@@ -4,6 +4,8 @@
 
 #![allow(dead_code)]
 
+use serde_json::{json, Value};
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -18,6 +20,7 @@ pub enum WebCommand {
         position: Option<[f32; 3]>,
         yaw: Option<f32>,
         pitch: Option<f32>,
+        roll: Option<f32>,
     },
     SetTheme {
         theme: String,
@@ -62,6 +65,8 @@ pub struct WebControlState {
     pending_commands: VecDeque<(u64, WebCommand)>,
     pending_responses: VecDeque<WebResponse>,
     connected: bool,
+    last_received_message: Option<String>,
+    last_sent_message: Option<String>,
     /// Flag indicating a reload was requested (JavaScript should handle this)
     reload_requested: bool,
 }
@@ -72,6 +77,8 @@ impl WebControlState {
             pending_commands: VecDeque::new(),
             pending_responses: VecDeque::new(),
             connected: false,
+            last_received_message: None,
+            last_sent_message: None,
             reload_requested: false,
         }
     }
@@ -100,6 +107,30 @@ impl WebControlState {
         self.connected = connected;
     }
 
+    pub fn set_last_received_message(&mut self, message: String) {
+        self.last_received_message = Some(message);
+    }
+
+    pub fn set_last_sent_message(&mut self, message: String) {
+        self.last_sent_message = Some(message);
+    }
+
+    pub fn pending_command_count(&self) -> usize {
+        self.pending_commands.len()
+    }
+
+    pub fn pending_response_count(&self) -> usize {
+        self.pending_responses.len()
+    }
+
+    pub fn last_received_message(&self) -> Option<&str> {
+        self.last_received_message.as_deref()
+    }
+
+    pub fn last_sent_message(&self) -> Option<&str> {
+        self.last_sent_message.as_deref()
+    }
+
     pub fn request_reload(&mut self) {
         self.reload_requested = true;
     }
@@ -121,6 +152,7 @@ pub fn new_shared_state() -> SharedWebControlState {
 pub struct WebWsClient {
     socket: web_sys::WebSocket,
     state: SharedWebControlState,
+    hello_sent: Rc<Cell<bool>>,
 }
 
 impl WebWsClient {
@@ -128,20 +160,31 @@ impl WebWsClient {
     pub fn connect(url: &str, state: SharedWebControlState) -> Result<Self, JsValue> {
         let socket = web_sys::WebSocket::new(url)?;
         socket.set_binary_type(web_sys::BinaryType::Arraybuffer);
+        let hello_sent = Rc::new(Cell::new(false));
 
         // Set up event handlers
         let state_clone = state.clone();
+        let socket_clone = socket.clone();
+        let hello_sent_clone = hello_sent.clone();
         let onopen_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
             log::info!("WebSocket connected to control server");
             state_clone.borrow_mut().set_connected(true);
+            if socket_clone
+                .send_with_str(r#"{"type":"appHello","role":"webApp"}"#)
+                .is_ok()
+            {
+                hello_sent_clone.set(true);
+            }
         }) as Box<dyn FnMut(_)>);
         socket.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
         onopen_callback.forget();
 
         let state_clone = state.clone();
+        let hello_sent_clone = hello_sent.clone();
         let onclose_callback = Closure::wrap(Box::new(move |_: web_sys::CloseEvent| {
             log::info!("WebSocket disconnected from control server");
             state_clone.borrow_mut().set_connected(false);
+            hello_sent_clone.set(false);
         }) as Box<dyn FnMut(_)>);
         socket.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
         onclose_callback.forget();
@@ -155,6 +198,9 @@ impl WebWsClient {
         let state_clone = state.clone();
         let onmessage_callback = Closure::wrap(Box::new(move |e: web_sys::MessageEvent| {
             if let Some(text) = e.data().as_string() {
+                state_clone
+                    .borrow_mut()
+                    .set_last_received_message(text.clone());
                 // Parse the incoming JSON message
                 if let Some((id, cmd)) = parse_command(&text) {
                     state_clone.borrow_mut().push_command(id, cmd);
@@ -164,7 +210,11 @@ impl WebWsClient {
         socket.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
         onmessage_callback.forget();
 
-        Ok(Self { socket, state })
+        Ok(Self {
+            socket,
+            state,
+            hello_sent,
+        })
     }
 
     /// Connect to localhost with default port
@@ -179,10 +229,35 @@ impl WebWsClient {
 
     /// Poll for pending responses and send them
     pub fn flush_responses(&self) {
-        while let Some(response) = self.state.borrow_mut().pop_response() {
+        self.send_hello_if_needed();
+        loop {
+            let response = { self.state.borrow_mut().pop_response() };
+            let Some(response) = response else {
+                break;
+            };
             if let Err(e) = self.send_response(&response) {
                 log::error!("Failed to send response: {:?}", e);
+            } else {
+                self.state
+                    .borrow_mut()
+                    .set_last_sent_message(response.data.clone());
             }
+        }
+    }
+
+    fn send_hello_if_needed(&self) {
+        if self.hello_sent.get() {
+            return;
+        }
+        if self.socket.ready_state() != web_sys::WebSocket::OPEN {
+            return;
+        }
+        if self
+            .socket
+            .send_with_str(r#"{"type":"appHello","role":"webApp"}"#)
+            .is_ok()
+        {
+            self.hello_sent.set(true);
         }
     }
 }
@@ -228,10 +303,15 @@ fn parse_command(json: &str) -> Option<(u64, WebCommand)> {
                 .get("pitch")
                 .and_then(|v| v.as_f64())
                 .map(|v| v as f32);
+            let roll = command
+                .get("roll")
+                .and_then(|v| v.as_f64())
+                .map(|v| v as f32);
             WebCommand::SetCamera {
                 position,
                 yaw,
                 pitch,
+                roll,
             }
         }
         "setListItem" => {
@@ -299,40 +379,39 @@ fn parse_command(json: &str) -> Option<(u64, WebCommand)> {
 
 /// Create a JSON response
 pub fn create_response(id: u64, response_type: &str, data: Option<&str>) -> WebResponse {
-    let json = if let Some(d) = data {
-        format!(
-            r#"{{"id":{},"response":{{"type":"{}",{}}}}}"#,
-            id, response_type, d
-        )
-    } else {
-        format!(
-            r#"{{"id":{},"response":{{"type":"{}"}}}}"#,
-            id, response_type
-        )
+    let response = match response_type {
+        "pong" => json!({ "type": "pong" }),
+        "success" => success_body(data.and_then(parse_json_value)),
+        other => {
+            let mut response = serde_json::Map::new();
+            response.insert("type".to_string(), Value::String(other.to_string()));
+            if let Some(extra) = data
+                .and_then(parse_json_value)
+                .and_then(|value| value.as_object().cloned())
+            {
+                response.extend(extra);
+            }
+            Value::Object(response)
+        }
     };
-    WebResponse { id, data: json }
+    serialize_response(id, response)
 }
 
 /// Create a success response
 pub fn success_response(id: u64, data: Option<&str>) -> WebResponse {
-    let json = if let Some(d) = data {
-        format!(
-            r#"{{"id":{},"response":{{"type":"success","data":{}}}}}"#,
-            id, d
-        )
-    } else {
-        format!(r#"{{"id":{},"response":{{"type":"success"}}}}"#, id)
-    };
-    WebResponse { id, data: json }
+    serialize_response(id, success_body(data.and_then(parse_json_value)))
 }
 
 /// Create an error response
 pub fn error_response(id: u64, code: &str, message: &str) -> WebResponse {
-    let json = format!(
-        r#"{{"id":{},"response":{{"type":"error","code":"{}","message":"{}"}}}}"#,
-        id, code, message
-    );
-    WebResponse { id, data: json }
+    serialize_response(
+        id,
+        json!({
+            "type": "error",
+            "code": normalize_error_code(code),
+            "message": message,
+        }),
+    )
 }
 
 /// Create a status response
@@ -342,39 +421,100 @@ pub fn status_response(
     demo_name: &str,
     demo_family: &str,
     camera_pos: [f32; 3],
+    camera_yaw: f32,
+    camera_pitch: f32,
+    camera_roll: f32,
     fps: f32,
     overlay_mode: &str,
     show_keybindings: bool,
 ) -> WebResponse {
-    let json = format!(
-        r#"{{"id":{},"response":{{"type":"status","currentDemo":{},"demoName":"{}","demoFamily":"{}","cameraPosition":[{},{},{}],"fps":{},"overlayMode":"{}","showKeybindings":{}}}}}"#,
+    let camera_pos = [
+        sanitize_f32(camera_pos[0]),
+        sanitize_f32(camera_pos[1]),
+        sanitize_f32(camera_pos[2]),
+    ];
+    serialize_response(
         id,
-        current_demo,
-        demo_name,
-        demo_family,
-        camera_pos[0],
-        camera_pos[1],
-        camera_pos[2],
-        fps,
-        overlay_mode,
-        show_keybindings
-    );
-    WebResponse { id, data: json }
+        json!({
+            "type": "status",
+            "current_demo": current_demo,
+            "demo_name": demo_name,
+            "demo_family": demo_family,
+            "camera_position": camera_pos,
+            "camera_yaw": sanitize_f32(camera_yaw),
+            "camera_pitch": sanitize_f32(camera_pitch),
+            "camera_roll": sanitize_f32(camera_roll),
+            "fps": sanitize_f32(fps),
+            "overlay_mode": overlay_mode,
+            "show_keybindings": show_keybindings,
+        }),
+    )
 }
 
 /// Create a pong response
 pub fn pong_response(id: u64) -> WebResponse {
-    WebResponse {
-        id,
-        data: format!(r#"{{"id":{},"response":{{"type":"pong"}}}}"#, id),
-    }
+    serialize_response(id, json!({ "type": "pong" }))
 }
 
 /// Create a screenshot response (base64 encoded PNG)
 pub fn screenshot_response(id: u64, base64_data: &str, width: u32, height: u32) -> WebResponse {
-    let json = format!(
-        r#"{{"id":{},"response":{{"type":"screenshot","base64":"{}","width":{},"height":{}}}}}"#,
-        id, base64_data, width, height
-    );
-    WebResponse { id, data: json }
+    serialize_response(
+        id,
+        json!({
+            "type": "screenshot",
+            "base64": base64_data,
+            "width": width,
+            "height": height,
+        }),
+    )
+}
+
+fn serialize_response(id: u64, response: Value) -> WebResponse {
+    let data = serde_json::to_string(&json!({
+        "id": id,
+        "response": response,
+    }))
+    .unwrap_or_else(|_| {
+        format!(
+            r#"{{"id":{},"response":{{"type":"error","code":"internal","message":"response serialization failed"}}}}"#,
+            id
+        )
+    });
+    WebResponse { id, data }
+}
+
+fn parse_json_value(raw: &str) -> Option<Value> {
+    serde_json::from_str(raw).ok()
+}
+
+fn success_body(data: Option<Value>) -> Value {
+    match data {
+        Some(data) => json!({
+            "type": "success",
+            "data": data,
+        }),
+        None => json!({
+            "type": "success",
+        }),
+    }
+}
+
+fn normalize_error_code(raw: &str) -> &'static str {
+    match raw {
+        "InvalidCommand" | "invalidCommand" => "invalidCommand",
+        "InvalidDemoId" | "invalidDemoId" => "invalidDemoId",
+        "NotConnected" | "notConnected" => "notConnected",
+        "ScreenshotFailed" | "screenshotFailed" => "screenshotFailed",
+        "VersionMismatch" | "versionMismatch" => "versionMismatch",
+        "InvalidTheme" | "invalidTheme" => "invalidTheme",
+        _ => "internal",
+    }
+}
+
+fn sanitize_f32(value: f32) -> f32 {
+    if value.is_finite() {
+        value
+    } else {
+        0.0
+    }
 }

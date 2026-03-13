@@ -2,12 +2,20 @@
 //!
 //! Simple command-line interface to control running raybox demos.
 
-use raybox::control::{BlockingWsClient, Command, Response};
+use raybox::browser_launch::{
+    build_launch_url, default_control_ready_timeout, spawn_chromium, stop_browser,
+    wait_for_control_ready, BrowserLaunchConfig,
+};
+use raybox::control::{run_standalone, BlockingWsClient, Command, Response};
 use raybox::demo_core::DemoId;
 use std::env;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
+use std::process::{Child, Command as ProcessCommand, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn print_usage() {
     eprintln!("Usage: raybox-ctl [--timeout-ms <ms>] <command> [args]");
@@ -18,6 +26,14 @@ fn print_usage() {
     eprintln!("  screenshot [--output <path>] [--crop WxH]  Take screenshot");
     eprintln!("  capture-demo <id> [--theme <name>] [--dark] [--reset-camera] [--output <path>] [--crop WxH] [--settle-ms <ms>]");
     eprintln!("                          Switch, optionally theme/reset, then take screenshot on one connection");
+    eprintln!("  web-open [--url <url>] [--demo <id>] [--control] [--hotreload] [--headless]");
+    eprintln!("                          Launch Chromium with the supported Raybox WebGPU flags");
+    eprintln!(
+        "  web-smoke [--url <url>] [--demo <id>] [--output <path>] [--crop WxH] [--headless]"
+    );
+    eprintln!(
+        "                          Launch Chromium, wait for control, then capture a screenshot"
+    );
     eprintln!("  camera <x> <y> <z>      Set camera position");
     eprintln!("  pressKey <key>          Simulate key press (e.g. T, R)");
     eprintln!("  theme <name> [--dark]   Set theme (classic2d, professional, neobrutalism, glassmorphism, neumorphism)");
@@ -37,6 +53,21 @@ fn print_usage() {
     eprintln!();
     eprintln!("Global options:");
     eprintln!("  --timeout-ms <ms>       Command timeout in milliseconds (default: 30000)");
+    eprintln!("  --chrome-bin <path>     Chromium/Chrome binary override for web-open/web-smoke");
+    eprintln!("  --chrome-arg <arg>      Extra Chromium argument (repeatable)");
+    eprintln!("  --app                   Launch visible Chromium in app-window mode");
+    eprintln!("  --no-app                Launch a normal Chromium window with browser chrome");
+    eprintln!(
+        "  --debug-port <port>     Remote debugging port for web-open/web-smoke (default: 9222)"
+    );
+    eprintln!(
+        "  --user-data-dir <path>  Browser profile directory (default: isolated temp profile)"
+    );
+    eprintln!("  --use-default-profile   Launch against the browser's default profile");
+    eprintln!("  --no-compat             Disable the Raybox Linux/WebGPU compatibility flag pack");
+    eprintln!(
+        "  --wait-for-control-ms <ms>  Override control readiness wait time for web-open/web-smoke"
+    );
     eprintln!();
     eprintln!("Demo IDs:");
     eprintln!("  0 = Empty");
@@ -62,6 +93,74 @@ fn parse_flag_value(args: &[String], names: &[&str]) -> Option<String> {
 
 fn has_flag(args: &[String], name: &str) -> bool {
     args.iter().any(|arg| arg == name)
+}
+
+fn local_control_server_available() -> bool {
+    match BlockingWsClient::new() {
+        Ok(mut client) => client.connect_local().is_ok(),
+        Err(_) => false,
+    }
+}
+
+fn wait_for_control_server_socket(timeout: Duration) -> anyhow::Result<()> {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if local_control_server_available() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    anyhow::bail!("timed out waiting for the local control server to start");
+}
+
+fn spawn_control_server_process() -> anyhow::Result<Child> {
+    let exe = env::current_exe()?;
+    let mut command = ProcessCommand::new(exe);
+    command
+        .arg("control-server")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    command.process_group(0);
+    let child = command.spawn()?;
+    Ok(child)
+}
+
+fn ensure_control_server_process(timeout: Duration) -> anyhow::Result<Option<Child>> {
+    if local_control_server_available() {
+        return Ok(None);
+    }
+
+    let mut child = spawn_control_server_process()?;
+    if let Err(error) = wait_for_control_server_socket(timeout) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+
+    Ok(Some(child))
+}
+
+fn stop_control_server_process(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn parse_repeated_flag_values(args: &[String], name: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == name {
+            if let Some(value) = args.get(i + 1) {
+                values.push(value.clone());
+            }
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    values
 }
 
 fn parse_center_crop(args: &[String]) -> Option<[u32; 2]> {
@@ -94,6 +193,48 @@ fn command_index(args: &[String]) -> Option<usize> {
 
 fn screenshot_output_path(args: &[String]) -> String {
     parse_flag_value(args, &["--output", "-o"]).unwrap_or_else(|| "screenshot.png".to_string())
+}
+
+fn parse_demo_flag(args: &[String]) -> Option<u8> {
+    parse_flag_value(args, &["--demo"]).and_then(|value| match value.parse::<u8>() {
+        Ok(id) if DemoId::from_u8(id).is_some() => Some(id),
+        _ => None,
+    })
+}
+
+fn parse_wait_for_control_ms(args: &[String], control: bool) -> u64 {
+    parse_flag_value(args, &["--wait-for-control-ms"])
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            if control {
+                default_control_ready_timeout().as_millis() as u64
+            } else {
+                0
+            }
+        })
+}
+
+fn parse_browser_launch_config(args: &[String], default_control: bool) -> BrowserLaunchConfig {
+    let base_url =
+        parse_flag_value(args, &["--url"]).unwrap_or_else(|| "http://127.0.0.1:8000".to_string());
+    let control = default_control || has_flag(args, "--control");
+    let hotreload = has_flag(args, "--hotreload");
+    let demo = parse_demo_flag(args);
+    let url = build_launch_url(&base_url, demo, control, hotreload).unwrap_or(base_url);
+
+    BrowserLaunchConfig {
+        url,
+        chrome_bin: parse_flag_value(args, &["--chrome-bin"]).map(PathBuf::from),
+        debug_port: parse_flag_value(args, &["--debug-port"])
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(raybox::browser_launch::DEFAULT_DEBUG_PORT),
+        headless: has_flag(args, "--headless"),
+        app_mode: !has_flag(args, "--headless") && has_flag(args, "--app"),
+        compat: !has_flag(args, "--no-compat"),
+        use_default_profile: has_flag(args, "--use-default-profile"),
+        user_data_dir: parse_flag_value(args, &["--user-data-dir"]).map(PathBuf::from),
+        extra_args: parse_repeated_flag_values(args, "--chrome-arg"),
+    }
 }
 
 fn send_command(
@@ -264,6 +405,113 @@ fn handle_capture_demo(
     );
 }
 
+fn handle_web_open(args: &[String]) {
+    let control = has_flag(args, "--control");
+    let wait_ms = parse_wait_for_control_ms(args, control);
+    let config = parse_browser_launch_config(args, control);
+    let mut control_server = if control {
+        match ensure_control_server_process(Duration::from_secs(5)) {
+            Ok(server) => server,
+            Err(error) => {
+                eprintln!("Failed to start local control server: {error:#}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut launch = match spawn_chromium(&config) {
+        Ok(launch) => launch,
+        Err(error) => {
+            eprintln!("Failed to launch Chromium: {error:#}");
+            std::process::exit(1);
+        }
+    };
+
+    println!("Launched Chromium: {}", launch.chrome_bin.display());
+    println!("URL: {}", launch.url);
+    println!("Debug Port: {}", launch.debug_port);
+    if let Some(profile) = &launch.owned_profile_dir {
+        println!("Profile: {}", profile.display());
+    }
+    if control_server.is_some() {
+        println!("Started local control server on ws://127.0.0.1:9300");
+    }
+
+    if wait_ms > 0 {
+        match wait_for_control_ready(Duration::from_millis(wait_ms)) {
+            Ok(response) => {
+                println!("Control ready.");
+                print_response(response, &screenshot_output_path(args));
+            }
+            Err(error) => {
+                eprintln!("Browser launched, but the web app never became ready: {error:#}");
+                stop_browser(&mut launch);
+                if let Some(server) = control_server.as_mut() {
+                    stop_control_server_process(server);
+                }
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+fn handle_web_smoke(args: &[String]) {
+    let mut config = parse_browser_launch_config(args, true);
+    if !config.url.contains("control=1") {
+        config.url = build_launch_url(&config.url, None, true, false).unwrap_or(config.url);
+    }
+
+    let wait_ms = parse_wait_for_control_ms(args, true).max(1);
+    let output_path = screenshot_output_path(args);
+    let center_crop = parse_center_crop(args);
+    let mut control_server = match ensure_control_server_process(Duration::from_secs(5)) {
+        Ok(server) => server,
+        Err(error) => {
+            eprintln!("Failed to start local control server: {error:#}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut launch = match spawn_chromium(&config) {
+        Ok(launch) => launch,
+        Err(error) => {
+            eprintln!("Failed to launch Chromium: {error:#}");
+            std::process::exit(1);
+        }
+    };
+
+    let smoke_result = (|| -> anyhow::Result<()> {
+        let response = wait_for_control_ready(Duration::from_millis(wait_ms))?;
+        print_response(response, &output_path);
+
+        let mut client = BlockingWsClient::new()?;
+        client.connect_local()?;
+        let response = send_command(&client, Command::Screenshot { center_crop }, wait_ms);
+        print_response(response, &output_path);
+        Ok(())
+    })();
+
+    stop_browser(&mut launch);
+    if let Some(server) = control_server.as_mut() {
+        stop_control_server_process(server);
+    }
+
+    if let Err(error) = smoke_result {
+        eprintln!("Web smoke failed: {error:#}");
+        std::process::exit(1);
+    }
+}
+
+fn handle_control_server() {
+    let runtime = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+    if let Err(error) = runtime.block_on(run_standalone(None)) {
+        eprintln!("Control server failed: {error:#}");
+        std::process::exit(1);
+    }
+}
+
 fn main() {
     env_logger::init();
 
@@ -287,6 +535,21 @@ fn main() {
     if matches!(command.as_str(), "help" | "--help" | "-h") {
         print_usage();
         std::process::exit(0);
+    }
+
+    if command == "web-open" {
+        handle_web_open(&args);
+        return;
+    }
+
+    if command == "web-smoke" {
+        handle_web_smoke(&args);
+        return;
+    }
+
+    if command == "control-server" {
+        handle_control_server();
+        return;
     }
 
     let mut client = match BlockingWsClient::new() {

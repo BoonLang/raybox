@@ -1,27 +1,28 @@
 //! Web (WASM) version of the unified demo system
 //!
 //! Supports demo switching, overlay, keybindings, and web control commands.
-//! Uses OrbitalCamera for simpler 3D navigation on web.
+//! Uses browser-specific runtime and input plumbing for the web demos.
 //! Optionally connects to control server when ?control=1 URL parameter is present.
 //! Supports hot-reload via WASM module reloading with state preservation.
 
 #![allow(dead_code)]
 
-use crate::camera::{OrbitalCamera, Uniforms};
+use crate::camera::{FlyCamera, FlyCamera as OrbitalCamera, Uniforms};
 use crate::constants::{HEIGHT, WIDTH};
 use crate::demo_core::{
     ui_physical_card_camera_preset, DemoId, DemoType, ListFilter, OverlayMode,
-    UiPhysicalCameraPreset, KEYBINDINGS_COMMON,
+    UiPhysicalCameraPreset, KEYBINDINGS_2D, KEYBINDINGS_3D,
 };
 use crate::gpu_runtime_common::{
     build_font_gpu_data, create_bind_group_layout_with_storage, create_bind_group_with_storage,
-    create_fullscreen_pipeline, create_storage_buffers, UiStorageBuffers,
+    create_fullscreen_pipeline, create_storage_buffers, GpuBezierCurve, GpuGlyphData, GpuGridCell,
+    UiStorageBuffers, VectorFontGpuData,
 };
 use crate::retained::fixed_scene::{
     BuiltFixedUi2dScene, FixedUi2dSceneModelBuilder, FixedUi2dSceneModelCapture,
     FixedUi2dSceneState,
 };
-use crate::retained::showcase::{ShowcaseSceneAction, ShowcaseSceneModel};
+use crate::retained::showcase::{showcase_text_colors, ShowcaseSceneAction, ShowcaseSceneModel};
 use crate::retained::text::{FixedTextSceneData, GpuCharInstanceEx, TextColors, TextRenderSpace};
 use crate::retained::text_scene::{OwnedTextSceneBlock, WrappedTextSceneModel};
 use crate::retained::ui::{GpuUiPrimitive, UiRenderSpace};
@@ -30,10 +31,9 @@ use crate::retained::{
     SceneMode, TextRole, UiVisualRole,
 };
 use crate::shader_bindings::{
-    sdf_clay_vector, sdf_raymarch, sdf_spheres, sdf_text2d_vector, sdf_text_shadow_vector,
-    sdf_towers,
+    sdf_clay_vector, sdf_raymarch, sdf_spheres, sdf_text_shadow_vector, sdf_towers,
 };
-use crate::text::{VectorFont, VectorFontAtlas};
+use crate::text::{build_char_grid, VectorFont, VectorFontAtlas};
 use crate::todomvc_retained::TodoMvcRetainedScene;
 use crate::todomvc_shared::{
     build_text_scene_data_from_scene as build_todomvc_text_scene_data_from_scene,
@@ -43,16 +43,20 @@ use crate::todomvc_shared::{
 use crate::ui2d_shader_bindings as retained_ui2d_shader;
 use crate::ui_physical_shader_bindings as retained_ui_physical_shader;
 use crate::ui_physical_theme::{
-    ThemeId, ThemeUniforms, UiPhysicalThemeState, PHYSICAL_THEME_OPTIONS,
+    tune_generic_ui_physical_text_colors, ThemeId, ThemeUniforms, UiPhysicalThemeState,
+    PHYSICAL_THEME_OPTIONS,
 };
 use crate::web_control::{
     self, error_response, pong_response, screenshot_response, status_response, success_response,
     SharedWebControlState, WebCommand, WebWsClient,
 };
 use crate::web_input::WebInputHandler;
+use base64::Engine;
 use bytemuck::{Pod, Zeroable};
+use image::{imageops, ImageBuffer, ImageFormat, Rgba};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
+use std::io::Cursor;
 use std::rc::Rc;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
@@ -68,10 +72,10 @@ thread_local! {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebReloadableState {
     pub current_demo: u8,
-    pub camera_distance: f32,
-    pub camera_azimuth: f32,
-    pub camera_elevation: f32,
-    pub camera_target: [f32; 3],
+    pub camera_position: [f32; 3],
+    pub camera_yaw: f32,
+    pub camera_pitch: f32,
+    pub camera_roll: f32,
     pub overlay_mode: String,
     pub show_keybindings: bool,
     pub text2d_offset: [f32; 2],
@@ -84,10 +88,10 @@ impl Default for WebReloadableState {
     fn default() -> Self {
         Self {
             current_demo: 1,
-            camera_distance: 5.0,
-            camera_azimuth: 0.0,
-            camera_elevation: 0.0,
-            camera_target: [0.0, 0.0, 0.0],
+            camera_position: [0.0, 0.0, 5.0],
+            camera_yaw: 0.0,
+            camera_pitch: 0.0,
+            camera_roll: 0.0,
             overlay_mode: "off".to_string(),
             show_keybindings: false,
             text2d_offset: [0.0, 0.0],
@@ -151,22 +155,101 @@ trait WebDemo {
 
 type World3dShaderFactory = fn(&wgpu::Device) -> wgpu::ShaderModule;
 
+struct WebWorld3dStorageBinding<'a> {
+    binding: u32,
+    visibility: wgpu::ShaderStages,
+    read_only: bool,
+    buffer: &'a wgpu::Buffer,
+}
+
+struct WebVectorTextStorageBuffers<'a> {
+    grid_cells: &'a wgpu::Buffer,
+    curve_indices: &'a wgpu::Buffer,
+    curves: &'a wgpu::Buffer,
+    glyph_data: &'a wgpu::Buffer,
+    char_instances: &'a wgpu::Buffer,
+    char_grid_cells: &'a wgpu::Buffer,
+    char_grid_indices: &'a wgpu::Buffer,
+    char_grid_distances: Option<&'a wgpu::Buffer>,
+}
+
+fn web_vector_text_storage_bindings<'a>(
+    buffers: WebVectorTextStorageBuffers<'a>,
+) -> Vec<WebWorld3dStorageBinding<'a>> {
+    let mut bindings = vec![
+        WebWorld3dStorageBinding {
+            binding: 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            read_only: true,
+            buffer: buffers.grid_cells,
+        },
+        WebWorld3dStorageBinding {
+            binding: 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            read_only: true,
+            buffer: buffers.curve_indices,
+        },
+        WebWorld3dStorageBinding {
+            binding: 3,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            read_only: true,
+            buffer: buffers.curves,
+        },
+        WebWorld3dStorageBinding {
+            binding: 4,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            read_only: true,
+            buffer: buffers.glyph_data,
+        },
+        WebWorld3dStorageBinding {
+            binding: 5,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            read_only: true,
+            buffer: buffers.char_instances,
+        },
+        WebWorld3dStorageBinding {
+            binding: 6,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            read_only: true,
+            buffer: buffers.char_grid_cells,
+        },
+        WebWorld3dStorageBinding {
+            binding: 7,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            read_only: true,
+            buffer: buffers.char_grid_indices,
+        },
+    ];
+    if let Some(distances) = buffers.char_grid_distances {
+        bindings.push(WebWorld3dStorageBinding {
+            binding: 8,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            read_only: true,
+            buffer: distances,
+        });
+    }
+    bindings
+}
+
 fn create_web_world3d_bind_group_layout(
     device: &wgpu::Device,
     label: &str,
+    extra_entries: &[wgpu::BindGroupLayoutEntry],
 ) -> wgpu::BindGroupLayout {
+    let mut entries = vec![wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }];
+    entries.extend_from_slice(extra_entries);
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some(&format!("{label} Bind Group Layout")),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
+        entries: &entries,
     })
 }
 
@@ -175,14 +258,17 @@ fn create_web_world3d_bind_group(
     label: &str,
     bind_group_layout: &wgpu::BindGroupLayout,
     uniform_buffer: &wgpu::Buffer,
+    extra_entries: &[wgpu::BindGroupEntry<'_>],
 ) -> wgpu::BindGroup {
+    let mut entries = vec![wgpu::BindGroupEntry {
+        binding: 0,
+        resource: uniform_buffer.as_entire_binding(),
+    }];
+    entries.extend_from_slice(extra_entries);
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(&format!("{label} Bind Group")),
         layout: bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform_buffer.as_entire_binding(),
-        }],
+        entries: &entries,
     })
 }
 
@@ -235,6 +321,15 @@ struct WebWorld3dUniformHost<U: Pod> {
     _marker: std::marker::PhantomData<U>,
 }
 
+struct WebWorld3dStorageHost<U: Pod> {
+    pipeline: wgpu::RenderPipeline,
+    uniform_buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
+    _marker: std::marker::PhantomData<U>,
+}
+
 impl<U: Pod> WebWorld3dUniformHost<U> {
     fn new(
         device: &wgpu::Device,
@@ -251,9 +346,9 @@ impl<U: Pod> WebWorld3dUniformHost<U> {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let bind_group_layout = create_web_world3d_bind_group_layout(device, label);
+        let bind_group_layout = create_web_world3d_bind_group_layout(device, label, &[]);
         let bind_group =
-            create_web_world3d_bind_group(device, label, &bind_group_layout, &uniform_buffer);
+            create_web_world3d_bind_group(device, label, &bind_group_layout, &uniform_buffer, &[]);
         let pipeline =
             create_web_world3d_pipeline(device, format, label, &shader_module, &bind_group_layout);
 
@@ -283,7 +378,83 @@ impl<U: Pod> WebWorld3dUniformHost<U> {
     }
 }
 
-type WebWorld3dStorageHost<U> = WebWorld3dUniformHost<U>;
+impl<U: Pod> WebWorld3dStorageHost<U> {
+    fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        label: &str,
+        shader_factory: World3dShaderFactory,
+        initial_uniforms: &U,
+        storage_bindings: &[WebWorld3dStorageBinding<'_>],
+    ) -> Self {
+        let shader_module = shader_factory(device);
+
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{label} Uniform Buffer")),
+            contents: bytemuck::bytes_of(initial_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let layout_entries: Vec<_> = storage_bindings
+            .iter()
+            .map(|entry| wgpu::BindGroupLayoutEntry {
+                binding: entry.binding,
+                visibility: entry.visibility,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage {
+                        read_only: entry.read_only,
+                    },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            })
+            .collect();
+        let bind_group_entries: Vec<_> = storage_bindings
+            .iter()
+            .map(|entry| wgpu::BindGroupEntry {
+                binding: entry.binding,
+                resource: entry.buffer.as_entire_binding(),
+            })
+            .collect();
+
+        let bind_group_layout =
+            create_web_world3d_bind_group_layout(device, label, &layout_entries);
+        let bind_group = create_web_world3d_bind_group(
+            device,
+            label,
+            &bind_group_layout,
+            &uniform_buffer,
+            &bind_group_entries,
+        );
+        let pipeline =
+            create_web_world3d_pipeline(device, format, label, &shader_module, &bind_group_layout);
+
+        Self {
+            pipeline,
+            uniform_buffer,
+            bind_group,
+            width: WIDTH,
+            height: HEIGHT,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    fn write_uniforms(&self, queue: &wgpu::Queue, uniforms: &U) {
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(uniforms));
+    }
+
+    fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        render_pass.set_pipeline(&self.pipeline);
+        render_pass.set_bind_group(0, &self.bind_group, &[]);
+        render_pass.draw(0..3, 0..1);
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+    }
+}
 
 struct SimpleWorld3dDemo {
     name: &'static str,
@@ -341,7 +512,7 @@ impl WebDemo for SimpleWorld3dDemo {
 
     fn update_uniforms(&self, queue: &wgpu::Queue, camera: &OrbitalCamera, time: f32) {
         let mut uniforms = Uniforms::default();
-        uniforms.update_from_camera(camera, self.host.width, self.host.height, time);
+        uniforms.update_from_fly_camera(camera, self.host.width, self.host.height, time);
         self.host.write_uniforms(queue, &uniforms);
     }
 
@@ -354,19 +525,715 @@ impl WebDemo for SimpleWorld3dDemo {
     }
 }
 
-// Standard 3D keybindings for web (orbital camera)
-const KEYBINDINGS_3D_WEB: &[(&str, &str)] = &[
-    ("A/D", "Rotate horizontal"),
-    ("W/S", "Zoom"),
-    ("Q/E", "Rotate vertical"),
-];
+const WEB_LOREM: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Curabitur pretium tincidunt lacus. Nulla gravida orci a odio. Nullam varius, turpis et commodo pharetra, est eros bibendum elit, nec luctus magna felis sollicitudin mauris. Integer in mauris eu nibh euismod gravida. Duis ac tellus et risus vulputate vehicula. Donec lobortis risus a elit. Etiam tempor. Ut ullamcorper, ligula eu tempor congue, eros est euismod turpis, id tincidunt sapien risus a quam. Maecenas fermentum consequat mi. Donec fermentum. Pellentesque malesuada nulla a mi. Duis sapien sem, aliquet sed, vulputate eget, feugiat non, orci. Sed neque. Sed eget lacus. Mauris non dui nec urna suscipit nonummy. Fusce fermentum fermentum arcu. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae.";
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+struct WebClayUniforms {
+    inv_view_proj: [[f32; 4]; 4],
+    camera_pos_time: [f32; 4],
+    light_dir_intensity: [f32; 4],
+    render_params: [f32; 4],
+    text_params: [f32; 4],
+    char_grid_params: [f32; 4],
+    char_grid_bounds: [f32; 4],
+}
+
+impl Default for WebClayUniforms {
+    fn default() -> Self {
+        Self {
+            inv_view_proj: [[0.0; 4]; 4],
+            camera_pos_time: [0.0, 2.0, 4.5, 0.0],
+            light_dir_intensity: [0.5, 0.8, 0.3, 1.5],
+            render_params: [800.0, 600.0, 0.2, 1.0],
+            text_params: [0.0, 0.0, 0.4, 0.0],
+            char_grid_params: [0.0; 4],
+            char_grid_bounds: [0.0; 4],
+        }
+    }
+}
+
+impl WebClayUniforms {
+    fn update_from_camera(&mut self, camera: &OrbitalCamera, width: u32, height: u32, time: f32) {
+        let aspect = width as f32 / height as f32;
+        self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
+        let position = camera.position();
+        self.camera_pos_time = [position.x, position.y, position.z, time];
+        self.render_params[0] = width as f32;
+        self.render_params[1] = height as f32;
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+struct WebClayCharInstance {
+    pos_and_char: [f32; 4],
+}
+
+fn build_web_clay_text_layout(atlas: &VectorFontAtlas) -> Vec<WebClayCharInstance> {
+    let mut instances = Vec::new();
+    let full_text = format!(
+        "RAYBOX SDF TEXT ENGINE\n\n{}",
+        format!(
+            "{} {} {} {} {} {}",
+            WEB_LOREM, WEB_LOREM, WEB_LOREM, WEB_LOREM, WEB_LOREM, WEB_LOREM
+        )
+    );
+
+    let scale = 0.15;
+    let line_height = 0.22;
+    let margin = 0.15;
+    let tablet_width = 3.3;
+    let tablet_depth = 2.3;
+    let start_x = -tablet_width + margin;
+    let start_z = tablet_depth - margin;
+    let max_x = tablet_width - margin;
+    let mut x = start_x;
+    let mut z = start_z;
+    let mut line_num = 0;
+    let max_lines = 24;
+
+    for ch in full_text.chars() {
+        if line_num >= max_lines {
+            break;
+        }
+        if ch == '\n' {
+            x = start_x;
+            z -= line_height;
+            line_num += 1;
+            continue;
+        }
+
+        let codepoint = ch as u32;
+        if let Some(entry) = atlas.glyphs.get(&codepoint) {
+            let glyph_idx = atlas
+                .glyph_list
+                .iter()
+                .position(|(cp, _)| *cp == codepoint)
+                .unwrap_or(0) as u32;
+            let advance = entry.advance * scale;
+            if x + advance > max_x {
+                x = start_x;
+                z -= line_height;
+                line_num += 1;
+                if line_num >= max_lines {
+                    break;
+                }
+            }
+            instances.push(WebClayCharInstance {
+                pos_and_char: [x, z, scale, glyph_idx as f32],
+            });
+            x += advance;
+        } else if ch == ' ' {
+            x += 0.08 * scale;
+            if x > max_x {
+                x = start_x;
+                z -= line_height;
+                line_num += 1;
+            }
+        }
+    }
+
+    instances
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+struct WebTextShadowUniforms {
+    inv_view_proj: [[f32; 4]; 4],
+    camera_pos_time: [f32; 4],
+    light_dir_intensity: [f32; 4],
+    render_params: [f32; 4],
+    text_params: [f32; 4],
+    text_aabb: [f32; 4],
+    char_grid_params: [f32; 4],
+    char_grid_bounds: [f32; 4],
+}
+
+impl Default for WebTextShadowUniforms {
+    fn default() -> Self {
+        Self {
+            inv_view_proj: [[0.0; 4]; 4],
+            camera_pos_time: [0.0, 0.5, 3.0, 0.0],
+            light_dir_intensity: [0.4, 0.8, 0.5, 1.3],
+            render_params: [800.0, 600.0, 0.15, 1.0],
+            text_params: [0.0, 0.0, 0.4, 0.0],
+            text_aabb: [0.0; 4],
+            char_grid_params: [0.0; 4],
+            char_grid_bounds: [0.0; 4],
+        }
+    }
+}
+
+impl WebTextShadowUniforms {
+    fn update_from_camera(&mut self, camera: &OrbitalCamera, width: u32, height: u32, time: f32) {
+        let aspect = width as f32 / height as f32;
+        self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
+        let position = camera.position();
+        self.camera_pos_time = [position.x, position.y, position.z, time];
+        self.render_params[0] = width as f32;
+        self.render_params[1] = height as f32;
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+struct WebTextShadowCharInstance {
+    pos_and_char: [f32; 4],
+}
+
+fn build_web_text_shadow_layout(atlas: &VectorFontAtlas) -> Vec<WebTextShadowCharInstance> {
+    let mut instances = Vec::new();
+    let full_text = format!(
+        "VECTOR SDF TEXT\n\n{}",
+        format!(
+            "{} {} {} {} {} {}",
+            WEB_LOREM, WEB_LOREM, WEB_LOREM, WEB_LOREM, WEB_LOREM, WEB_LOREM
+        )
+    );
+
+    let scale = 0.12;
+    let line_height = 0.18;
+    let margin = 0.1;
+    let panel_width = 4.0;
+    let panel_height = 3.0;
+    let start_x = -panel_width / 2.0 + margin;
+    let start_y = panel_height / 2.0 - margin;
+    let max_x = panel_width / 2.0 - margin;
+    let mut x = start_x;
+    let mut y = start_y;
+    let mut line_num = 0;
+    let max_lines = 30;
+
+    for ch in full_text.chars() {
+        if line_num >= max_lines {
+            break;
+        }
+        if ch == '\n' {
+            x = start_x;
+            y -= line_height;
+            line_num += 1;
+            continue;
+        }
+
+        let codepoint = ch as u32;
+        if let Some(entry) = atlas.glyphs.get(&codepoint) {
+            let glyph_idx = atlas
+                .glyph_list
+                .iter()
+                .position(|(cp, _)| *cp == codepoint)
+                .unwrap_or(0) as u32;
+            let advance = entry.advance * scale;
+            if x + advance > max_x {
+                x = start_x;
+                y -= line_height;
+                line_num += 1;
+                if line_num >= max_lines {
+                    break;
+                }
+            }
+            instances.push(WebTextShadowCharInstance {
+                pos_and_char: [x, y, scale, glyph_idx as f32],
+            });
+            x += advance;
+        } else if ch == ' ' {
+            x += 0.3 * scale;
+            if x > max_x {
+                x = start_x;
+                y -= line_height;
+                line_num += 1;
+            }
+        }
+    }
+
+    instances
+}
+
+fn compute_web_text_shadow_aabb(
+    instances: &[WebTextShadowCharInstance],
+    atlas: &VectorFontAtlas,
+) -> [f32; 4] {
+    let mut min_x = f32::MAX;
+    let mut min_y = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut max_y = f32::MIN;
+
+    for inst in instances {
+        let x = inst.pos_and_char[0];
+        let y = inst.pos_and_char[1];
+        let scale = inst.pos_and_char[2];
+        let glyph_idx = inst.pos_and_char[3] as usize;
+        if glyph_idx < atlas.glyph_list.len() {
+            let (_, entry) = &atlas.glyph_list[glyph_idx];
+            let bounds = entry.bounds;
+            min_x = min_x.min(x + bounds[0] * scale);
+            min_y = min_y.min(y + bounds[1] * scale);
+            max_x = max_x.max(x + bounds[2] * scale);
+            max_y = max_y.max(y + bounds[3] * scale);
+        }
+    }
+
+    [min_x - 0.05, min_y - 0.05, max_x + 0.05, max_y + 0.05]
+}
+
+struct WebVectorTextBuffers {
+    grid_cells_buffer: wgpu::Buffer,
+    curve_indices_buffer: wgpu::Buffer,
+    curves_buffer: wgpu::Buffer,
+    glyph_data_buffer: wgpu::Buffer,
+    char_instances_buffer: wgpu::Buffer,
+    char_grid_cells_buffer: wgpu::Buffer,
+    char_grid_indices_buffer: wgpu::Buffer,
+    char_grid_distances_buffer: Option<wgpu::Buffer>,
+}
+
+fn create_web_vector_text_buffers<T: Pod>(
+    device: &wgpu::Device,
+    atlas_gpu_data: &VectorFontGpuData,
+    char_instances: &[T],
+    char_grid_cells: &[crate::text::CharGridCell],
+    char_grid_indices: &[u32],
+    char_grid_distances: Option<&[u32]>,
+) -> WebVectorTextBuffers {
+    let grid_cells_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Web Vector Grid Cells Buffer"),
+        contents: bytemuck::cast_slice(if atlas_gpu_data.grid_cells.is_empty() {
+            &[GpuGridCell {
+                curve_start_and_count: 0,
+            }]
+        } else {
+            &atlas_gpu_data.grid_cells
+        }),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let curve_indices_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Web Vector Curve Indices Buffer"),
+        contents: bytemuck::cast_slice(if atlas_gpu_data.curve_indices.is_empty() {
+            &[0u32]
+        } else {
+            &atlas_gpu_data.curve_indices
+        }),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let curves_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Web Vector Curves Buffer"),
+        contents: bytemuck::cast_slice(if atlas_gpu_data.curves.is_empty() {
+            &[GpuBezierCurve {
+                points01: [0.0; 4],
+                points2bbox: [0.0; 4],
+                bbox_flags: [0.0; 4],
+            }]
+        } else {
+            &atlas_gpu_data.curves
+        }),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let glyph_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Web Vector Glyph Data Buffer"),
+        contents: bytemuck::cast_slice(if atlas_gpu_data.glyph_data.is_empty() {
+            &[GpuGlyphData {
+                bounds: [0.0; 4],
+                grid_info: [0; 4],
+                curve_info: [0; 4],
+            }]
+        } else {
+            &atlas_gpu_data.glyph_data
+        }),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let char_instances_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Web Vector Char Instances Buffer"),
+        contents: bytemuck::cast_slice(if char_instances.is_empty() {
+            &[0u32; 4]
+        } else {
+            bytemuck::cast_slice(char_instances)
+        }),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let char_grid_cells_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Web Vector Char Grid Cells Buffer"),
+        contents: bytemuck::cast_slice(char_grid_cells),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let char_grid_indices_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Web Vector Char Grid Indices Buffer"),
+        contents: bytemuck::cast_slice(char_grid_indices),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let char_grid_distances_buffer = char_grid_distances.map(|distances| {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Web Vector Char Grid Distances Buffer"),
+            contents: bytemuck::cast_slice(distances),
+            usage: wgpu::BufferUsages::STORAGE,
+        })
+    });
+
+    WebVectorTextBuffers {
+        grid_cells_buffer,
+        curve_indices_buffer,
+        curves_buffer,
+        glyph_data_buffer,
+        char_instances_buffer,
+        char_grid_cells_buffer,
+        char_grid_indices_buffer,
+        char_grid_distances_buffer,
+    }
+}
+
+fn load_web_dejavu_font_atlas() -> VectorFontAtlas {
+    let font_data = include_bytes!("../assets/fonts/DejaVuSans.ttf");
+    let font = VectorFont::from_ttf(font_data).expect("parse web DejaVuSans font");
+    VectorFontAtlas::from_font(&font, 32)
+}
+
+struct WebClayDemo {
+    host: WebWorld3dStorageHost<WebClayUniforms>,
+    _buffers: WebVectorTextBuffers,
+    char_count: u32,
+    char_grid_params: [f32; 4],
+    char_grid_bounds: [f32; 4],
+}
+
+impl WebClayDemo {
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let atlas = load_web_dejavu_font_atlas();
+        let atlas_gpu_data = build_font_gpu_data(&atlas);
+        let char_instances = build_web_clay_text_layout(&atlas);
+        let char_count = char_instances.len() as u32;
+        let instance_data: Vec<[f32; 4]> = char_instances
+            .iter()
+            .map(|inst| inst.pos_and_char)
+            .collect();
+        let char_grid = build_char_grid(&instance_data, &atlas, [80, 48]);
+        let char_grid_params = [
+            char_grid.dims[0] as f32,
+            char_grid.dims[1] as f32,
+            char_grid.cell_size[0],
+            char_grid.cell_size[1],
+        ];
+        let char_grid_bounds = char_grid.bounds;
+        let buffers = create_web_vector_text_buffers(
+            device,
+            &atlas_gpu_data,
+            &char_instances,
+            &char_grid.cells,
+            &char_grid.char_indices,
+            None,
+        );
+        let storage_bindings = web_vector_text_storage_bindings(WebVectorTextStorageBuffers {
+            grid_cells: &buffers.grid_cells_buffer,
+            curve_indices: &buffers.curve_indices_buffer,
+            curves: &buffers.curves_buffer,
+            glyph_data: &buffers.glyph_data_buffer,
+            char_instances: &buffers.char_instances_buffer,
+            char_grid_cells: &buffers.char_grid_cells_buffer,
+            char_grid_indices: &buffers.char_grid_indices_buffer,
+            char_grid_distances: None,
+        });
+        let mut uniforms = WebClayUniforms::default();
+        uniforms.text_params[0] = char_count as f32;
+        uniforms.char_grid_params = char_grid_params;
+        uniforms.char_grid_bounds = char_grid_bounds;
+        let host = WebWorld3dStorageHost::new(
+            device,
+            format,
+            "Clay Web Demo",
+            sdf_clay_vector::create_shader_module_embed_source,
+            &uniforms,
+            &storage_bindings,
+        );
+
+        Self {
+            host,
+            _buffers: buffers,
+            char_count,
+            char_grid_params,
+            char_grid_bounds,
+        }
+    }
+}
+
+impl WebDemo for WebClayDemo {
+    fn name(&self) -> &'static str {
+        "Clay Tablet"
+    }
+
+    fn id(&self) -> DemoId {
+        DemoId::Clay
+    }
+
+    fn demo_type(&self) -> DemoType {
+        DemoType::World3D
+    }
+
+    fn keybindings(&self) -> &'static [(&'static str, &'static str)] {
+        KEYBINDINGS_3D_WEB
+    }
+
+    fn camera_config(&self) -> (glam::Vec3, glam::Vec3) {
+        (glam::Vec3::new(0.0, 5.5, 2.0), glam::Vec3::ZERO)
+    }
+
+    fn update(&mut self, _dt: f32) {}
+
+    fn update_uniforms(&self, queue: &wgpu::Queue, camera: &OrbitalCamera, time: f32) {
+        let mut uniforms = WebClayUniforms::default();
+        uniforms.update_from_camera(camera, self.host.width, self.host.height, time);
+        uniforms.text_params[0] = self.char_count as f32;
+        uniforms.char_grid_params = self.char_grid_params;
+        uniforms.char_grid_bounds = self.char_grid_bounds;
+        self.host.write_uniforms(queue, &uniforms);
+    }
+
+    fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        self.host.render(render_pass);
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        self.host.resize(width, height);
+    }
+}
+
+struct WebTextShadowDemo {
+    host: WebWorld3dStorageHost<WebTextShadowUniforms>,
+    _buffers: WebVectorTextBuffers,
+    char_count: u32,
+    text_aabb: [f32; 4],
+    char_grid_params: [f32; 4],
+    char_grid_bounds: [f32; 4],
+}
+
+impl WebTextShadowDemo {
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let atlas = load_web_dejavu_font_atlas();
+        let atlas_gpu_data = build_font_gpu_data(&atlas);
+        let char_instances = build_web_text_shadow_layout(&atlas);
+        let char_count = char_instances.len() as u32;
+        let text_aabb = compute_web_text_shadow_aabb(&char_instances, &atlas);
+        let instance_data: Vec<[f32; 4]> = char_instances
+            .iter()
+            .map(|inst| inst.pos_and_char)
+            .collect();
+        let char_grid = build_char_grid(&instance_data, &atlas, [64, 48]);
+        let char_grid_params = [
+            char_grid.dims[0] as f32,
+            char_grid.dims[1] as f32,
+            char_grid.cell_size[0],
+            char_grid.cell_size[1],
+        ];
+        let char_grid_bounds = char_grid.bounds;
+        let buffers = create_web_vector_text_buffers(
+            device,
+            &atlas_gpu_data,
+            &char_instances,
+            &char_grid.cells,
+            &char_grid.char_indices,
+            Some(&char_grid.cell_distances),
+        );
+        let storage_bindings = web_vector_text_storage_bindings(WebVectorTextStorageBuffers {
+            grid_cells: &buffers.grid_cells_buffer,
+            curve_indices: &buffers.curve_indices_buffer,
+            curves: &buffers.curves_buffer,
+            glyph_data: &buffers.glyph_data_buffer,
+            char_instances: &buffers.char_instances_buffer,
+            char_grid_cells: &buffers.char_grid_cells_buffer,
+            char_grid_indices: &buffers.char_grid_indices_buffer,
+            char_grid_distances: buffers.char_grid_distances_buffer.as_ref(),
+        });
+        let mut uniforms = WebTextShadowUniforms::default();
+        uniforms.text_params[0] = char_count as f32;
+        uniforms.text_aabb = text_aabb;
+        uniforms.char_grid_params = char_grid_params;
+        uniforms.char_grid_bounds = char_grid_bounds;
+        let host = WebWorld3dStorageHost::new(
+            device,
+            format,
+            "Text Shadow Web Demo",
+            sdf_text_shadow_vector::create_shader_module_embed_source,
+            &uniforms,
+            &storage_bindings,
+        );
+
+        Self {
+            host,
+            _buffers: buffers,
+            char_count,
+            text_aabb,
+            char_grid_params,
+            char_grid_bounds,
+        }
+    }
+}
+
+impl WebDemo for WebTextShadowDemo {
+    fn name(&self) -> &'static str {
+        "Text Shadow"
+    }
+
+    fn id(&self) -> DemoId {
+        DemoId::TextShadow
+    }
+
+    fn demo_type(&self) -> DemoType {
+        DemoType::World3D
+    }
+
+    fn keybindings(&self) -> &'static [(&'static str, &'static str)] {
+        KEYBINDINGS_3D_WEB
+    }
+
+    fn camera_config(&self) -> (glam::Vec3, glam::Vec3) {
+        (glam::Vec3::new(0.0, 0.0, 4.5), glam::Vec3::ZERO)
+    }
+
+    fn update(&mut self, _dt: f32) {}
+
+    fn update_uniforms(&self, queue: &wgpu::Queue, camera: &OrbitalCamera, time: f32) {
+        let mut uniforms = WebTextShadowUniforms::default();
+        uniforms.update_from_camera(camera, self.host.width, self.host.height, time);
+        uniforms.text_params[0] = self.char_count as f32;
+        uniforms.text_aabb = self.text_aabb;
+        uniforms.char_grid_params = self.char_grid_params;
+        uniforms.char_grid_bounds = self.char_grid_bounds;
+        self.host.write_uniforms(queue, &uniforms);
+    }
+
+    fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        self.host.render(render_pass);
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        self.host.resize(width, height);
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+struct EmptyUniforms {
+    resolution: [f32; 2],
+    time: f32,
+    _padding: f32,
+}
+
+struct WebEmptyDemo {
+    host: WebWorld3dUniformHost<EmptyUniforms>,
+}
+
+fn create_empty_demo_shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
+    let shader_source = r#"
+struct Uniforms {
+    resolution: vec2<f32>,
+    time: f32,
+    _padding: f32,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0)
+    );
+    var out: VertexOutput;
+    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
+    out.uv = positions[vertex_index] * 0.5 + 0.5;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let t = uniforms.time * 0.1;
+    let grad = mix(
+        vec3<f32>(0.05, 0.05, 0.1),
+        vec3<f32>(0.1, 0.05, 0.15),
+        in.uv.y + sin(t) * 0.1
+    );
+    return vec4<f32>(grad, 1.0);
+}
+"#;
+
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Empty Demo Shader"),
+        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+    })
+}
+
+impl WebEmptyDemo {
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let uniforms = EmptyUniforms {
+            resolution: [WIDTH as f32, HEIGHT as f32],
+            time: 0.0,
+            _padding: 0.0,
+        };
+        let host = WebWorld3dUniformHost::new(
+            device,
+            format,
+            "Empty Web Demo",
+            create_empty_demo_shader_module,
+            &uniforms,
+        );
+        Self { host }
+    }
+}
+
+impl WebDemo for WebEmptyDemo {
+    fn name(&self) -> &'static str {
+        "Empty"
+    }
+
+    fn id(&self) -> DemoId {
+        DemoId::Empty
+    }
+
+    fn demo_type(&self) -> DemoType {
+        DemoType::World3D
+    }
+
+    fn keybindings(&self) -> &'static [(&'static str, &'static str)] {
+        KEYBINDINGS_3D_WEB
+    }
+
+    fn camera_config(&self) -> (glam::Vec3, glam::Vec3) {
+        (glam::Vec3::new(0.0, 0.0, 4.0), glam::Vec3::ZERO)
+    }
+
+    fn update(&mut self, _dt: f32) {}
+
+    fn update_uniforms(&self, queue: &wgpu::Queue, _camera: &OrbitalCamera, time: f32) {
+        let uniforms = EmptyUniforms {
+            resolution: [self.host.width as f32, self.host.height as f32],
+            time,
+            _padding: 0.0,
+        };
+        self.host.write_uniforms(queue, &uniforms);
+    }
+
+    fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        self.host.render(render_pass);
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        self.host.resize(width, height);
+    }
+}
+
+const KEYBINDINGS_3D_WEB: &[(&str, &str)] = KEYBINDINGS_3D;
 
 // Standard 2D keybindings for web
-const KEYBINDINGS_2D_WEB: &[(&str, &str)] = &[
-    ("A/D", "Pan horizontal"),
-    ("W/S", "Pan vertical"),
-    ("Arrows", "Zoom"),
-    ("Q/E", "Rotate"),
+const KEYBINDINGS_2D_WEB: &[(&str, &str)] = KEYBINDINGS_2D;
+const KEYBINDINGS_COMMON_WEB: &[(&str, &str)] = &[
+    ("0-9/-/=", "Switch demo"),
+    ("F", "Toggle stats"),
+    ("G", "Full stats"),
+    ("K", "Keybindings"),
+    ("Esc", "Release mouse"),
 ];
 
 fn demo_family_name(demo_type: DemoType) -> &'static str {
@@ -375,10 +1242,6 @@ fn demo_family_name(demo_type: DemoType) -> &'static str {
         DemoType::UiPhysical => "uiPhysical",
         DemoType::World3D => "world3d",
     }
-}
-
-fn ui_physical_camera_target(demo: &dyn WebDemo) -> glam::Vec3 {
-    demo.camera_config().1
 }
 
 // ============== EMPTY DEMO ==============
@@ -492,176 +1355,45 @@ impl WebDemo for PlaceholderDemo {
 // Note: The Text2D demo uses a vector text renderer which requires storage buffers.
 // WebGL2 may not support this. For now, we use the same shader pattern.
 
-struct Text2DDemo {
-    pipeline: wgpu::RenderPipeline,
-    uniform_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
-    offset: [f32; 2],
-    scale: f32,
-    rotation: f32,
-    width: u32,
-    height: u32,
-}
-
-impl Text2DDemo {
-    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        // Use the text2d vector shader
-        let shader_module = sdf_text2d_vector::create_shader_module_embed_source(device);
-
-        // Create uniform buffer with 2D transform data
-        let uniform_data: [f32; 8] = [
-            0.0,
-            0.0, // offset
-            1.0,
-            0.0, // scale, rotation
-            WIDTH as f32,
-            HEIGHT as f32, // resolution
-            0.0,
-            0.0, // padding
-        ];
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Text2D Uniform Buffer"),
-            contents: bytemuck::cast_slice(&uniform_data),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Text2D Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Text2D Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Text2D Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Text2D Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader_module,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader_module,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        Self {
-            pipeline,
-            uniform_buffer,
-            bind_group,
-            offset: [0.0, 0.0],
-            scale: 1.0,
-            rotation: 0.0,
-            width: WIDTH,
-            height: HEIGHT,
-        }
-    }
-}
-
-impl WebDemo for Text2DDemo {
-    fn name(&self) -> &'static str {
-        "2D Text"
-    }
-    fn id(&self) -> DemoId {
-        DemoId::Text2D
-    }
-    fn demo_type(&self) -> DemoType {
-        DemoType::Ui2D
-    }
-    fn keybindings(&self) -> &'static [(&'static str, &'static str)] {
-        KEYBINDINGS_2D_WEB
-    }
-    fn camera_config(&self) -> (glam::Vec3, glam::Vec3) {
-        (glam::Vec3::ZERO, glam::Vec3::ZERO)
-    }
-    fn update(&mut self, _dt: f32) {}
-    fn update_uniforms(&self, queue: &wgpu::Queue, _camera: &OrbitalCamera, _time: f32) {
-        let uniform_data: [f32; 8] = [
-            self.offset[0],
-            self.offset[1],
-            self.scale,
-            self.rotation,
-            self.width as f32,
-            self.height as f32,
-            0.0,
-            0.0,
-        ];
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&uniform_data));
-    }
-    fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
-        render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.draw(0..3, 0..1);
-    }
-    fn resize(&mut self, width: u32, height: u32) {
-        self.width = width;
-        self.height = height;
-    }
-    fn set_ui2d_view_state(&mut self, offset: [f32; 2], scale: f32, rotation: f32) {
-        self.offset = offset;
-        self.scale = scale;
-        self.rotation = rotation;
-    }
-}
-
 const WEB_UI2D_STORAGE_BINDINGS: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 const WEB_RETAINED_SCROLL_STEP: f32 = 24.0;
+const TEXT2D_SCROLL_STEP: f32 = 48.0;
+const TEXT2D_MARGIN: f32 = 20.0;
+const TEXT2D_BODY_FONT_SIZE: f32 = 16.0;
+const TEXT2D_BODY_LINE_HEIGHT: f32 = TEXT2D_BODY_FONT_SIZE * 1.4;
+const TEXT2D_HEADING_FONT_SIZE: f32 = 30.0;
+const TEXT2D_GRID_DIMS: [u32; 2] = [64, 48];
+const TEXT2D_GRID_CELL_CAPACITY: usize = 24;
+const TEXT2D_HEADING_TOP_PADDING: f32 = 12.0;
+const TEXT2D_KEYBINDINGS_WEB: &[(&str, &str)] = &[
+    ("WASD", "Pan"),
+    ("Arrows", "Zoom"),
+    ("Q/E", "Rotate"),
+    ("R", "Reset rotation"),
+    ("T", "Reset all"),
+    ("Y", "Toggle heading emphasis"),
+    ("U/J", "Scroll text"),
+];
 const RETAINED_UI_KEYBINDINGS_WEB: &[(&str, &str)] = &[
     ("WASD", "Pan"),
     ("Arrows", "Zoom"),
     ("Q/E", "Rotate"),
+    ("R", "Reset rotation"),
+    ("T", "Reset all"),
     ("Y", "Next retained scene"),
     ("O", "Toggle active scene state"),
     ("U/J", "Scroll active retained scene"),
 ];
-const TODOMVC_KEYBINDINGS_WEB: &[(&str, &str)] = &[
-    ("A/D", "Pan horizontal"),
-    ("W/S", "Pan vertical"),
-    ("Arrows", "Zoom"),
-    ("Q/E", "Rotate"),
-    ("Y", "Cycle filter"),
-    ("O", "Toggle first item"),
-    ("U/J", "Scroll list"),
-];
+const TODOMVC_KEYBINDINGS_WEB: &[(&str, &str)] = KEYBINDINGS_2D;
 const RETAINED_UI_PHYSICAL_KEYBINDINGS_WEB: &[(&str, &str)] = &[
-    ("A/D", "Rotate horizontal"),
-    ("W/S", "Zoom"),
-    ("Q/E", "Rotate vertical"),
+    ("WASD", "Move"),
+    ("Mouse", "Look"),
+    ("Space/Ctrl", "Up/Down"),
+    ("Q/E", "Roll"),
+    ("Scroll", "Speed"),
+    ("R", "Reset roll"),
+    ("T", "Reset camera"),
+    ("Tab", "Capture mouse"),
     ("Y", "Next retained scene"),
     ("O", "Toggle active scene state"),
     ("U/J", "Scroll active retained scene"),
@@ -669,18 +1401,28 @@ const RETAINED_UI_PHYSICAL_KEYBINDINGS_WEB: &[(&str, &str)] = &[
     ("M", "Toggle dark mode"),
 ];
 const TEXT_PHYSICAL_KEYBINDINGS_WEB: &[(&str, &str)] = &[
-    ("A/D", "Rotate horizontal"),
-    ("W/S", "Zoom"),
-    ("Q/E", "Rotate vertical"),
+    ("WASD", "Move"),
+    ("Mouse", "Look"),
+    ("Space/Ctrl", "Up/Down"),
+    ("Q/E", "Roll"),
+    ("Scroll", "Speed"),
+    ("R", "Reset roll"),
+    ("T", "Reset camera"),
+    ("Tab", "Capture mouse"),
     ("Y", "Toggle heading emphasis"),
     ("U/J", "Scroll text"),
     ("N", "Cycle theme"),
     ("M", "Toggle dark mode"),
 ];
 const TODOMVC_3D_KEYBINDINGS_WEB: &[(&str, &str)] = &[
-    ("A/D", "Rotate horizontal"),
-    ("W/S", "Zoom"),
-    ("Q/E", "Rotate vertical"),
+    ("WASD", "Move"),
+    ("Mouse", "Look"),
+    ("Space/Ctrl", "Up/Down"),
+    ("Q/E", "Roll"),
+    ("Scroll", "Speed"),
+    ("R", "Reset roll"),
+    ("T", "Reset camera"),
+    ("Tab", "Capture mouse"),
     ("N", "Cycle theme"),
     ("M", "Toggle dark mode"),
 ];
@@ -704,6 +1446,7 @@ const TODO_PHYSICAL_FILL_COLOR: [f32; 4] = [248.0 / 255.0, 250.0 / 255.0, 252.0 
 const TODO_PHYSICAL_OUTLINE_COLOR: [f32; 4] = [203.0 / 255.0, 213.0 / 255.0, 225.0 / 255.0, 1.0];
 const TODO_PHYSICAL_SHADOW_COLOR: [f32; 4] = [15.0 / 255.0, 23.0 / 255.0, 42.0 / 255.0, 0.16];
 const TEXT_PHYSICAL_LOREM: &str = "Retained physical UI should support text-heavy scenes without collapsing back into Todo-shaped assumptions. This demo exercises wrapped retained text, scrolling, and semantic text mutation through the shared UiPhysical runtime path.\n\nA retained physical scene should stay stable while idle, rebuild only what changed, and let the runtime choose how to realize the card, lighting, and text presentation.\n\nScrolling this text should work through the same retained model + named scroll infrastructure that powers other scenes.";
+const TEXT2D_LOREM: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Curabitur pretium tincidunt lacus. Nulla gravida orci a odio. Nullam varius, turpis et commodo pharetra, est eros bibendum elit, nec luctus magna felis sollicitudin mauris. Integer in mauris eu nibh euismod gravida. Duis ac tellus et risus vulputate vehicula. Donec lobortis risus a elit. Etiam tempor. Ut ullamcorper, ligula eu tempor congue, eros est euismod turpis, id tincidunt sapien risus a quam. Maecenas fermentum consequat mi. Donec fermentum. Pellentesque malesuada nulla a mi. Duis sapien sem, aliquet sed, vulputate eget, feugiat non, orci. Sed neque. Sed eget lacus. Mauris non dui nec urna suscipit nonummy. Fusce fermentum fermentum arcu. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae.";
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, bytemuck::Zeroable)]
@@ -763,6 +1506,16 @@ struct WebRetainedUiRuntimeHost {
 struct WebRetainedUiDemo {
     models: Vec<ShowcaseSceneModel>,
     active_scene: usize,
+    scene_state: FixedUi2dSceneState,
+    runtime_host: WebRetainedUiRuntimeHost,
+    atlas: Arc<VectorFontAtlas>,
+    text_colors: TextColors,
+    width: u32,
+    height: u32,
+}
+
+struct Text2DDemo {
+    model: WrappedTextSceneModel,
     scene_state: FixedUi2dSceneState,
     runtime_host: WebRetainedUiRuntimeHost,
     atlas: Arc<VectorFontAtlas>,
@@ -936,17 +1689,6 @@ fn virtual_size_from_bounds(bounds: [f32; 4]) -> [f32; 2] {
     [width, height]
 }
 
-fn web_retained_text_colors() -> TextColors {
-    TextColors {
-        heading: [0.13, 0.16, 0.23],
-        active: [0.20, 0.24, 0.31],
-        completed: [0.39, 0.45, 0.55],
-        placeholder: [0.58, 0.64, 0.72],
-        body: [0.23, 0.29, 0.36],
-        info: [0.42, 0.48, 0.58],
-    }
-}
-
 fn web_retained_text_space(screen_height: f32) -> TextRenderSpace {
     TextRenderSpace {
         x_offset: 0.0,
@@ -962,8 +1704,50 @@ fn web_retained_ui_space(screen_height: f32) -> UiRenderSpace {
     }
 }
 
+fn text2d_text_colors() -> TextColors {
+    TextColors {
+        heading: [0.16, 0.18, 0.22],
+        active: [0.22, 0.22, 0.24],
+        completed: [0.44, 0.44, 0.46],
+        placeholder: [0.55, 0.55, 0.58],
+        body: [0.20, 0.20, 0.22],
+        info: [0.40, 0.40, 0.44],
+    }
+}
+
+fn text2d_scene_model() -> WrappedTextSceneModel {
+    let full_text = format!(
+        "{} {} {} {} {} {}",
+        TEXT2D_LOREM, TEXT2D_LOREM, TEXT2D_LOREM, TEXT2D_LOREM, TEXT2D_LOREM, TEXT2D_LOREM
+    );
+    WrappedTextSceneModel {
+        scene_mode: SceneMode::Ui2D,
+        heading: Some(OwnedTextSceneBlock {
+            text: "VECTOR SDF TEXT ENGINE".to_string(),
+            font_size: TEXT2D_HEADING_FONT_SIZE,
+            role: TextRole::Heading,
+        }),
+        body: OwnedTextSceneBlock {
+            text: full_text,
+            font_size: TEXT2D_BODY_FONT_SIZE,
+            role: TextRole::Body,
+        },
+        frame_size: None,
+        margin: TEXT2D_MARGIN,
+        body_line_height: TEXT2D_BODY_LINE_HEIGHT,
+        body_top_padding: TEXT2D_HEADING_TOP_PADDING,
+        scroll_offset: 0.0,
+        grid_dims: TEXT2D_GRID_DIMS,
+        grid_cell_capacity: TEXT2D_GRID_CELL_CAPACITY,
+        clip_name: "text2d_clip",
+        scroll_name: "text2d_scroll",
+        heading_name: "text2d_heading",
+        line_name_prefix: "text2d_line_",
+    }
+}
+
 fn load_web_retained_font_atlas() -> Arc<VectorFontAtlas> {
-    let regular = include_bytes!("../assets/fonts/LiberationSans-Regular.ttf");
+    let regular = include_bytes!("../assets/fonts/DejaVuSans.ttf");
     let italic = include_bytes!("../assets/fonts/LiberationSans-Italic.ttf");
     let mut font = VectorFont::from_ttf(regular).expect("parse retained web regular font");
     font.merge_from_ttf(italic, 0x10000)
@@ -1006,32 +1790,6 @@ fn web_todomvc_scene_buffers(
         ),
         build_todomvc_ui_primitives_from_scene(retained_scene.scene()),
     )
-}
-
-fn tune_generic_ui_physical_text_color(color: [f32; 3]) -> [f32; 3] {
-    let luminance = 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2];
-    let target = if luminance > 0.5 {
-        [0.07, 0.07, 0.08]
-    } else {
-        [0.94, 0.95, 0.97]
-    };
-    let strength = if luminance > 0.5 { 0.22 } else { 0.12 };
-    [
-        color[0] * (1.0 - strength) + target[0] * strength,
-        color[1] * (1.0 - strength) + target[1] * strength,
-        color[2] * (1.0 - strength) + target[2] * strength,
-    ]
-}
-
-fn tune_generic_ui_physical_text_colors(colors: TextColors) -> TextColors {
-    TextColors {
-        heading: tune_generic_ui_physical_text_color(colors.heading),
-        active: tune_generic_ui_physical_text_color(colors.active),
-        completed: tune_generic_ui_physical_text_color(colors.completed),
-        placeholder: tune_generic_ui_physical_text_color(colors.placeholder),
-        body: tune_generic_ui_physical_text_color(colors.body),
-        info: tune_generic_ui_physical_text_color(colors.info),
-    }
 }
 
 fn text_physical_scene_model() -> WrappedTextSceneModel {
@@ -2009,6 +2767,155 @@ impl WebRetainedUiRuntimeHost {
     }
 }
 
+impl Text2DDemo {
+    fn build_scene(
+        model: &WrappedTextSceneModel,
+        width: u32,
+        height: u32,
+        atlas: &VectorFontAtlas,
+        text_colors: &TextColors,
+    ) -> (FixedUi2dSceneState, FixedTextSceneData, Vec<GpuUiPrimitive>) {
+        let built = FixedUi2dSceneModelBuilder::build_fixed_ui2d_scene(
+            model,
+            [width, height],
+            atlas,
+            text_colors,
+            web_retained_text_space(height as f32),
+            web_retained_ui_space(height as f32),
+        );
+        web_retained_init_from_built(built)
+    }
+
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let atlas = load_web_retained_font_atlas();
+        let text_colors = text2d_text_colors();
+        let model = text2d_scene_model();
+        let (scene_state, text_data, ui_primitives) =
+            Self::build_scene(&model, width, height, atlas.as_ref(), &text_colors);
+        let runtime_host = WebRetainedUiRuntimeHost::new(
+            device,
+            queue,
+            format,
+            width,
+            height,
+            "Text2D Web",
+            atlas.as_ref(),
+            &text_data,
+            &ui_primitives,
+        );
+
+        Self {
+            model,
+            scene_state,
+            runtime_host,
+            atlas,
+            text_colors,
+            width,
+            height,
+        }
+    }
+
+    fn rebuild_scene(&mut self) {
+        let (scene_state, text_data, ui_primitives) = Self::build_scene(
+            &self.model,
+            self.width,
+            self.height,
+            self.atlas.as_ref(),
+            &self.text_colors,
+        );
+        self.runtime_host
+            .sync_or_rebuild(self.atlas.as_ref(), &text_data, &ui_primitives);
+        self.scene_state = scene_state;
+    }
+
+    fn mutate_scene(
+        &mut self,
+        mutate: impl FnOnce(&WrappedTextSceneModel, &mut RetainedScene) -> bool,
+    ) -> bool {
+        if !mutate(&self.model, &mut self.scene_state.scene) {
+            return false;
+        }
+        self.model.capture_from_scene(&self.scene_state.scene);
+        self.rebuild_scene();
+        true
+    }
+}
+
+impl WebDemo for Text2DDemo {
+    fn name(&self) -> &'static str {
+        "2D Text"
+    }
+
+    fn id(&self) -> DemoId {
+        DemoId::Text2D
+    }
+
+    fn demo_type(&self) -> DemoType {
+        DemoType::Ui2D
+    }
+
+    fn keybindings(&self) -> &'static [(&'static str, &'static str)] {
+        TEXT2D_KEYBINDINGS_WEB
+    }
+
+    fn camera_config(&self) -> (glam::Vec3, glam::Vec3) {
+        (glam::Vec3::ZERO, glam::Vec3::ZERO)
+    }
+
+    fn update(&mut self, _dt: f32) {}
+
+    fn update_uniforms(&self, _queue: &wgpu::Queue, _camera: &OrbitalCamera, _time: f32) {}
+
+    fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        self.runtime_host.render(render_pass);
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+        self.runtime_host.resize(width, height);
+        self.rebuild_scene();
+    }
+
+    fn set_ui2d_view_state(&mut self, offset: [f32; 2], scale: f32, rotation: f32) {
+        self.runtime_host.set_view_state(offset, scale, rotation);
+    }
+
+    fn handle_key_pressed(&mut self, code: &str) -> bool {
+        match code {
+            "KeyY" => self.mutate_scene(|model, scene| model.toggle_heading_emphasis(scene)),
+            _ => false,
+        }
+    }
+
+    fn handle_key_held(&mut self, code: &str) -> bool {
+        match code {
+            "KeyU" => {
+                self.mutate_scene(|model, scene| model.adjust_scroll(scene, -TEXT2D_SCROLL_STEP))
+            }
+            "KeyJ" => {
+                self.mutate_scene(|model, scene| model.adjust_scroll(scene, TEXT2D_SCROLL_STEP))
+            }
+            _ => false,
+        }
+    }
+
+    fn set_named_scroll(&mut self, name: &str, offset_y: f32) -> bool {
+        let changed = set_named_scroll_offset(&mut self.scene_state.scene, name, offset_y);
+        if changed {
+            self.model.capture_from_scene(&self.scene_state.scene);
+            self.rebuild_scene();
+        }
+        changed
+    }
+}
+
 impl WebRetainedUiDemo {
     fn new(
         device: &wgpu::Device,
@@ -2018,7 +2925,7 @@ impl WebRetainedUiDemo {
         height: u32,
     ) -> Self {
         let atlas = load_web_retained_font_atlas();
-        let text_colors = web_retained_text_colors();
+        let text_colors = showcase_text_colors();
         let models = ShowcaseSceneModel::default_deck_models(SceneMode::Ui2D);
         let built = models[0].build_fixed_ui2d_scene(
             [width, height],
@@ -2534,20 +3441,13 @@ impl WebDemo for WebTodoMvcDemo {
     }
 
     fn handle_key_pressed(&mut self, code: &str) -> bool {
-        match code {
-            "KeyY" => self.cycle_filter(),
-            "KeyO" => self.mutate_scene(|scene| scene.toggle_item(0)),
-            _ => false,
-        }
+        let _ = code;
+        false
     }
 
     fn handle_key_held(&mut self, code: &str) -> bool {
-        let offset = match code {
-            "KeyU" => self.current_scroll_offset() - WEB_RETAINED_SCROLL_STEP,
-            "KeyJ" => self.current_scroll_offset() + WEB_RETAINED_SCROLL_STEP,
-            _ => return false,
-        };
-        self.set_list_scroll_offset(offset)
+        let _ = code;
+        false
     }
 
     fn toggle_list_item(&mut self, index: u32) -> bool {
@@ -2942,16 +3842,7 @@ fn create_web_demo(
     height: u32,
 ) -> Box<dyn WebDemo> {
     match id {
-        DemoId::Empty => Box::new(PlaceholderDemo::new(
-            device,
-            format,
-            "Empty",
-            DemoId::Empty,
-            DemoType::World3D,
-            KEYBINDINGS_3D_WEB,
-            glam::Vec3::new(0.0, 0.0, 5.0),
-            glam::Vec3::ZERO,
-        )),
+        DemoId::Empty => Box::new(WebEmptyDemo::new(device, format)),
         DemoId::Objects => Box::new(SimpleWorld3dDemo::new(
             device,
             format,
@@ -2969,8 +3860,8 @@ fn create_web_demo(
             sdf_spheres::create_shader_module_embed_source,
             "Spheres",
             DemoId::Spheres,
-            glam::Vec3::new(0.0, 2.0, 6.0),
-            glam::Vec3::new(0.0, 0.0, 0.0),
+            glam::Vec3::new(0.0, 2.0, 8.0),
+            glam::Vec3::new(0.0, 0.5, 0.0),
         )),
         DemoId::Towers => Box::new(SimpleWorld3dDemo::new(
             device,
@@ -2979,30 +3870,12 @@ fn create_web_demo(
             sdf_towers::create_shader_module_embed_source,
             "Towers",
             DemoId::Towers,
-            glam::Vec3::new(0.0, 3.0, 8.0),
-            glam::Vec3::new(0.0, 1.0, 0.0),
-        )),
-        DemoId::Text2D => Box::new(Text2DDemo::new(device, format)),
-        DemoId::Clay => Box::new(SimpleWorld3dDemo::new(
-            device,
-            format,
-            "Clay Web Demo",
-            sdf_clay_vector::create_shader_module_embed_source,
-            "Clay Tablet",
-            DemoId::Clay,
-            glam::Vec3::new(0.0, 0.0, 2.0),
+            glam::Vec3::new(4.0, 6.0, 10.0),
             glam::Vec3::ZERO,
         )),
-        DemoId::TextShadow => Box::new(SimpleWorld3dDemo::new(
-            device,
-            format,
-            "Text Shadow Web Demo",
-            sdf_text_shadow_vector::create_shader_module_embed_source,
-            "Text Shadow",
-            DemoId::TextShadow,
-            glam::Vec3::new(0.0, 1.5, 4.0),
-            glam::Vec3::new(0.0, 0.5, 0.0),
-        )),
+        DemoId::Text2D => Box::new(Text2DDemo::new(device, queue, format, width, height)),
+        DemoId::Clay => Box::new(WebClayDemo::new(device, format)),
+        DemoId::TextShadow => Box::new(WebTextShadowDemo::new(device, format)),
         DemoId::TodoMvc => Box::new(WebTodoMvcDemo::new(device, queue, format, width, height)),
         DemoId::TodoMvc3D => Box::new(WebTodoMvc3DDemo::new(device, queue, format, width, height)),
         DemoId::RetainedUi => {
@@ -3052,6 +3925,258 @@ struct WebRenderer {
 }
 
 impl WebRenderer {
+    fn viewport_pixel_size(window: &web_sys::Window) -> Option<(u32, u32)> {
+        let width = window.inner_width().ok()?.as_f64()?;
+        let height = window.inner_height().ok()?.as_f64()?;
+        let width = width.round().max(1.0) as u32;
+        let height = height.round().max(1.0) as u32;
+        Some((width, height))
+    }
+
+    fn sync_canvas_size_to_window(&mut self) {
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let Some((width, height)) = Self::viewport_pixel_size(&window) else {
+            return;
+        };
+        if self.canvas.width() != width {
+            self.canvas.set_width(width);
+        }
+        if self.canvas.height() != height {
+            self.canvas.set_height(height);
+        }
+        let _ = self
+            .canvas
+            .set_attribute("style", "display:block;width:100vw;height:100vh");
+        self.resize(width, height);
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        if self.config.width == width && self.config.height == height {
+            return;
+        }
+
+        self.config.width = width;
+        self.config.height = height;
+        self.surface.configure(&self.device, &self.config);
+        self.current_demo.resize(width, height);
+    }
+
+    fn setup_camera_from_demo(&mut self) {
+        let (position, target) = self.current_demo.camera_config();
+        self.camera = FlyCamera::default();
+        self.camera.position = position;
+        self.camera.look_at(target);
+    }
+
+    fn reset_camera(&mut self) {
+        self.setup_camera_from_demo();
+    }
+
+    fn release_pointer_lock(&mut self) {
+        if let Some(document) = web_sys::window().and_then(|window| window.document()) {
+            document.exit_pointer_lock();
+        }
+        self.input.set_mouse_captured(false);
+    }
+
+    fn request_pointer_lock(&mut self) {
+        if !self.current_demo.demo_type().uses_camera_controls() {
+            return;
+        }
+        self.canvas.request_pointer_lock();
+    }
+
+    fn sync_pointer_lock_state(&mut self) {
+        let captured = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.pointer_lock_element())
+            .map(|element| element == self.canvas.clone().unchecked_into::<web_sys::Element>())
+            .unwrap_or(false);
+        self.input.set_mouse_captured(captured);
+    }
+
+    fn mouse_down(&mut self, x: f32, y: f32) {
+        self.input.keyboard_paused = false;
+        self.input.mouse_down(x, y);
+        self.request_pointer_lock();
+    }
+
+    fn mouse_up(&mut self) {
+        self.input.mouse_up();
+    }
+
+    fn mouse_move(&mut self, x: f32, y: f32, movement_x: f32, movement_y: f32) {
+        self.input.mouse_move(x, y, movement_x, movement_y);
+    }
+
+    fn mouse_wheel(&mut self, delta_y: f32) {
+        self.input.push_wheel_delta(delta_y);
+    }
+
+    fn toggle_pointer_lock(&mut self) {
+        if self.input.mouse_captured {
+            self.release_pointer_lock();
+        } else {
+            self.request_pointer_lock();
+        }
+    }
+
+    fn handle_demo_switch_keys(&mut self) {
+        let demo_keys = [
+            ("Digit0", 0),
+            ("Digit1", 1),
+            ("Digit2", 2),
+            ("Digit3", 3),
+            ("Digit4", 4),
+            ("Digit5", 5),
+            ("Digit6", 6),
+            ("Digit7", 7),
+            ("Digit8", 8),
+            ("Digit9", 9),
+            ("Minus", 10),
+            ("Equal", 11),
+        ];
+
+        for (code, id) in demo_keys {
+            if self.input.take_key_pressed(code) {
+                if let Some(demo_id) = DemoId::from_u8(id) {
+                    self.switch_demo(demo_id);
+                }
+                break;
+            }
+        }
+    }
+
+    fn update_camera_controls(&mut self, dt: f32) {
+        if self.input.take_key_pressed("Tab") {
+            self.input.keyboard_paused = !self.input.keyboard_paused;
+            if self.input.keyboard_paused {
+                self.release_pointer_lock();
+                self.input.clear_pressed_keys();
+            }
+            return;
+        }
+        if self.input.keyboard_paused {
+            self.input.take_mouse_delta();
+            self.input.take_wheel_delta();
+            return;
+        }
+        if self.input.take_key_pressed("Escape") {
+            self.release_pointer_lock();
+        }
+        if self.input.take_key_pressed("KeyR") {
+            self.camera.reset_roll();
+        }
+        if self.input.take_key_pressed("KeyT") || self.input.take_key_pressed("Home") {
+            self.reset_camera();
+        }
+
+        if !self.input.camera_controls_active() {
+            self.input.take_mouse_delta();
+            self.input.take_wheel_delta();
+            return;
+        }
+
+        let [mouse_dx, mouse_dy] = self.input.take_mouse_delta();
+        if mouse_dx != 0.0 || mouse_dy != 0.0 {
+            self.camera.look(mouse_dx, mouse_dy);
+        }
+
+        let wheel_delta = self.input.take_wheel_delta();
+        if wheel_delta != 0.0 {
+            self.camera
+                .adjust_speed((-wheel_delta / 100.0).clamp(-5.0, 5.0));
+        }
+
+        if self.input.is_key_pressed("KeyW") {
+            self.camera.move_forward(dt, true);
+        }
+        if self.input.is_key_pressed("KeyS") {
+            self.camera.move_forward(dt, false);
+        }
+        if self.input.is_key_pressed("KeyA") {
+            self.camera.move_right(dt, false);
+        }
+        if self.input.is_key_pressed("KeyD") {
+            self.camera.move_right(dt, true);
+        }
+        if self.input.is_key_pressed("Space") {
+            self.camera.move_up(dt, true);
+        }
+        if self.input.is_key_pressed("ControlLeft") || self.input.is_key_pressed("ControlRight") {
+            self.camera.move_up(dt, false);
+        }
+        if self.input.is_key_pressed("KeyQ") {
+            self.camera.roll_camera(-dt * 2.0);
+        }
+        if self.input.is_key_pressed("KeyE") {
+            self.camera.roll_camera(dt * 2.0);
+        }
+    }
+
+    fn update_ui2d_controls(&mut self) {
+        if self.input.take_key_pressed("Tab") {
+            self.input.keyboard_paused = !self.input.keyboard_paused;
+            if self.input.keyboard_paused {
+                self.input.clear_pressed_keys();
+            }
+            return;
+        }
+        if self.input.keyboard_paused {
+            return;
+        }
+
+        const PAN_SPEED: f32 = 5.0;
+        const ZOOM_SPEED: f32 = 0.02;
+        const ROT_SPEED: f32 = 0.05;
+
+        if self.input.take_key_pressed("KeyR") {
+            self.text2d_rotation = 0.0;
+        }
+        if self.input.take_key_pressed("KeyT") || self.input.take_key_pressed("Home") {
+            self.text2d_offset = [0.0, 0.0];
+            self.text2d_scale = 1.0;
+            self.text2d_rotation = 0.0;
+        }
+
+        if self.input.is_key_pressed("KeyA") {
+            self.text2d_offset[0] -= PAN_SPEED / self.text2d_scale;
+        }
+        if self.input.is_key_pressed("KeyD") {
+            self.text2d_offset[0] += PAN_SPEED / self.text2d_scale;
+        }
+        if self.input.is_key_pressed("KeyW") {
+            self.text2d_offset[1] += PAN_SPEED / self.text2d_scale;
+        }
+        if self.input.is_key_pressed("KeyS") {
+            self.text2d_offset[1] -= PAN_SPEED / self.text2d_scale;
+        }
+        if self.input.is_key_pressed("ArrowUp") {
+            self.text2d_scale *= 1.0 + ZOOM_SPEED;
+        }
+        if self.input.is_key_pressed("ArrowDown") {
+            self.text2d_scale *= 1.0 - ZOOM_SPEED;
+        }
+        if self.input.is_key_pressed("KeyQ") {
+            self.text2d_rotation += ROT_SPEED;
+        }
+        if self.input.is_key_pressed("KeyE") {
+            self.text2d_rotation -= ROT_SPEED;
+        }
+
+        self.text2d_scale = self.text2d_scale.clamp(0.1, 10.0);
+        self.current_demo.set_ui2d_view_state(
+            self.text2d_offset,
+            self.text2d_scale,
+            self.text2d_rotation,
+        );
+    }
+
     fn ui_physical_camera_preset(&self) -> UiPhysicalCameraPreset {
         self.current_demo
             .ui_physical_camera_preset()
@@ -3059,26 +4184,21 @@ impl WebRenderer {
     }
 
     fn enforce_ui_physical_camera_policy(&mut self) {
-        if self.current_demo.demo_type() != DemoType::UiPhysical {
-            return;
-        }
-
-        let preset = self.ui_physical_camera_preset();
-        self.camera.target = ui_physical_camera_target(self.current_demo.as_ref());
-        self.camera.distance = self
-            .camera
-            .distance
-            .clamp(preset.min_distance.max(0.1), preset.max_distance);
-        self.camera.elevation = self
-            .camera
-            .elevation
-            .clamp(preset.min_elevation, preset.max_elevation);
+        let _ = self;
     }
 
     async fn new(
         canvas: web_sys::HtmlCanvasElement,
         initial_demo: DemoId,
     ) -> Result<Self, JsValue> {
+        if let Some(window) = web_sys::window() {
+            if let Some((width, height)) = Self::viewport_pixel_size(&window) {
+                canvas.set_width(width);
+                canvas.set_height(height);
+            }
+        }
+        let _ = canvas.set_attribute("style", "display:block;width:100vw;height:100vh");
+
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
         let surface = instance
@@ -3114,11 +4234,13 @@ impl WebRenderer {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
+        let initial_width = canvas.width().max(1);
+        let initial_height = canvas.height().max(1);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: WIDTH,
-            height: HEIGHT,
+            width: initial_width,
+            height: initial_height,
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
@@ -3136,17 +4258,6 @@ impl WebRenderer {
             config.height,
         );
 
-        // Setup camera for this demo
-        let (pos, target) = current_demo.camera_config();
-        let mut camera = OrbitalCamera::default();
-        camera.target = target;
-        camera.distance = (pos - target).length();
-        if camera.distance > 0.0 {
-            let dir = (pos - target) / camera.distance;
-            camera.azimuth = dir.x.atan2(dir.z);
-            camera.elevation = dir.y.asin();
-        }
-
         let start_time = web_sys::window()
             .and_then(|w| w.performance())
             .map(|p| p.now())
@@ -3161,7 +4272,7 @@ impl WebRenderer {
             canvas,
             current_demo,
             current_demo_id: initial_demo,
-            camera,
+            camera: FlyCamera::default(),
             input: WebInputHandler::new(),
             text2d_offset: [0.0, 0.0],
             text2d_scale: 1.0,
@@ -3176,7 +4287,8 @@ impl WebRenderer {
             renderer.text2d_scale,
             renderer.text2d_rotation,
         );
-        renderer.enforce_ui_physical_camera_policy();
+        renderer.setup_camera_from_demo();
+        renderer.sync_canvas_size_to_window();
         Ok(renderer)
     }
 
@@ -3196,88 +4308,109 @@ impl WebRenderer {
     }
 
     fn capture_screenshot_response(
-        &self,
+        &mut self,
         id: u64,
         center_crop: Option<[u32; 2]>,
-    ) -> web_control::WebResponse {
-        let source_width = self.canvas.width().max(1);
-        let source_height = self.canvas.height().max(1);
+    ) -> Option<web_control::WebResponse> {
+        let Some(control_state) = self.control_state.clone() else {
+            return Some(error_response(
+                id,
+                "NotConnected",
+                "Control state is not available for screenshot capture",
+            ));
+        };
 
-        let (capture_canvas, out_width, out_height) =
-            if let Some([crop_width, crop_height]) = center_crop {
-                let crop_width = crop_width.min(source_width).max(1);
-                let crop_height = crop_height.min(source_height).max(1);
-                let crop_x = (source_width.saturating_sub(crop_width)) / 2;
-                let crop_y = (source_height.saturating_sub(crop_height)) / 2;
+        let width = self.config.width.max(1);
+        let height = self.config.height.max(1);
+        let time = self.current_time_seconds();
+        self.current_demo
+            .update_uniforms(&self.queue, &self.camera, time);
 
-                let Some(document) = web_sys::window().and_then(|window| window.document()) else {
-                    return error_response(
-                        id,
-                        "ScreenshotFailed",
-                        "No document available for screenshot",
-                    );
-                };
-                let Ok(element) = document.create_element("canvas") else {
-                    return error_response(
-                        id,
-                        "ScreenshotFailed",
-                        "Failed to create screenshot canvas",
-                    );
-                };
-                let Ok(canvas) = element.dyn_into::<web_sys::HtmlCanvasElement>() else {
-                    return error_response(
-                        id,
-                        "ScreenshotFailed",
-                        "Failed to create screenshot canvas",
-                    );
-                };
-                canvas.set_width(crop_width);
-                canvas.set_height(crop_height);
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Web Screenshot Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.surface_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-                let Ok(Some(context)) = canvas.get_context("2d") else {
-                    return error_response(
-                        id,
-                        "ScreenshotFailed",
-                        "Failed to acquire screenshot context",
-                    );
-                };
-                let Ok(context) = context.dyn_into::<web_sys::CanvasRenderingContext2d>() else {
-                    return error_response(
-                        id,
-                        "ScreenshotFailed",
-                        "Failed to acquire screenshot context",
-                    );
-                };
-                if context
-                    .draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
-                        &self.canvas,
-                        crop_x as f64,
-                        crop_y as f64,
-                        crop_width as f64,
-                        crop_height as f64,
-                        0.0,
-                        0.0,
-                        crop_width as f64,
-                        crop_height as f64,
-                    )
-                    .is_err()
-                {
-                    return error_response(id, "ScreenshotFailed", "Failed to crop screenshot");
-                }
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Web Screenshot Encoder"),
+            });
+        self.encode_render_pass(&mut encoder, &texture_view);
 
-                (canvas, crop_width, crop_height)
-            } else {
-                (self.canvas.clone(), source_width, source_height)
+        let bytes_per_pixel = 4u32;
+        let bytes_per_row = ((width * bytes_per_pixel) + 255) & !255;
+        let buffer_size = bytes_per_row * height;
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Web Screenshot Buffer"),
+            size: buffer_size as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        let _ = self.device.poll(wgpu::PollType::Poll);
+
+        let buffer_for_callback = buffer.clone();
+        let format = self.surface_format;
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let response = match result {
+                Ok(()) => match build_web_screenshot_response(
+                    id,
+                    &buffer_for_callback,
+                    width,
+                    height,
+                    bytes_per_row,
+                    format,
+                    center_crop,
+                ) {
+                    Ok(response) => response,
+                    Err(message) => error_response(id, "ScreenshotFailed", &message),
+                },
+                Err(error) => error_response(
+                    id,
+                    "ScreenshotFailed",
+                    &format!("Failed to map screenshot buffer: {:?}", error),
+                ),
             };
+            control_state.borrow_mut().push_response(response);
+        });
 
-        let Ok(data_url) = capture_canvas.to_data_url_with_type("image/png") else {
-            return error_response(id, "ScreenshotFailed", "Failed to encode screenshot");
-        };
-        let Some(base64_data) = data_url.split_once(',').map(|(_, payload)| payload) else {
-            return error_response(id, "ScreenshotFailed", "Unexpected screenshot payload");
-        };
-
-        screenshot_response(id, base64_data, out_width, out_height)
+        None
     }
 
     /// Process pending control commands
@@ -3288,9 +4421,14 @@ impl WebRenderer {
         };
 
         // Process all pending commands
-        while let Some((id, cmd)) = state.borrow_mut().pop_command() {
-            let response = self.handle_control_command(id, cmd);
-            state.borrow_mut().push_response(response);
+        loop {
+            let next_command = { state.borrow_mut().pop_command() };
+            let Some((id, cmd)) = next_command else {
+                break;
+            };
+            if let Some(response) = self.handle_control_command(id, cmd) {
+                state.borrow_mut().push_response(response);
+            }
         }
 
         // Flush responses to server
@@ -3300,69 +4438,75 @@ impl WebRenderer {
     }
 
     /// Handle a single control command
-    fn handle_control_command(&mut self, id: u64, command: WebCommand) -> web_control::WebResponse {
+    fn handle_control_command(
+        &mut self,
+        id: u64,
+        command: WebCommand,
+    ) -> Option<web_control::WebResponse> {
         match command {
             WebCommand::SwitchDemo(demo_id) => {
                 if let Some(new_id) = DemoId::from_u8(demo_id) {
                     self.switch_demo(new_id);
-                    success_response(
+                    Some(success_response(
                         id,
                         Some(&format!(
                             r#"{{"demo":{},"name":"{}"}}"#,
                             demo_id,
                             new_id.name()
                         )),
-                    )
+                    ))
                 } else {
-                    error_response(
+                    Some(error_response(
                         id,
                         "InvalidDemoId",
                         &format!("Invalid demo ID: {}", demo_id),
-                    )
+                    ))
                 }
             }
             WebCommand::SetCamera {
                 position,
                 yaw,
                 pitch,
+                roll,
             } => {
                 if let Some(pos) = position {
-                    let target = glam::Vec3::from_array(pos);
-                    self.camera.distance = (target - self.camera.target).length().max(0.1);
+                    self.camera.position = glam::Vec3::from_array(pos);
                 }
                 if let Some(y) = yaw {
-                    self.camera.azimuth = y;
+                    self.camera.yaw = y;
                 }
                 if let Some(p) = pitch {
-                    self.camera.elevation = p;
+                    self.camera.pitch = p;
                 }
-                self.enforce_ui_physical_camera_policy();
-                success_response(id, None)
+                if let Some(r) = roll {
+                    self.camera.roll = r;
+                }
+                Some(success_response(id, None))
             }
             WebCommand::SetTheme { theme, dark_mode } => {
                 let options = self.current_demo.named_theme_options();
                 if options.is_empty() {
-                    error_response(
+                    Some(error_response(
                         id,
                         "InvalidCommand",
                         "Current demo does not support named themes",
-                    )
+                    ))
                 } else if let Some((theme_name, dark_mode)) =
                     self.current_demo.set_named_theme(&theme, dark_mode)
                 {
-                    success_response(
+                    Some(success_response(
                         id,
                         Some(&format!(
                             r#"{{"theme":"{}","dark_mode":{}}}"#,
                             theme_name, dark_mode
                         )),
-                    )
+                    ))
                 } else {
-                    error_response(
+                    Some(error_response(
                         id,
                         "InvalidTheme",
                         &format!("Invalid theme: {}. Valid: {}", theme, options.join(", ")),
-                    )
+                    ))
                 }
             }
             WebCommand::SetListItem {
@@ -3383,44 +4527,44 @@ impl WebRenderer {
                     }
                     changed
                 };
-                success_response(
+                Some(success_response(
                     id,
                     Some(&format!(r#"{{"index":{},"changed":{}}}"#, index, changed)),
-                )
+                ))
             }
             WebCommand::SetListFilter { filter } => {
                 if let Some(filter_name) = self.current_demo.set_list_filter(&filter) {
-                    success_response(
+                    Some(success_response(
                         id,
                         Some(&format!(r#"{{"filter":"{}","changed":true}}"#, filter_name)),
-                    )
+                    ))
                 } else {
-                    error_response(
+                    Some(error_response(
                         id,
                         "InvalidCommand",
                         &format!("Invalid list filter: {}", filter),
-                    )
+                    ))
                 }
             }
             WebCommand::SetListScroll { offset_y } => {
                 let changed = self.current_demo.set_list_scroll_offset(offset_y);
-                success_response(
+                Some(success_response(
                     id,
                     Some(&format!(
                         r#"{{"offset_y":{},"changed":{}}}"#,
                         offset_y, changed
                     )),
-                )
+                ))
             }
             WebCommand::SetNamedScroll { name, offset_y } => {
                 let changed = self.current_demo.set_named_scroll(&name, offset_y);
-                success_response(
+                Some(success_response(
                     id,
                     Some(&format!(
                         r#"{{"changed":{},"name":"{}","offset_y":{}}}"#,
                         changed, name, offset_y
                     )),
-                )
+                ))
             }
             WebCommand::Screenshot { center_crop } => {
                 self.capture_screenshot_response(id, center_crop)
@@ -3432,16 +4576,19 @@ impl WebRenderer {
                 } else {
                     "off"
                 };
-                status_response(
+                Some(status_response(
                     id,
                     self.current_demo_id as u8,
                     self.current_demo.name(),
                     demo_family_name(self.current_demo.demo_type()),
                     [pos.x, pos.y, pos.z],
+                    self.camera.yaw,
+                    self.camera.pitch,
+                    self.camera.roll,
                     self.input.fps(),
                     overlay_mode,
                     self.input.show_keybindings,
-                )
+                ))
             }
             WebCommand::ToggleOverlay(mode) => {
                 match mode.as_str() {
@@ -3450,7 +4597,7 @@ impl WebRenderer {
                     "full" => self.input.overlay_mode = crate::demo_core::OverlayMode::App, // Web doesn't have full system stats
                     _ => {}
                 }
-                success_response(id, None)
+                Some(success_response(id, None))
             }
             WebCommand::PressKey(key) => {
                 match key.as_str() {
@@ -3459,15 +4606,18 @@ impl WebRenderer {
                     "g" | "G" => self.input.toggle_overlay_full(),
                     _ => {}
                 }
-                success_response(id, None)
+                Some(success_response(id, None))
             }
-            WebCommand::Ping => pong_response(id),
+            WebCommand::Ping => Some(pong_response(id)),
             WebCommand::Reload => {
                 // Signal that reload was requested - JavaScript will handle the actual reload
                 if let Some(ref state) = self.control_state {
                     state.borrow_mut().request_reload();
                 }
-                success_response(id, Some(r#"{"message":"reload_requested"}"#))
+                Some(success_response(
+                    id,
+                    Some(r#"{"message":"reload_requested"}"#),
+                ))
             }
         }
     }
@@ -3487,18 +4637,6 @@ impl WebRenderer {
             self.config.height,
         );
 
-        // Setup camera for this demo
-        let (pos, target) = new_demo.camera_config();
-        self.camera = OrbitalCamera::default();
-        self.camera.target = target;
-        self.camera.distance = (pos - target).length().max(0.1);
-        if self.camera.distance > 0.0 {
-            let dir = (pos - target) / self.camera.distance;
-            self.camera.azimuth = dir.x.atan2(dir.z);
-            self.camera.elevation = dir.y.asin();
-        }
-        self.enforce_ui_physical_camera_policy();
-
         // Reset 2D controls
         self.text2d_offset = [0.0, 0.0];
         self.text2d_scale = 1.0;
@@ -3507,6 +4645,10 @@ impl WebRenderer {
 
         self.current_demo = new_demo;
         self.current_demo_id = new_id;
+        self.setup_camera_from_demo();
+        if !self.current_demo.demo_type().uses_camera_controls() {
+            self.release_pointer_lock();
+        }
 
         log::info!(
             "Switched to demo {}: {}",
@@ -3524,36 +4666,42 @@ impl WebRenderer {
         self.last_frame_time = now;
 
         self.input.update_frame_time(dt);
+        let _ = self.device.poll(wgpu::PollType::Poll);
 
         // Process control commands
         self.process_control_commands();
 
-        // Handle demo switching for demos reachable from digit keys (0-9)
-        for i in 0..10 {
-            let key = format!("Digit{}", i);
-            if self.input.is_key_pressed(&key) {
-                if let Some(id) = DemoId::from_u8(i) {
-                    self.switch_demo(id);
-                }
+        if self.input.take_key_pressed("Tab") {
+            self.input.keyboard_paused = !self.input.keyboard_paused;
+            if self.input.keyboard_paused {
+                self.release_pointer_lock();
+                self.input.clear_pressed_keys();
             }
+            return;
         }
 
+        if self.input.keyboard_paused {
+            if self.input.take_key_pressed("Escape") {
+                self.release_pointer_lock();
+            }
+            return;
+        }
+
+        self.handle_demo_switch_keys();
+
         // Handle toggle keys
-        if self.input.is_key_pressed("KeyK") {
-            self.input.pressed_keys.remove("KeyK");
+        if self.input.take_key_pressed("KeyK") {
             self.input.toggle_keybindings();
         }
-        if self.input.is_key_pressed("KeyF") {
-            self.input.pressed_keys.remove("KeyF");
+        if self.input.take_key_pressed("KeyF") {
             self.input.toggle_overlay_app();
         }
-        if self.input.is_key_pressed("KeyG") {
-            self.input.pressed_keys.remove("KeyG");
+        if self.input.take_key_pressed("KeyG") {
             self.input.toggle_overlay_full();
         }
         for code in ["KeyY", "KeyO", "KeyN", "KeyM"] {
-            if self.input.is_key_pressed(code) && self.current_demo.handle_key_pressed(code) {
-                self.input.pressed_keys.remove(code);
+            if self.input.take_key_pressed(code) && self.current_demo.handle_key_pressed(code) {
+                break;
             }
         }
         for code in ["KeyU", "KeyJ"] {
@@ -3565,66 +4713,10 @@ impl WebRenderer {
 
         match self.current_demo.demo_type() {
             DemoType::UiPhysical | DemoType::World3D => {
-                // 3D camera controls
-                const ROTATION_SPEED: f32 = 0.03;
-                const ZOOM_SPEED: f32 = 0.1;
-
-                if self.input.is_key_pressed("KeyA") {
-                    self.camera.rotate_horizontal(-ROTATION_SPEED);
-                }
-                if self.input.is_key_pressed("KeyD") {
-                    self.camera.rotate_horizontal(ROTATION_SPEED);
-                }
-                if self.input.is_key_pressed("KeyW") {
-                    self.camera.zoom(ZOOM_SPEED);
-                }
-                if self.input.is_key_pressed("KeyS") {
-                    self.camera.zoom(-ZOOM_SPEED);
-                }
-                if self.input.is_key_pressed("KeyQ") {
-                    self.camera.rotate_vertical(ROTATION_SPEED);
-                }
-                if self.input.is_key_pressed("KeyE") {
-                    self.camera.rotate_vertical(-ROTATION_SPEED);
-                }
-                self.enforce_ui_physical_camera_policy();
+                self.update_camera_controls(dt);
             }
             DemoType::Ui2D => {
-                // 2D controls
-                const PAN_SPEED: f32 = 5.0;
-                const ZOOM_SPEED: f32 = 0.02;
-                const ROT_SPEED: f32 = 0.05;
-
-                if self.input.is_key_pressed("KeyA") {
-                    self.text2d_offset[0] -= PAN_SPEED / self.text2d_scale;
-                }
-                if self.input.is_key_pressed("KeyD") {
-                    self.text2d_offset[0] += PAN_SPEED / self.text2d_scale;
-                }
-                if self.input.is_key_pressed("KeyW") {
-                    self.text2d_offset[1] += PAN_SPEED / self.text2d_scale;
-                }
-                if self.input.is_key_pressed("KeyS") {
-                    self.text2d_offset[1] -= PAN_SPEED / self.text2d_scale;
-                }
-                if self.input.is_key_pressed("ArrowUp") {
-                    self.text2d_scale *= 1.0 + ZOOM_SPEED;
-                }
-                if self.input.is_key_pressed("ArrowDown") {
-                    self.text2d_scale *= 1.0 - ZOOM_SPEED;
-                }
-                if self.input.is_key_pressed("KeyQ") {
-                    self.text2d_rotation += ROT_SPEED;
-                }
-                if self.input.is_key_pressed("KeyE") {
-                    self.text2d_rotation -= ROT_SPEED;
-                }
-                self.text2d_scale = self.text2d_scale.clamp(0.1, 10.0);
-                self.current_demo.set_ui2d_view_state(
-                    self.text2d_offset,
-                    self.text2d_scale,
-                    self.text2d_rotation,
-                );
+                self.update_ui2d_controls();
             }
         }
 
@@ -3632,13 +4724,7 @@ impl WebRenderer {
     }
 
     fn render(&self) -> Result<(), wgpu::SurfaceError> {
-        let time = {
-            let now = web_sys::window()
-                .and_then(|w| w.performance())
-                .map(|p| p.now())
-                .unwrap_or(0.0);
-            ((now - self.start_time) / 1000.0) as f32
-        };
+        let time = self.current_time_seconds();
 
         // Update uniforms
         self.current_demo
@@ -3655,34 +4741,44 @@ impl WebRenderer {
                 label: Some("Web Render Encoder"),
             });
 
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Web Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            self.current_demo.render(&mut render_pass);
-        }
+        self.encode_render_pass(&mut encoder, &view);
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())
+    }
+
+    fn current_time_seconds(&self) -> f32 {
+        let now = web_sys::window()
+            .and_then(|w| w.performance())
+            .map(|p| p.now())
+            .unwrap_or(0.0);
+        ((now - self.start_time) / 1000.0) as f32
+    }
+
+    fn encode_render_pass(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Web Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        self.current_demo.render(&mut render_pass);
     }
 
     fn key_down(&mut self, code: String) {
@@ -3709,14 +4805,10 @@ impl WebRenderer {
 
         WebReloadableState {
             current_demo: self.current_demo_id as u8,
-            camera_distance: self.camera.distance,
-            camera_azimuth: self.camera.azimuth,
-            camera_elevation: self.camera.elevation,
-            camera_target: [
-                self.camera.target.x,
-                self.camera.target.y,
-                self.camera.target.z,
-            ],
+            camera_position: self.camera.position.to_array(),
+            camera_yaw: self.camera.yaw,
+            camera_pitch: self.camera.pitch,
+            camera_roll: self.camera.roll,
             overlay_mode: overlay_mode.to_string(),
             show_keybindings: self.input.show_keybindings,
             text2d_offset: self.text2d_offset,
@@ -3736,10 +4828,10 @@ impl WebRenderer {
         }
 
         // Restore camera state
-        self.camera.distance = state.camera_distance;
-        self.camera.azimuth = state.camera_azimuth;
-        self.camera.elevation = state.camera_elevation;
-        self.camera.target = glam::Vec3::from_array(state.camera_target);
+        self.camera.position = glam::Vec3::from_array(state.camera_position);
+        self.camera.yaw = state.camera_yaw;
+        self.camera.pitch = state.camera_pitch;
+        self.camera.roll = state.camera_roll;
 
         // Restore overlay state
         self.input.overlay_mode = match state.overlay_mode.as_str() {
@@ -3768,9 +4860,11 @@ impl WebRenderer {
         }
 
         log::info!(
-            "Applied saved state: demo={}, camera distance={:.2}",
+            "Applied saved state: demo={}, camera=({:.2}, {:.2}, {:.2})",
             state.current_demo,
-            state.camera_distance
+            state.camera_position[0],
+            state.camera_position[1],
+            state.camera_position[2]
         );
     }
 
@@ -3781,6 +4875,28 @@ impl WebRenderer {
         } else {
             false
         }
+    }
+
+    fn debug_control_state_json(&self) -> String {
+        let control = self.control_state.as_ref().map(|state| {
+            let state = state.borrow();
+            serde_json::json!({
+                "connected": state.is_connected(),
+                "pendingCommands": state.pending_command_count(),
+                "pendingResponses": state.pending_response_count(),
+                "lastReceivedMessage": state.last_received_message(),
+                "lastSentMessage": state.last_sent_message(),
+            })
+        });
+
+        serde_json::json!({
+            "currentDemo": self.current_demo_id as u8,
+            "demoName": self.current_demo.name(),
+            "hasControlState": self.control_state.is_some(),
+            "hasControlClient": self.control_client.is_some(),
+            "control": control,
+        })
+        .to_string()
     }
 
     fn get_overlay_text(&self) -> String {
@@ -3806,13 +4922,68 @@ impl WebRenderer {
                 lines.push(format!("{}: {}", key, desc));
             }
             lines.push("---".to_string());
-            for (key, desc) in KEYBINDINGS_COMMON {
+            for (key, desc) in KEYBINDINGS_COMMON_WEB {
                 lines.push(format!("{}: {}", key, desc));
             }
         }
 
         lines.join("\n")
     }
+}
+
+fn build_web_screenshot_response(
+    id: u64,
+    buffer: &wgpu::Buffer,
+    width: u32,
+    height: u32,
+    bytes_per_row: u32,
+    format: wgpu::TextureFormat,
+    center_crop: Option<[u32; 2]>,
+) -> Result<web_control::WebResponse, String> {
+    let mapped = buffer.slice(..).get_mapped_range();
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for row in 0..height as usize {
+        let start = row * bytes_per_row as usize;
+        let end = start + (width * 4) as usize;
+        rgba.extend_from_slice(&mapped[start..end]);
+    }
+    drop(mapped);
+    buffer.unmap();
+
+    if matches!(
+        format,
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    ) {
+        for pixel in rgba.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+    }
+
+    let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba)
+        .ok_or_else(|| "Failed to create screenshot image buffer".to_string())?;
+
+    let (final_image, out_width, out_height) = if let Some([crop_width, crop_height]) = center_crop
+    {
+        let crop_width = crop_width.min(width).max(1);
+        let crop_height = crop_height.min(height).max(1);
+        let crop_x = (width.saturating_sub(crop_width)) / 2;
+        let crop_y = (height.saturating_sub(crop_height)) / 2;
+        let cropped =
+            imageops::crop_imm(&image, crop_x, crop_y, crop_width, crop_height).to_image();
+        let out_width = cropped.width();
+        let out_height = cropped.height();
+        (cropped, out_width, out_height)
+    } else {
+        (image, width, height)
+    };
+
+    let mut png_data = Vec::new();
+    final_image
+        .write_to(&mut Cursor::new(&mut png_data), ImageFormat::Png)
+        .map_err(|error| format!("PNG encoding failed: {}", error))?;
+
+    let base64_data = base64::engine::general_purpose::STANDARD.encode(&png_data);
+    Ok(screenshot_response(id, &base64_data, out_width, out_height))
 }
 
 fn request_animation_frame(f: &Closure<dyn FnMut()>) {
@@ -3874,17 +5045,140 @@ fn get_initial_demo_from_url() -> DemoId {
     DemoId::Objects // Default to Objects demo
 }
 
-#[wasm_bindgen(start)]
-pub async fn start() -> Result<(), JsValue> {
-    console_error_panic_hook::set_once();
-    console_log::init_with_level(log::Level::Info).unwrap();
+fn should_prevent_default_key(code: &str) -> bool {
+    matches!(
+        code,
+        "Tab"
+            | "Space"
+            | "Escape"
+            | "ArrowUp"
+            | "ArrowDown"
+            | "ArrowLeft"
+            | "ArrowRight"
+            | "Minus"
+            | "Equal"
+            | "KeyW"
+            | "KeyA"
+            | "KeyS"
+            | "KeyD"
+            | "KeyQ"
+            | "KeyE"
+            | "KeyR"
+            | "KeyT"
+            | "KeyF"
+            | "KeyG"
+            | "KeyK"
+            | "KeyY"
+            | "KeyO"
+            | "KeyU"
+            | "KeyJ"
+            | "KeyN"
+            | "KeyM"
+            | "ControlLeft"
+            | "ControlRight"
+            | "Home"
+    ) || code.starts_with("Digit")
+}
 
-    let initial_demo = get_initial_demo_from_url();
-    log::info!(
-        "Initializing raybox web renderer with demo {}: {}",
-        initial_demo as u8,
-        initial_demo.name()
-    );
+fn install_event_listeners(
+    window: &web_sys::Window,
+    document: &web_sys::Document,
+    renderer: Rc<RefCell<WebRenderer>>,
+) -> Result<(), JsValue> {
+    let canvas = renderer.borrow().canvas.clone();
+
+    let renderer_keydown = renderer.clone();
+    let keydown_closure = Closure::wrap(Box::new(move |event: web_sys::KeyboardEvent| {
+        if should_prevent_default_key(&event.code()) {
+            event.prevent_default();
+        }
+        renderer_keydown.borrow_mut().key_down(event.code());
+    }) as Box<dyn FnMut(_)>);
+
+    let renderer_keyup = renderer.clone();
+    let keyup_closure = Closure::wrap(Box::new(move |event: web_sys::KeyboardEvent| {
+        if should_prevent_default_key(&event.code()) {
+            event.prevent_default();
+        }
+        renderer_keyup.borrow_mut().key_up(event.code());
+    }) as Box<dyn FnMut(_)>);
+
+    let renderer_mousedown = renderer.clone();
+    let mousedown_closure = Closure::wrap(Box::new(move |event: web_sys::MouseEvent| {
+        if event.button() == 0 {
+            event.prevent_default();
+            renderer_mousedown
+                .borrow_mut()
+                .mouse_down(event.client_x() as f32, event.client_y() as f32);
+        }
+    }) as Box<dyn FnMut(_)>);
+
+    let renderer_mouseup = renderer.clone();
+    let mouseup_closure = Closure::wrap(Box::new(move |_event: web_sys::MouseEvent| {
+        renderer_mouseup.borrow_mut().mouse_up();
+    }) as Box<dyn FnMut(_)>);
+
+    let renderer_mousemove = renderer.clone();
+    let mousemove_closure = Closure::wrap(Box::new(move |event: web_sys::MouseEvent| {
+        renderer_mousemove.borrow_mut().mouse_move(
+            event.client_x() as f32,
+            event.client_y() as f32,
+            event.movement_x() as f32,
+            event.movement_y() as f32,
+        );
+    }) as Box<dyn FnMut(_)>);
+
+    let renderer_wheel = renderer.clone();
+    let wheel_closure = Closure::wrap(Box::new(move |event: web_sys::WheelEvent| {
+        event.prevent_default();
+        renderer_wheel
+            .borrow_mut()
+            .mouse_wheel(event.delta_y() as f32);
+    }) as Box<dyn FnMut(_)>);
+
+    let renderer_resize = renderer.clone();
+    let resize_closure = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+        renderer_resize.borrow_mut().sync_canvas_size_to_window();
+    }) as Box<dyn FnMut(_)>);
+
+    let renderer_pointer_lock = renderer;
+    let pointer_lock_closure = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+        renderer_pointer_lock.borrow_mut().sync_pointer_lock_state();
+    }) as Box<dyn FnMut(_)>);
+
+    window.add_event_listener_with_callback("keydown", keydown_closure.as_ref().unchecked_ref())?;
+    window.add_event_listener_with_callback("keyup", keyup_closure.as_ref().unchecked_ref())?;
+    window.add_event_listener_with_callback("mouseup", mouseup_closure.as_ref().unchecked_ref())?;
+    window.add_event_listener_with_callback(
+        "mousemove",
+        mousemove_closure.as_ref().unchecked_ref(),
+    )?;
+    window.add_event_listener_with_callback("resize", resize_closure.as_ref().unchecked_ref())?;
+    canvas.add_event_listener_with_callback(
+        "mousedown",
+        mousedown_closure.as_ref().unchecked_ref(),
+    )?;
+    canvas.add_event_listener_with_callback("wheel", wheel_closure.as_ref().unchecked_ref())?;
+    document.add_event_listener_with_callback(
+        "pointerlockchange",
+        pointer_lock_closure.as_ref().unchecked_ref(),
+    )?;
+
+    keydown_closure.forget();
+    keyup_closure.forget();
+    mousedown_closure.forget();
+    mouseup_closure.forget();
+    mousemove_closure.forget();
+    wheel_closure.forget();
+    resize_closure.forget();
+    pointer_lock_closure.forget();
+
+    Ok(())
+}
+
+async fn start_renderer_with_demo(initial_demo: DemoId) -> Result<(), JsValue> {
+    console_error_panic_hook::set_once();
+    console_log::init_with_level(log::Level::Info).ok();
 
     let window = web_sys::window().ok_or("No window found")?;
     let document = window.document().ok_or("No document found")?;
@@ -3896,7 +5190,7 @@ pub async fn start() -> Result<(), JsValue> {
     let mut renderer = WebRenderer::new(canvas, initial_demo).await?;
     log::info!("Web renderer initialized successfully");
     log::info!(
-        "Controls: 0-6 switch demos, A/D rotate, W/S zoom, Q/E tilt, K keybindings, F stats"
+        "Controls: 0-9/-/= switch demos, click or Tab capture mouse, WASD move, Mouse look, Scroll speed, K keybindings, F stats"
     );
 
     // Apply saved state if available (for hot-reload)
@@ -3915,24 +5209,7 @@ pub async fn start() -> Result<(), JsValue> {
     }
 
     let renderer = Rc::new(RefCell::new(renderer));
-
-    // Set up keyboard event listeners
-    let renderer_keydown = renderer.clone();
-    let keydown_closure = Closure::wrap(Box::new(move |event: web_sys::KeyboardEvent| {
-        renderer_keydown.borrow_mut().key_down(event.code());
-    }) as Box<dyn FnMut(_)>);
-
-    let renderer_keyup = renderer.clone();
-    let keyup_closure = Closure::wrap(Box::new(move |event: web_sys::KeyboardEvent| {
-        renderer_keyup.borrow_mut().key_up(event.code());
-    }) as Box<dyn FnMut(_)>);
-
-    window.add_event_listener_with_callback("keydown", keydown_closure.as_ref().unchecked_ref())?;
-    window.add_event_listener_with_callback("keyup", keyup_closure.as_ref().unchecked_ref())?;
-
-    // Keep closures alive
-    keydown_closure.forget();
-    keyup_closure.forget();
+    install_event_listeners(&window, &document, renderer.clone())?;
 
     // Update overlay text element
     let overlay_element = document.get_element_by_id("overlay");
@@ -3971,89 +5248,12 @@ pub async fn start() -> Result<(), JsValue> {
 #[wasm_bindgen]
 pub async fn start_with_demo(demo_id: u8) -> Result<(), JsValue> {
     let initial_demo = DemoId::from_u8(demo_id).unwrap_or(DemoId::Objects);
-
-    console_error_panic_hook::set_once();
-    console_log::init_with_level(log::Level::Info).ok(); // ok() because it might already be initialized
-
     log::info!(
         "Starting raybox with demo {}: {}",
         initial_demo as u8,
         initial_demo.name()
     );
-
-    let window = web_sys::window().ok_or("No window found")?;
-    let document = window.document().ok_or("No document found")?;
-    let canvas = document
-        .get_element_by_id("canvas")
-        .ok_or("No canvas element found")?
-        .dyn_into::<web_sys::HtmlCanvasElement>()?;
-
-    let mut renderer = WebRenderer::new(canvas, initial_demo).await?;
-
-    // Apply saved state if available (for hot-reload)
-    SAVED_STATE.with(|s| {
-        if let Some(state) = s.borrow_mut().take() {
-            log::info!("Restoring saved state after hot-reload");
-            renderer.apply_state(state);
-        }
-    });
-
-    // Connect to control server if enabled
-    if is_control_mode_enabled() {
-        let control_url = get_control_url();
-        log::info!("Control mode enabled, connecting to {}", control_url);
-        renderer.connect_control(&control_url);
-    }
-
-    let renderer = Rc::new(RefCell::new(renderer));
-
-    // Store renderer reference for hot-reload state extraction
-    RENDERER_REF.with(|r| {
-        *r.borrow_mut() = Some(renderer.clone());
-    });
-
-    // Set up keyboard event listeners
-    let renderer_keydown = renderer.clone();
-    let keydown_closure = Closure::wrap(Box::new(move |event: web_sys::KeyboardEvent| {
-        renderer_keydown.borrow_mut().key_down(event.code());
-    }) as Box<dyn FnMut(_)>);
-
-    let renderer_keyup = renderer.clone();
-    let keyup_closure = Closure::wrap(Box::new(move |event: web_sys::KeyboardEvent| {
-        renderer_keyup.borrow_mut().key_up(event.code());
-    }) as Box<dyn FnMut(_)>);
-
-    window.add_event_listener_with_callback("keydown", keydown_closure.as_ref().unchecked_ref())?;
-    window.add_event_listener_with_callback("keyup", keyup_closure.as_ref().unchecked_ref())?;
-
-    keydown_closure.forget();
-    keyup_closure.forget();
-
-    // Update overlay text element
-    let overlay_element = document.get_element_by_id("overlay");
-
-    // Animation loop
-    let f: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
-    let g = f.clone();
-
-    let renderer_clone = renderer.clone();
-    *g.borrow_mut() = Some(Closure::new(move || {
-        renderer_clone.borrow_mut().update();
-        if let Err(e) = renderer_clone.borrow().render() {
-            log::error!("Render error: {:?}", e);
-        }
-
-        if let Some(ref elem) = overlay_element {
-            let text = renderer_clone.borrow().get_overlay_text();
-            elem.set_text_content(Some(&text));
-        }
-
-        request_animation_frame(f.borrow().as_ref().unwrap());
-    }));
-
-    request_animation_frame(g.borrow().as_ref().unwrap());
-
-    Ok(())
+    start_renderer_with_demo(initial_demo).await
 }
 
 // ============== HOT-RELOAD WASM_BINDGEN EXPORTS ==============
@@ -4122,6 +5322,20 @@ pub fn save_state_for_reload() -> String {
         } else {
             log::warn!("No renderer available for state extraction");
             "{}".to_string()
+        }
+    })
+}
+
+#[wasm_bindgen]
+pub fn debug_control_state() -> String {
+    RENDERER_REF.with(|r| {
+        if let Some(ref renderer_rc) = *r.borrow() {
+            renderer_rc.borrow().debug_control_state_json()
+        } else {
+            serde_json::json!({
+                "hasRenderer": false,
+            })
+            .to_string()
         }
     })
 }
