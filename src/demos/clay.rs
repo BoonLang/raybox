@@ -87,8 +87,8 @@ struct GpuCharInstance {
 
 fn build_clay_text_layout(
     atlas: &VectorFontAtlas,
-    tablet_width: f32,
-    tablet_depth: f32,
+    plaque_half_width: f32,
+    plaque_half_height: f32,
 ) -> Vec<GpuCharInstance> {
     let mut instances = Vec::new();
 
@@ -104,12 +104,12 @@ fn build_clay_text_layout(
     let line_height = 0.22;
     let margin = 0.15;
 
-    let start_x = -tablet_width + margin;
-    let start_z = tablet_depth - margin;
-    let max_x = tablet_width - margin;
+    let start_x = -plaque_half_width + margin;
+    let start_y = plaque_half_height - margin;
+    let max_x = plaque_half_width - margin;
 
     let mut x = start_x;
-    let mut z = start_z;
+    let mut y = start_y;
     let mut line_num = 0;
     let max_lines = 24;
 
@@ -120,7 +120,7 @@ fn build_clay_text_layout(
 
         if ch == '\n' {
             x = start_x;
-            z -= line_height;
+            y -= line_height;
             line_num += 1;
             continue;
         }
@@ -137,7 +137,7 @@ fn build_clay_text_layout(
 
             if x + advance > max_x {
                 x = start_x;
-                z -= line_height;
+                y -= line_height;
                 line_num += 1;
                 if line_num >= max_lines {
                     break;
@@ -145,7 +145,7 @@ fn build_clay_text_layout(
             }
 
             instances.push(GpuCharInstance {
-                pos_and_char: [x, z, scale, glyph_idx as f32],
+                pos_and_char: [x, y, scale, glyph_idx as f32],
             });
 
             x += advance;
@@ -153,7 +153,7 @@ fn build_clay_text_layout(
             x += 0.08 * scale;
             if x > max_x {
                 x = start_x;
-                z -= line_height;
+                y -= line_height;
                 line_num += 1;
             }
         }
@@ -380,8 +380,8 @@ impl Demo for ClayDemo {
 
     fn camera_config(&self) -> CameraConfig {
         CameraConfig {
-            initial_position: glam::Vec3::new(0.0, 5.5, 2.0),
-            look_at_target: glam::Vec3::new(0.0, 0.0, 0.0),
+            initial_position: glam::Vec3::new(0.0, 0.0, 7.5),
+            look_at_target: glam::Vec3::new(0.0, 0.0, 0.3),
         }
     }
 

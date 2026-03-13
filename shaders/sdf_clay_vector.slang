@@ -239,7 +239,7 @@ float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
 
 // Look up characters overlapping a 2D position using the character spatial grid
 // Returns charGridCells index for the cell. Caller reads offset/count.
-// p is in the text's 2D coordinate space (XZ for clay).
+// p is in the text's 2D coordinate space (XY for clay plaque).
 int2 charGridCellCoord(float2 p) {
     float2 gridMin = uniforms.charGridBounds.xy;
     float2 cellSize = uniforms.charGridParams.zw;
@@ -269,15 +269,15 @@ float sdTextRelief(float3 p, float depth) {
     // Text AABB early-exit
     float2 gridMin = uniforms.charGridBounds.xy;
     float2 gridMax = uniforms.charGridBounds.zw;
-    float3 textBoxMin = float3(gridMin.x, -halfDepth, -gridMax.y);
-    float3 textBoxMax = float3(gridMax.x, halfDepth, -gridMin.y);
+    float3 textBoxMin = float3(gridMin.x, gridMin.y, -halfDepth);
+    float3 textBoxMax = float3(gridMax.x, gridMax.y, halfDepth);
     float3 textBoxCenter = (textBoxMin + textBoxMax) * 0.5;
     float3 textBoxHalf = (textBoxMax - textBoxMin) * 0.5;
     float textBoxDist = sdBox(p - textBoxCenter, textBoxHalf);
     if (textBoxDist > 0.2) return textBoxDist;
 
-    // Convert 3D position to text 2D coordinates (text on XZ plane, Z negated)
-    float2 textPos = float2(p.x, -p.z);
+    // Convert 3D position to text 2D coordinates on the plaque face (XY plane).
+    float2 textPos = p.xy;
 
     // Look up character grid cell
     int2 cellCoord = charGridCellCoord(textPos);
@@ -302,7 +302,7 @@ float sdTextRelief(float3 p, float depth) {
         if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
             localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
             float d2d = sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScale;
-            float d3d = opExtrusion(d2d, p.y, halfDepth);
+            float d3d = opExtrusion(d2d, p.z, halfDepth);
             minDist = min(minDist, d3d);
         }
     }
@@ -329,16 +329,16 @@ Hit mapSceneCoarse(float3 p) {
     result.dist = 1e10;
     result.materialId = 0;
 
-    // Ground plane
-    Hit ground;
-    ground.dist = sdPlane(p, float3(0, 1, 0), 1.5);
-    ground.materialId = 1;
-    result = opUnionHit(result, ground);
+    // Backdrop wall plane behind the plaque
+    Hit wall;
+    wall.dist = sdPlane(p, float3(0, 0, 1), 1.5);
+    wall.materialId = 1;
+    result = opUnionHit(result, wall);
 
-    // Clay tablet (rounded box only, no text carving)
+    // Clay plaque (rounded box only, no text carving)
     Hit tablet;
-    float3 tabletP = p - float3(0, 0.3, 0);
-    tablet.dist = sdRoundBox(tabletP, float3(3.5, 0.25, 2.5), 0.08);
+    float3 tabletP = p - float3(0, 0, 0.3);
+    tablet.dist = sdRoundBox(tabletP, float3(3.5, 2.5, 0.25), 0.08);
     tablet.materialId = 2;
     result = opUnionHit(result, tablet);
 
@@ -353,20 +353,20 @@ Hit mapScene(float3 p) {
     float textScale = uniforms.renderParams.w;
     float textDepth = uniforms.renderParams.z;
 
-    // Ground plane
-    Hit ground;
-    ground.dist = sdPlane(p, float3(0, 1, 0), 1.5);
-    ground.materialId = 1;
-    result = opUnionHit(result, ground);
+    // Backdrop wall plane behind the plaque
+    Hit wall;
+    wall.dist = sdPlane(p, float3(0, 0, 1), 1.5);
+    wall.materialId = 1;
+    result = opUnionHit(result, wall);
 
-    // Clay tablet (rounded box)
+    // Clay plaque (rounded box)
     Hit tablet;
-    float3 tabletP = p - float3(0, 0.3, 0);
-    tablet.dist = sdRoundBox(tabletP, float3(3.5, 0.25, 2.5), 0.08);
+    float3 tabletP = p - float3(0, 0, 0.3);
+    tablet.dist = sdRoundBox(tabletP, float3(3.5, 2.5, 0.25), 0.08);
     tablet.materialId = 2;
 
-    // Carve text into tablet (CSG subtraction)
-    float3 textP = (p - float3(0, 0.5, 0)) / textScale;
+    // Carve text into the front plaque face (CSG subtraction)
+    float3 textP = (p - float3(0, 0, 0.5)) / textScale;
     float textRelief = sdTextRelief(textP, textDepth / textScale) * textScale;
 
     // Relief: subtract text from tablet surface
@@ -376,11 +376,10 @@ Hit mapScene(float3 p) {
 
     return result;
 }
-
 float3 getMaterialColor(int id) {
     switch (id) {
-        case 1: return float3(0.25, 0.23, 0.20); // Ground - dark stone
-        case 2: return float3(0.78, 0.62, 0.44); // Tablet - clay/terracotta
+        case 1: return float3(0.25, 0.23, 0.20); // Backdrop wall - dark stone
+        case 2: return float3(0.78, 0.62, 0.44); // Plaque - clay/terracotta
         default: return float3(0.5, 0.5, 0.5);
     }
 }

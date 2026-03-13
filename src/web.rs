@@ -583,13 +583,13 @@ fn build_web_clay_text_layout(atlas: &VectorFontAtlas) -> Vec<WebClayCharInstanc
     let scale = 0.15;
     let line_height = 0.22;
     let margin = 0.15;
-    let tablet_width = 3.3;
-    let tablet_depth = 2.3;
-    let start_x = -tablet_width + margin;
-    let start_z = tablet_depth - margin;
-    let max_x = tablet_width - margin;
+    let plaque_half_width = 3.3;
+    let plaque_half_height = 2.3;
+    let start_x = -plaque_half_width + margin;
+    let start_y = plaque_half_height - margin;
+    let max_x = plaque_half_width - margin;
     let mut x = start_x;
-    let mut z = start_z;
+    let mut y = start_y;
     let mut line_num = 0;
     let max_lines = 24;
 
@@ -599,7 +599,7 @@ fn build_web_clay_text_layout(atlas: &VectorFontAtlas) -> Vec<WebClayCharInstanc
         }
         if ch == '\n' {
             x = start_x;
-            z -= line_height;
+            y -= line_height;
             line_num += 1;
             continue;
         }
@@ -614,21 +614,21 @@ fn build_web_clay_text_layout(atlas: &VectorFontAtlas) -> Vec<WebClayCharInstanc
             let advance = entry.advance * scale;
             if x + advance > max_x {
                 x = start_x;
-                z -= line_height;
+                y -= line_height;
                 line_num += 1;
                 if line_num >= max_lines {
                     break;
                 }
             }
             instances.push(WebClayCharInstance {
-                pos_and_char: [x, z, scale, glyph_idx as f32],
+                pos_and_char: [x, y, scale, glyph_idx as f32],
             });
             x += advance;
         } else if ch == ' ' {
             x += 0.08 * scale;
             if x > max_x {
                 x = start_x;
-                z -= line_height;
+                y -= line_height;
                 line_num += 1;
             }
         }
@@ -971,7 +971,10 @@ impl WebDemo for WebClayDemo {
     }
 
     fn camera_config(&self) -> (glam::Vec3, glam::Vec3) {
-        (glam::Vec3::new(0.0, 5.5, 2.0), glam::Vec3::ZERO)
+        (
+            glam::Vec3::new(0.0, 0.0, 7.5),
+            glam::Vec3::new(0.0, 0.0, 0.3),
+        )
     }
 
     fn update(&mut self, _dt: f32) {}
