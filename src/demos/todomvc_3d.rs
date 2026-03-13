@@ -25,10 +25,10 @@ pub use super::ui_physical_theme::{ThemeId, UiPhysicalThemeState, PHYSICAL_THEME
 // ---- Keybindings ----
 
 const KEYBINDINGS_TODOMVC_3D: &[(&str, &str)] = &[
-    ("WASD", "Inspect move"),
-    ("Mouse", "Orbit"),
-    ("Space/Ctrl", "Lift/lower"),
-    ("Scroll", "Zoom"),
+    ("WASD", "Move"),
+    ("Mouse", "Look"),
+    ("Space/Ctrl", "Up/Down"),
+    ("Scroll", "Speed"),
     ("R", "Reset roll"),
     ("T", "Reset camera"),
     ("Tab", "Capture mouse"),
@@ -83,14 +83,14 @@ impl Demo for TodoMvc3DDemo {
 
     fn camera_config(&self) -> CameraConfig {
         CameraConfig {
-            initial_position: glam::Vec3::new(0.0, 6.5, 7.0),
+            initial_position: glam::Vec3::new(0.0, 10.0, 0.01),
             look_at_target: glam::Vec3::new(0.0, 0.0, 0.0),
         }
     }
 
     fn ui_physical_camera_preset(&self) -> Option<UiPhysicalCameraPreset> {
         Some(UiPhysicalCameraPreset {
-            fallback_offset: glam::Vec3::new(0.0, 6.5, 7.0),
+            fallback_offset: glam::Vec3::new(0.0, 10.0, 0.01),
             min_distance: 4.0,
             max_distance: 14.0,
             min_elevation: -0.9,

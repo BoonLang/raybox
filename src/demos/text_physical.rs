@@ -29,10 +29,10 @@ const TEXT_SCROLL_STEP: f32 = 48.0;
 const TEXT_PARAGRAPH_COUNT: usize = 5;
 const TEXT_PHYSICAL_FRAME_SIZE: [f32; 2] = [760.0, 560.0];
 const TEXT_PHYSICAL_KEYBINDINGS: &[(&str, &str)] = &[
-    ("WASD", "Inspect move"),
-    ("Mouse", "Orbit"),
-    ("Space/Ctrl", "Lift/lower"),
-    ("Scroll", "Zoom"),
+    ("WASD", "Move"),
+    ("Mouse", "Look"),
+    ("Space/Ctrl", "Up/Down"),
+    ("Scroll", "Speed"),
     ("R", "Reset roll"),
     ("T", "Reset camera"),
     ("Tab", "Capture mouse"),
@@ -158,7 +158,7 @@ impl Demo for TextPhysicalDemo {
 
     fn ui_physical_camera_preset(&self) -> Option<UiPhysicalCameraPreset> {
         let mut preset = ui_physical_card_camera_preset(TEXT_PHYSICAL_FRAME_SIZE);
-        preset.fallback_offset = glam::Vec3::new(0.0, 6.4, 7.6);
+        preset.fallback_offset = glam::Vec3::new(0.0, 9.2, 0.01);
         preset.min_distance = 4.6;
         preset.max_distance = 9.4;
         preset.clamp_x = 5.4;

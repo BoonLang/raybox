@@ -133,7 +133,7 @@ impl DemoId {
 pub enum DemoType {
     /// Retained 2D UI with pan/zoom/rotate controls.
     Ui2D,
-    /// Physicalized retained UI with inspect-camera controls.
+    /// Physicalized retained UI with free-look 3D camera controls.
     UiPhysical,
     /// Free-camera world-space 3D scene.
     World3D,

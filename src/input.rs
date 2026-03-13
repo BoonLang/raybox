@@ -421,34 +421,6 @@ impl InputHandler {
         }
     }
 
-    /// Update a bounded inspect-style camera.
-    ///
-    /// This keeps the familiar movement keys for physical UI scenes, but avoids
-    /// world-only actions such as camera roll.
-    pub fn update_ui_physical_camera(&self, camera: &mut FlyCamera, dt: f32) {
-        if self.pressed_keys.contains(&KeyCode::KeyW) {
-            camera.move_forward(dt, true);
-        }
-        if self.pressed_keys.contains(&KeyCode::KeyS) {
-            camera.move_forward(dt, false);
-        }
-        if self.pressed_keys.contains(&KeyCode::KeyA) {
-            camera.move_right(dt, false);
-        }
-        if self.pressed_keys.contains(&KeyCode::KeyD) {
-            camera.move_right(dt, true);
-        }
-
-        if self.pressed_keys.contains(&KeyCode::Space) {
-            camera.move_up(dt, true);
-        }
-        if self.pressed_keys.contains(&KeyCode::ControlLeft)
-            || self.pressed_keys.contains(&KeyCode::ControlRight)
-        {
-            camera.move_up(dt, false);
-        }
-    }
-
     /// Reset roll to horizontal
     pub fn reset_roll(&self, camera: &mut FlyCamera) {
         camera.reset_roll();

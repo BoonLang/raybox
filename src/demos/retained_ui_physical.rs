@@ -8,9 +8,7 @@ use super::{
     Demo, DemoContext, DemoId, DemoType, NamedScrollTarget,
 };
 use crate::camera::FlyCamera;
-use crate::demo_core::{
-    ui_physical_card_camera_config, ui_physical_card_camera_preset, UiPhysicalCameraPreset,
-};
+use crate::demo_core::{ui_physical_card_camera_preset, UiPhysicalCameraPreset};
 use crate::input::CameraConfig;
 use crate::retained::showcase::ShowcaseSceneDeckTarget;
 use crate::retained::text::TextRenderSpace;
@@ -21,10 +19,10 @@ use winit::keyboard::KeyCode;
 const FEED_SCROLL_STEP: f32 = 24.0;
 const SHOWCASE_PHYSICAL_CARD_SIZE: [f32; 2] = [392.0, 224.0];
 const PHYSICAL_SAMPLE_KEYBINDINGS: &[(&str, &str)] = &[
-    ("WASD", "Inspect move"),
-    ("Mouse", "Orbit"),
-    ("Space/Ctrl", "Lift/lower"),
-    ("Scroll", "Zoom"),
+    ("WASD", "Move"),
+    ("Mouse", "Look"),
+    ("Space/Ctrl", "Up/Down"),
+    ("Scroll", "Speed"),
     ("R", "Reset roll"),
     ("T", "Reset camera"),
     ("Tab", "Capture mouse"),
@@ -100,11 +98,13 @@ impl Demo for RetainedUiPhysicalDemo {
     }
 
     fn camera_config(&self) -> CameraConfig {
-        ui_physical_card_camera_config(SHOWCASE_PHYSICAL_CARD_SIZE)
+        CameraConfig::new(glam::Vec3::new(0.0, 7.8, 0.01), glam::Vec3::ZERO)
     }
 
     fn ui_physical_camera_preset(&self) -> Option<UiPhysicalCameraPreset> {
-        Some(ui_physical_card_camera_preset(SHOWCASE_PHYSICAL_CARD_SIZE))
+        let mut preset = ui_physical_card_camera_preset(SHOWCASE_PHYSICAL_CARD_SIZE);
+        preset.fallback_offset = glam::Vec3::new(0.0, 7.8, 0.01);
+        Some(preset)
     }
 
     fn update(&mut self, _dt: f32, _camera: &mut FlyCamera) {}

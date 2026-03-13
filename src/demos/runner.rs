@@ -6,7 +6,6 @@
 use super::{create_demo, Demo, DemoContext, DemoId, DemoType};
 use crate::camera::FlyCamera;
 use crate::constants::{HEIGHT, WIDTH};
-use crate::demo_core::UiPhysicalCameraPreset;
 #[allow(unused_imports)]
 use crate::input::{InputAction, InputHandler, OverlayMode};
 
@@ -449,7 +448,6 @@ impl DemoRunner {
         self.input = InputHandler::new(camera_config);
         self.camera = FlyCamera::default();
         self.input.setup_camera(&mut self.camera);
-        self.enforce_ui_physical_camera_policy();
 
         // Reset 2D controls if switching to 2D demo
         self.pressed_keys.clear();
@@ -475,115 +473,13 @@ impl DemoRunner {
         self.process_control_commands();
 
         let demo_type = self.current_demo.demo_type();
-        if demo_type == DemoType::World3D {
+        if demo_type.uses_camera_controls() {
             self.input.update_camera(&mut self.camera, dt);
-        } else if demo_type == DemoType::UiPhysical {
-            self.input.update_ui_physical_camera(&mut self.camera, dt);
-            self.enforce_ui_physical_camera_policy();
         } else if demo_type.uses_2d_view_controls() {
             self.update_2d_controls(dt);
         }
 
         self.current_demo.update(dt, &mut self.camera);
-        self.enforce_ui_physical_camera_policy();
-    }
-
-    fn ui_physical_camera_target(&self) -> glam::Vec3 {
-        self.current_demo.camera_config().look_at_target
-    }
-
-    fn ui_physical_camera_preset(&self) -> UiPhysicalCameraPreset {
-        self.current_demo
-            .ui_physical_camera_preset()
-            .unwrap_or_default()
-    }
-
-    fn orbit_ui_physical_camera(&mut self, delta: (f64, f64)) {
-        if self.current_demo.demo_type() != DemoType::UiPhysical {
-            return;
-        }
-
-        let target = self.ui_physical_camera_target();
-        let preset = self.ui_physical_camera_preset();
-        let mut rel = self.camera.position - target;
-        if !rel.is_finite() || rel.length_squared() <= f32::EPSILON {
-            rel = preset.fallback_offset;
-        }
-
-        let distance = rel.length().clamp(preset.min_distance, preset.max_distance);
-        let mut azimuth = rel.x.atan2(rel.z);
-        let mut elevation = (rel.y / distance).clamp(-1.0, 1.0).asin();
-        let sensitivity = self.camera.look_sensitivity * 2.2;
-
-        azimuth -= delta.0 as f32 * sensitivity;
-        elevation = (elevation - delta.1 as f32 * sensitivity)
-            .clamp(preset.min_elevation, preset.max_elevation);
-
-        let cos_elev = elevation.cos();
-        let new_rel = glam::Vec3::new(
-            distance * cos_elev * azimuth.sin(),
-            distance * elevation.sin(),
-            distance * cos_elev * azimuth.cos(),
-        );
-
-        self.camera.position = target + new_rel;
-        self.enforce_ui_physical_camera_policy();
-    }
-
-    fn enforce_ui_physical_camera_policy(&mut self) {
-        if self.current_demo.demo_type() != DemoType::UiPhysical {
-            return;
-        }
-
-        let target = self.ui_physical_camera_target();
-        let preset = self.ui_physical_camera_preset();
-        let mut rel = self.camera.position - target;
-        if !rel.is_finite() || rel.length_squared() <= f32::EPSILON {
-            rel = preset.fallback_offset;
-        }
-
-        rel.x = rel.x.clamp(-preset.clamp_x, preset.clamp_x);
-        rel.y = rel.y.clamp(preset.min_height, preset.max_height);
-        rel.z = rel.z.clamp(-preset.clamp_z, preset.clamp_z);
-
-        let distance = rel.length();
-        if distance < preset.min_distance {
-            rel = rel.normalize_or_zero() * preset.min_distance;
-            if rel.length_squared() <= f32::EPSILON {
-                rel = preset.fallback_offset;
-            }
-        } else if distance > preset.max_distance {
-            rel = rel.normalize() * preset.max_distance;
-        }
-
-        self.camera.position = target + rel;
-        self.camera.roll = 0.0;
-        self.camera.move_speed = self.camera.move_speed.clamp(0.5, 8.0);
-        self.camera.look_at(target);
-    }
-
-    fn adjust_ui_physical_zoom(&mut self, delta: winit::event::MouseScrollDelta) {
-        if self.current_demo.demo_type() != DemoType::UiPhysical {
-            return;
-        }
-
-        let scroll = match delta {
-            winit::event::MouseScrollDelta::LineDelta(_, y) => y,
-            winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.02,
-        };
-
-        let target = self.ui_physical_camera_target();
-        let preset = self.ui_physical_camera_preset();
-        let mut rel = self.camera.position - target;
-        if !rel.is_finite() || rel.length_squared() <= f32::EPSILON {
-            rel = preset.fallback_offset;
-        }
-
-        let distance = rel.length().max(0.001);
-        let zoom_scale = (1.0 - scroll * 0.08).clamp(0.6, 1.4);
-        let new_distance = (distance * zoom_scale).clamp(preset.min_distance, preset.max_distance);
-        self.camera.position = target + rel.normalize_or_zero() * new_distance;
-        self.enforce_ui_physical_camera_policy();
     }
 
     fn mark_needs_redraw(&mut self) {
@@ -637,6 +533,8 @@ impl DemoRunner {
             KeyCode::Space,
             KeyCode::ControlLeft,
             KeyCode::ControlRight,
+            KeyCode::KeyQ,
+            KeyCode::KeyE,
         ];
 
         CONTINUOUS_KEYS
@@ -753,7 +651,6 @@ impl DemoRunner {
                 if let Some(r) = roll {
                     self.camera.roll = r;
                 }
-                self.enforce_ui_physical_camera_policy();
                 ResponseMessage::success(id, None)
             }
             Command::Screenshot { center_crop } => self.capture_screenshot(id, center_crop),
@@ -1499,14 +1396,7 @@ impl ApplicationHandler<DemoUserEvent> for DemoApp {
         if let Some(runner) = self.runner.as_mut() {
             if runner.current_demo.demo_type().uses_camera_controls() {
                 if let DeviceEvent::MouseMotion { delta } = event {
-                    if runner.current_demo.demo_type() == DemoType::UiPhysical {
-                        if runner.input.mouse_captured {
-                            runner.orbit_ui_physical_camera(delta);
-                        }
-                    } else {
-                        runner.input.handle_mouse_motion(&mut runner.camera, delta);
-                    }
-                    runner.enforce_ui_physical_camera_policy();
+                    runner.input.handle_mouse_motion(&mut runner.camera, delta);
                     if runner.input.mouse_captured {
                         runner.mark_needs_redraw();
                     }
@@ -1608,11 +1498,7 @@ impl ApplicationHandler<DemoUserEvent> for DemoApp {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if runner.current_demo.demo_type().uses_camera_controls() {
-                    if runner.current_demo.demo_type() == DemoType::UiPhysical {
-                        runner.adjust_ui_physical_zoom(delta);
-                    } else {
-                        runner.input.handle_scroll(&mut runner.camera, delta);
-                    }
+                    runner.input.handle_scroll(&mut runner.camera, delta);
                     runner.mark_needs_redraw();
                 }
             }
