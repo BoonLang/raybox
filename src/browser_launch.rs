@@ -92,13 +92,15 @@ pub fn resolve_chrome_bin(explicit: Option<&Path>) -> Result<PathBuf> {
         return Ok(PathBuf::from(path));
     }
 
-    for candidate in ["google-chrome", "chromium", "chromium-browser"] {
+    for candidate in ["chromium", "chromium-browser"] {
         if let Some(path) = which_in_path(candidate) {
             return Ok(path);
         }
     }
 
-    bail!("Could not find a Chromium binary. Set --chrome-bin or RAYBOX_CHROME_BIN.")
+    bail!(
+        "Could not find Chromium. Install `chromium`/`chromium-browser`, or set --chrome-bin / RAYBOX_CHROME_BIN explicitly."
+    )
 }
 
 pub fn spawn_chromium(config: &BrowserLaunchConfig) -> Result<BrowserLaunch> {
@@ -240,6 +242,18 @@ fn build_chromium_args(config: &BrowserLaunchConfig) -> Result<(Vec<String>, Opt
         "--remote-debugging-address=127.0.0.1".to_string(),
         "--no-first-run".to_string(),
         "--no-default-browser-check".to_string(),
+        "--disable-extensions".to_string(),
+        "--disable-component-extensions-with-background-pages".to_string(),
+        "--disable-background-networking".to_string(),
+        "--disable-sync".to_string(),
+        "--disable-default-apps".to_string(),
+        "--disable-component-update".to_string(),
+        "--metrics-recording-only".to_string(),
+        "--no-service-autorun".to_string(),
+        "--enable-logging=stderr".to_string(),
+        "--log-level=0".to_string(),
+        "--v=1".to_string(),
+        "--vmodule=*gpu*=2,*webgpu*=2,*vulkan*=2,*angle*=2,*viz*=1".to_string(),
         "--enable-unsafe-webgpu".to_string(),
         "--enable-webgpu-developer-features".to_string(),
         "--disable-background-timer-throttling".to_string(),

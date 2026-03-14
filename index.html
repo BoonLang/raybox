@@ -107,6 +107,8 @@
         let savedStateJson = null;
         let hotReloadWs = null;
         const debugEvents = [];
+        const DEBUG_LOG_STORAGE_KEY = 'raybox_last_debug_log';
+        const DEBUG_LOG_LIMIT = 200;
 
         function formatDebugArg(value) {
             if (value instanceof Error) {
@@ -129,8 +131,34 @@
                 message: String(message),
                 detail,
             });
-            if (debugEvents.length > 200) {
+            if (debugEvents.length > DEBUG_LOG_LIMIT) {
                 debugEvents.shift();
+            }
+            persistDebugLog();
+        }
+
+        function persistDebugLog() {
+            try {
+                localStorage.setItem(DEBUG_LOG_STORAGE_KEY, JSON.stringify(debugEvents));
+            } catch (_) {
+            }
+        }
+
+        function loadPersistedDebugLog() {
+            try {
+                const raw = localStorage.getItem(DEBUG_LOG_STORAGE_KEY);
+                if (!raw) {
+                    return;
+                }
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) {
+                    return;
+                }
+                debugEvents.length = 0;
+                for (const item of parsed.slice(-DEBUG_LOG_LIMIT)) {
+                    debugEvents.push(item);
+                }
+            } catch (_) {
             }
         }
 
@@ -173,6 +201,7 @@
         window.rayboxGetDebugLog = () => JSON.stringify(debugEvents, null, 2);
         window.rayboxClearDebugLog = () => {
             debugEvents.length = 0;
+            persistDebugLog();
             clearRuntimeError();
             return true;
         };
@@ -221,8 +250,19 @@
 
         function startupFlagsText() {
             return [
+                '--no-first-run',
+                '--no-default-browser-check',
+                '--disable-extensions',
+                '--disable-component-extensions-with-background-pages',
+                '--disable-background-networking',
+                '--disable-sync',
+                '--disable-default-apps',
+                '--disable-component-update',
+                '--metrics-recording-only',
+                '--no-service-autorun',
                 '--enable-unsafe-webgpu',
                 '--enable-webgpu-developer-features',
+                '--force-webgpu',
                 '--ignore-gpu-blocklist',
                 '--enable-vulkan',
                 '--use-angle=vulkan',
@@ -304,6 +344,7 @@ If Chromium is already running on another profile, use the commands above so Ray
         // Main initialization
         async function init() {
             try {
+                loadPersistedDebugLog();
                 clearStartupError();
                 clearRuntimeError();
                 await preflightWebGpu();
@@ -326,6 +367,7 @@ If Chromium is already running on another profile, use the commands above so Ray
                     'Raybox requires a Chromium/WebGPU session launched with the supported flags. The page reached the bootstrap path, but WebGPU startup did not complete.',
                     e
                 );
+                persistDebugLog();
             }
         }
 
