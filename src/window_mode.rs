@@ -68,6 +68,12 @@ pub mod windowed {
                 .find(|f| f.is_srgb())
                 .copied()
                 .unwrap_or(surface_caps.formats[0]);
+            let alpha_mode = surface_caps
+                .alpha_modes
+                .iter()
+                .copied()
+                .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
+                .unwrap_or(surface_caps.alpha_modes[0]);
 
             let config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -75,7 +81,7 @@ pub mod windowed {
                 width: WIDTH,
                 height: HEIGHT,
                 present_mode: wgpu::PresentMode::Fifo,
-                alpha_mode: surface_caps.alpha_modes[0],
+                alpha_mode,
                 view_formats: vec![],
                 desired_maximum_frame_latency: 2,
             };

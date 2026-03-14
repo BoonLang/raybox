@@ -6,6 +6,7 @@
 use super::{create_demo, Demo, DemoContext, DemoId, DemoType};
 use crate::camera::FlyCamera;
 use crate::constants::{HEIGHT, WIDTH};
+use crate::gpu_runtime_common::{PresentHost, PRESENT_INTERMEDIATE_FORMAT};
 #[allow(unused_imports)]
 use crate::input::{InputAction, InputHandler, OverlayMode};
 
@@ -149,6 +150,7 @@ pub struct DemoRunner {
 
     // Overlay
     overlay: SimpleOverlay,
+    present_host: PresentHost,
     show_keybindings: bool,
 
     // When true, all keyboard input is ignored (Tab to pause, mouse click to resume)
@@ -204,14 +206,19 @@ impl DemoRunner {
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
-
+        let alpha_mode = surface_caps
+            .alpha_modes
+            .iter()
+            .copied()
+            .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
+            .unwrap_or(surface_caps.alpha_modes[0]);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: WIDTH,
             height: HEIGHT,
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: surface_caps.alpha_modes[0],
+            alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
@@ -221,7 +228,7 @@ impl DemoRunner {
         let ctx = DemoContext {
             device: &device,
             queue: &queue,
-            surface_format,
+            surface_format: PRESENT_INTERMEDIATE_FORMAT,
             width: WIDTH,
             height: HEIGHT,
             scale_factor: window.scale_factor() as f32,
@@ -237,7 +244,9 @@ impl DemoRunner {
         input.setup_camera(&mut camera);
 
         // Create overlay renderer
-        let overlay = SimpleOverlay::new(&device, &queue, surface_format, WIDTH, HEIGHT)?;
+        let overlay =
+            SimpleOverlay::new(&device, &queue, PRESENT_INTERMEDIATE_FORMAT, WIDTH, HEIGHT)?;
+        let present_host = PresentHost::new(&device, WIDTH, HEIGHT, surface_format, "Native");
 
         Ok(Self {
             window,
@@ -249,6 +258,7 @@ impl DemoRunner {
             camera,
             input,
             overlay,
+            present_host,
             show_keybindings: false,
             keyboard_paused: true,
             pressed_keys: HashSet::new(),
@@ -435,7 +445,7 @@ impl DemoRunner {
         let ctx = DemoContext {
             device: &self.device,
             queue: &self.queue,
-            surface_format: self.config.format,
+            surface_format: PRESENT_INTERMEDIATE_FORMAT,
             width: self.config.width,
             height: self.config.height,
             scale_factor: self.window.scale_factor() as f32,
@@ -857,35 +867,18 @@ impl DemoRunner {
     /// Capture a screenshot and return as base64, optionally cropping to a centered region
     #[cfg(feature = "control")]
     fn capture_screenshot(&mut self, id: u64, center_crop: Option<[u32; 2]>) -> ResponseMessage {
-        // Create a texture to render to
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Screenshot Texture"),
-            size: wgpu::Extent3d {
-                width: self.config.width,
-                height: self.config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let time = self.start_time.elapsed().as_secs_f32();
 
         self.prepare_frame(time);
 
-        // Render to the texture
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Screenshot Encoder"),
             });
 
-        self.encode_scene_pass(&mut encoder, &view, time);
+        self.encode_scene_pass(&mut encoder, self.present_host.scene_view(), time);
+        self.encode_overlay_pass(&mut encoder, self.present_host.scene_view());
 
         // Create buffer for reading back
         let bytes_per_row = (self.config.width * 4 + 255) & !255; // Align to 256
@@ -900,7 +893,7 @@ impl DemoRunner {
         // Copy texture to buffer
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &texture,
+                texture: self.present_host.scene_texture(),
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -1100,8 +1093,9 @@ impl DemoRunner {
                 label: Some("Render Encoder"),
             });
 
-        self.encode_scene_pass(&mut encoder, &view, time);
-        self.encode_overlay_pass(&mut encoder, &view);
+        self.encode_scene_pass(&mut encoder, self.present_host.scene_view(), time);
+        self.encode_overlay_pass(&mut encoder, self.present_host.scene_view());
+        self.present_host.encode_present_pass(&mut encoder, &view);
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
@@ -1200,6 +1194,14 @@ impl DemoRunner {
             self.current_demo.resize(new_size.width, new_size.height);
             self.sync_demo_scale_factor();
             self.overlay.resize(new_size.width, new_size.height);
+            self.present_host
+                .resize(&self.device, new_size.width, new_size.height, "Native");
+            self.present_host.update_surface_format(
+                &self.device,
+                &self.queue,
+                self.config.format,
+                "Native",
+            );
             self.mark_needs_redraw();
         }
     }

@@ -16,7 +16,7 @@ use crate::demo_core::{
 use crate::gpu_runtime_common::{
     build_font_gpu_data, create_bind_group_layout_with_storage, create_bind_group_with_storage,
     create_fullscreen_pipeline, create_storage_buffers, GpuBezierCurve, GpuGlyphData, GpuGridCell,
-    UiStorageBuffers, VectorFontGpuData,
+    PresentHost, UiStorageBuffers, VectorFontGpuData, PRESENT_INTERMEDIATE_FORMAT,
 };
 use crate::retained::fixed_scene::{
     BuiltFixedUi2dScene, FixedUi2dSceneModelBuilder, FixedUi2dSceneModelCapture,
@@ -3901,6 +3901,7 @@ struct WebRenderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     surface_format: wgpu::TextureFormat,
+    present_host: PresentHost,
     canvas: web_sys::HtmlCanvasElement,
 
     // Current demo
@@ -3964,6 +3965,13 @@ impl WebRenderer {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
+            self.present_host.resize(&self.device, width, height, "Web");
+            self.present_host.update_surface_format(
+                &self.device,
+                &self.queue,
+                self.surface_format,
+                "Web",
+            );
         }
         self.current_demo.resize(width, height);
     }
@@ -4245,24 +4253,32 @@ impl WebRenderer {
 
         let initial_width = canvas.width().max(1);
         let initial_height = canvas.height().max(1);
+        let alpha_mode = surface_caps
+            .alpha_modes
+            .iter()
+            .copied()
+            .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
+            .unwrap_or(surface_caps.alpha_modes[0]);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: initial_width,
             height: initial_height,
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: surface_caps.alpha_modes[0],
+            alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
+        let present_host =
+            PresentHost::new(&device, config.width, config.height, surface_format, "Web");
 
         // Create initial demo
         let current_demo = create_web_demo(
             initial_demo,
             &device,
             &queue,
-            surface_format,
+            PRESENT_INTERMEDIATE_FORMAT,
             config.width,
             config.height,
         );
@@ -4278,6 +4294,7 @@ impl WebRenderer {
             queue,
             config,
             surface_format,
+            present_host,
             canvas,
             current_demo,
             current_demo_id: initial_demo,
@@ -4338,28 +4355,12 @@ impl WebRenderer {
         self.current_demo
             .update_uniforms(&self.queue, &self.camera, time);
 
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Web Screenshot Texture"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.surface_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Web Screenshot Encoder"),
             });
-        self.encode_render_pass(&mut encoder, &texture_view);
+        self.encode_render_pass(&mut encoder, self.present_host.scene_view());
 
         let bytes_per_pixel = 4u32;
         let bytes_per_row = ((width * bytes_per_pixel) + 255) & !255;
@@ -4373,7 +4374,7 @@ impl WebRenderer {
 
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &texture,
+                texture: self.present_host.scene_texture(),
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -4397,7 +4398,6 @@ impl WebRenderer {
         let _ = self.device.poll(wgpu::PollType::Poll);
 
         let buffer_for_callback = buffer.clone();
-        let format = self.surface_format;
         let slice = buffer.slice(..);
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let response = match result {
@@ -4407,7 +4407,6 @@ impl WebRenderer {
                     width,
                     height,
                     bytes_per_row,
-                    format,
                     center_crop,
                 ) {
                     Ok(response) => response,
@@ -4644,7 +4643,7 @@ impl WebRenderer {
             new_id,
             &self.device,
             &self.queue,
-            self.surface_format,
+            PRESENT_INTERMEDIATE_FORMAT,
             self.config.width,
             self.config.height,
         );
@@ -4754,7 +4753,8 @@ impl WebRenderer {
                 label: Some("Web Render Encoder"),
             });
 
-        self.encode_render_pass(&mut encoder, &view);
+        self.encode_render_pass(&mut encoder, self.present_host.scene_view());
+        self.present_host.encode_present_pass(&mut encoder, &view);
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
@@ -4950,7 +4950,6 @@ fn build_web_screenshot_response(
     width: u32,
     height: u32,
     bytes_per_row: u32,
-    format: wgpu::TextureFormat,
     center_crop: Option<[u32; 2]>,
 ) -> Result<web_control::WebResponse, String> {
     let mapped = buffer.slice(..).get_mapped_range();
@@ -4962,15 +4961,6 @@ fn build_web_screenshot_response(
     }
     drop(mapped);
     buffer.unmap();
-
-    if matches!(
-        format,
-        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
-    ) {
-        for pixel in rgba.chunks_exact_mut(4) {
-            pixel.swap(0, 2);
-        }
-    }
 
     let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba)
         .ok_or_else(|| "Failed to create screenshot image buffer".to_string())?;

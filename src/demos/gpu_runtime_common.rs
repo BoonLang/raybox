@@ -356,3 +356,342 @@ pub fn create_fullscreen_pipeline(
         cache: None,
     })
 }
+
+pub const PRESENT_INTERMEDIATE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+const PRESENT_SHADER: &str = r#"
+struct PresentUniforms {
+    flags: vec4<u32>,
+}
+
+@group(0) @binding(0) var scene_tex: texture_2d<f32>;
+@group(0) @binding(1) var scene_sampler: sampler;
+@group(0) @binding(2) var<uniform> uniforms: PresentUniforms;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+fn srgb_to_linear_component(c: f32) -> f32 {
+    if (c <= 0.04045) {
+        return c / 12.92;
+    }
+    return pow((c + 0.055) / 1.055, 2.4);
+}
+
+fn srgb_to_linear(color: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        srgb_to_linear_component(color.x),
+        srgb_to_linear_component(color.y),
+        srgb_to_linear_component(color.z),
+    );
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    var uvs = array<vec2<f32>, 3>(
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(2.0, 1.0),
+        vec2<f32>(0.0, -1.0),
+    );
+    var out: VertexOutput;
+    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
+    out.uv = uvs[vertex_index];
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let sampled = textureSample(scene_tex, scene_sampler, in.uv);
+    if (uniforms.flags.x != 0u) {
+        return vec4<f32>(srgb_to_linear(sampled.rgb), sampled.a);
+    }
+    return sampled;
+}
+"#;
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+struct PresentUniforms {
+    flags: [u32; 4],
+    _padding: [u32; 4],
+}
+
+pub struct PresentHost {
+    scene_texture: wgpu::Texture,
+    scene_view: wgpu::TextureView,
+    bind_group_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    uniform_buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    pipeline: wgpu::RenderPipeline,
+    surface_format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+}
+
+impl PresentHost {
+    pub fn new(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        surface_format: wgpu::TextureFormat,
+        label: &str,
+    ) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some(&format!("{label} Present Shader")),
+            source: wgpu::ShaderSource::Wgsl(PRESENT_SHADER.into()),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some(&format!("{label} Present Bind Group Layout")),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                uniform_bind_group_layout_entry(2, wgpu::ShaderStages::FRAGMENT),
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(&format!("{label} Present Pipeline Layout")),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(&format!("{label} Present Pipeline")),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some(&format!("{label} Present Sampler")),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{label} Present Uniform Buffer")),
+            contents: bytemuck::bytes_of(&PresentUniforms {
+                flags: [surface_format.is_srgb() as u32, 0, 0, 0],
+                _padding: [0; 4],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let (scene_texture, scene_view) =
+            Self::create_scene_target(device, width.max(1), height.max(1), label);
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("{label} Present Bind Group")),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&scene_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        Self {
+            scene_texture,
+            scene_view,
+            bind_group_layout,
+            sampler,
+            uniform_buffer,
+            bind_group,
+            pipeline,
+            surface_format,
+            width: width.max(1),
+            height: height.max(1),
+        }
+    }
+
+    fn create_scene_target(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        label: &str,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        let scene_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&format!("{label} Present Scene Texture")),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: PRESENT_INTERMEDIATE_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let scene_view = scene_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        (scene_texture, scene_view)
+    }
+
+    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32, label: &str) {
+        let width = width.max(1);
+        let height = height.max(1);
+        if self.width == width && self.height == height {
+            return;
+        }
+        let (scene_texture, scene_view) = Self::create_scene_target(device, width, height, label);
+        self.scene_texture = scene_texture;
+        self.scene_view = scene_view;
+        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("{label} Present Bind Group")),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.scene_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        self.width = width;
+        self.height = height;
+    }
+
+    pub fn update_surface_format(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        label: &str,
+    ) {
+        if self.surface_format != surface_format {
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(&format!("{label} Present Shader")),
+                source: wgpu::ShaderSource::Wgsl(PRESENT_SHADER.into()),
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(&format!("{label} Present Pipeline Layout")),
+                bind_group_layouts: &[&self.bind_group_layout],
+                push_constant_ranges: &[],
+            });
+            self.pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(&format!("{label} Present Pipeline")),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+            self.surface_format = surface_format;
+        }
+        queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&PresentUniforms {
+                flags: [surface_format.is_srgb() as u32, 0, 0, 0],
+                _padding: [0; 4],
+            }),
+        );
+    }
+
+    pub fn scene_texture(&self) -> &wgpu::Texture {
+        &self.scene_texture
+    }
+
+    pub fn scene_view(&self) -> &wgpu::TextureView {
+        &self.scene_view
+    }
+
+    pub fn encode_present_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target_view: &wgpu::TextureView,
+    ) {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Present Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        render_pass.set_pipeline(&self.pipeline);
+        render_pass.set_bind_group(0, &self.bind_group, &[]);
+        render_pass.draw(0..3, 0..1);
+    }
+}
