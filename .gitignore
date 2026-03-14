@@ -1,6 +1,8 @@
 /target
 /shaders/generated/
 /output/*.png
+/output/**/*.png
+/output/browser_logs/
 /pkg/
 /chromium_data/
 /tools/
