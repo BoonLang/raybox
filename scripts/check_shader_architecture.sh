@@ -40,6 +40,21 @@ check_absent \
     --glob '!src/architecture_guard.rs' \
     src examples
 
+check_absent \
+    "removed handwritten GPU ABI mirror structs remain in runtime or examples" \
+    'struct (GpuGridCell|AtlasGridCell|GpuBezierCurve|GpuGlyphData|GpuCharInstanceEx|GpuUiPrimitive)\b|\b(grid_cells_buffer|curve_indices_buffer|grid_cells|curve_indices)\b' \
+    --glob '!src/architecture_guard.rs' \
+    src examples
+
+check_absent \
+    "dead glyph-grid shader ABI remains in tracked Slang shaders" \
+    'struct GridCell\b|StructuredBuffer<GridCell>|StructuredBuffer<uint> curveIndices|uint4 gridInfo\b' \
+    shaders/sdf_text2d_vector.slang \
+    shaders/sdf_todomvc.slang \
+    shaders/sdf_clay_vector.slang \
+    shaders/sdf_text_shadow_vector.slang \
+    shaders/sdf_todomvc_3d.slang
+
 if [[ "$fail" -ne 0 ]]; then
     exit 1
 fi

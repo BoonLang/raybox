@@ -12,8 +12,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Headless mode (default) - renders to PNG
 cargo run                    # outputs to output/screenshot.png
 
-# Windowed mode - desktop window with all 7 demos
-just demos                   # press 0-6 to switch demos, F=stats, K=keybindings
+# Windowed mode - desktop window with the full demo switcher
+just demos                   # press 0-9/-/= to switch demos, F=stats, K=keybindings
 just demos-from 3            # start from specific demo
 
 # Windowed with control server (WebSocket on port 9300)
@@ -73,14 +73,15 @@ Four build modes controlled by features:
 
 - `lib.rs` — library root, exports shader_bindings
 - `main.rs` — binary entry, dispatches to windowed or headless
-- `demos/` — unified demo system (7 demos, runner, switching)
+- `demos/` — unified demo system, retained scene hosts, runner, switching
   - `runner.rs` — DemoRunner: window, input, overlay, demo lifecycle
-  - `empty.rs`, `objects.rs`, `spheres.rs`, `towers.rs` — 3D demos
-  - `text2d.rs`, `clay.rs`, `text_shadow.rs` — 2D text/SDF demos
+  - `empty.rs`, `objects.rs`, `spheres.rs`, `towers.rs` — simple/fullscreen demos
+  - `clay.rs`, `text_shadow.rs`, `todomvc.rs`, `todomvc_3d.rs` — vector-text / retained demo entry points
 - `demo_core/` — platform-agnostic demo trait, DemoId, CameraConfig
-- `text/` — vector font parsing and glyph atlas for SDF demos
+- `text/` — vector font parsing, packed glyph atlas metadata, and live character-grid acceleration
   - `vector_font.rs` — TTF parsing, Bézier curve extraction
-  - `glyph_atlas.rs` — grid-based spatial acceleration for SDF rendering
+  - `glyph_atlas.rs` — packed curves plus per-glyph metadata for the active brute-force glyph path
+  - `char_grid.rs` — character-grid acceleration used by the active vector-text shaders
 - `simple_overlay.rs` — cosmic-text CPU-rasterized text overlay
 - `input.rs` — input handling, camera controls, stats formatting
 - `camera.rs` — FlyCamera with yaw/pitch/roll
@@ -110,10 +111,11 @@ Four build modes controlled by features:
 Tracked shader source must live only in `shaders/*.slang`. Do not add repo-tracked handwritten WGSL to runtime or example code. The only WGSL allowed outside `shaders/*.slang` is generated output in `$OUT_DIR` or runtime hot-reload compiler output.
 
 Generated shader binding types are the source of truth for the GPU ABI:
-- use generated `*_std140_0` / `*_std430_0` Rust types instead of manual `#[repr(C)]` mirrors when generated types exist
+- use generated `*_std140_0` / `*_std430_0` Rust types instead of manual `#[repr(C)]` mirrors for every live shader ABI surface
 - prefer generated bind group and pipeline layout helpers over duplicating layouts by hand
 - avoid `min_binding_size: None` on uniform bindings when the generated type size is known
 - if a new utility shader is needed, add a new `.slang` file and extend `build.rs`
+- do not reintroduce the removed per-glyph `GridCell` / `curveIndices` glyph-grid ABI; the active vector-text shaders only consume the live curve, glyph, char-instance, and char-grid bindings
 
 Shaders include utility passes and demo shaders such as `empty`, `overlay`, `present`, `rectangle`, `sdf_raymarch`, `sdf_spheres`, `sdf_towers`, `sdf_text2d_vector`, `sdf_clay_vector`, and `sdf_text_shadow_vector`
 

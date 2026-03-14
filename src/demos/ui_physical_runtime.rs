@@ -17,7 +17,7 @@ use crate::retained::fixed_scene::{
 use crate::retained::samples::{SampleSceneAction, SampleSceneDeckTarget, SampleSceneModel};
 use crate::retained::showcase::{ShowcaseSceneAction, ShowcaseSceneDeckTarget, ShowcaseSceneModel};
 use crate::retained::text::{
-    apply_fixed_text_runtime_update, build_fixed_text_scene_state_for_scene,
+    apply_fixed_text_runtime_update, build_fixed_text_scene_state_for_scene, gpu_char_instance_ex,
     FixedTextRuntimeUpdate, FixedTextSceneData, FixedTextSceneState, GpuCharInstanceEx, TextColors,
     TextRenderSpace,
 };
@@ -359,43 +359,43 @@ impl UiPhysicalLayout {
 }
 
 fn gpu_ui_primitive_bounds(primitive: &GpuUiPrimitive) -> [f32; 4] {
-    let prim_type = primitive.params[3];
+    let prim_type = primitive.params_0[3];
     if prim_type < 0.5 || (prim_type >= 4.5 && prim_type < 5.5) {
-        let x = primitive.pos_size[0];
-        let y = primitive.pos_size[1];
-        let w = primitive.pos_size[2];
-        let h = primitive.pos_size[3];
+        let x = primitive.posSize_0[0];
+        let y = primitive.posSize_0[1];
+        let w = primitive.posSize_0[2];
+        let h = primitive.posSize_0[3];
         [x, y, x + w, y + h]
     } else if prim_type < 1.5 {
-        let x = primitive.pos_size[0];
-        let y = primitive.pos_size[1];
-        let w = primitive.pos_size[2];
-        let h = primitive.pos_size[3];
+        let x = primitive.posSize_0[0];
+        let y = primitive.posSize_0[1];
+        let w = primitive.posSize_0[2];
+        let h = primitive.posSize_0[3];
         [x, y, x + w, y + h]
     } else if prim_type < 3.5 {
-        let cx = primitive.pos_size[0];
-        let cy = primitive.pos_size[1];
-        let r = primitive.pos_size[2].abs();
+        let cx = primitive.posSize_0[0];
+        let cy = primitive.posSize_0[1];
+        let r = primitive.posSize_0[2].abs();
         [cx - r, cy - r, cx + r, cy + r]
     } else if prim_type < 4.5 {
-        let x0 = primitive.pos_size[0].min(primitive.pos_size[2]);
-        let y0 = primitive.pos_size[1].min(primitive.pos_size[3]);
-        let x1 = primitive.pos_size[0].max(primitive.pos_size[2]);
-        let y1 = primitive.pos_size[1].max(primitive.pos_size[3]);
+        let x0 = primitive.posSize_0[0].min(primitive.posSize_0[2]);
+        let y0 = primitive.posSize_0[1].min(primitive.posSize_0[3]);
+        let x1 = primitive.posSize_0[0].max(primitive.posSize_0[2]);
+        let y1 = primitive.posSize_0[1].max(primitive.posSize_0[3]);
         [x0, y0, x1, y1]
     } else if prim_type < 6.5 {
-        let x0 = primitive.pos_size[0]
-            .min(primitive.pos_size[2])
-            .min(primitive.extra[0]);
-        let y0 = primitive.pos_size[1]
-            .min(primitive.pos_size[3])
-            .min(primitive.extra[1]);
-        let x1 = primitive.pos_size[0]
-            .max(primitive.pos_size[2])
-            .max(primitive.extra[0]);
-        let y1 = primitive.pos_size[1]
-            .max(primitive.pos_size[3])
-            .max(primitive.extra[1]);
+        let x0 = primitive.posSize_0[0]
+            .min(primitive.posSize_0[2])
+            .min(primitive.extra_0[0]);
+        let y0 = primitive.posSize_0[1]
+            .min(primitive.posSize_0[3])
+            .min(primitive.extra_0[1]);
+        let x1 = primitive.posSize_0[0]
+            .max(primitive.posSize_0[2])
+            .max(primitive.extra_0[0]);
+        let y1 = primitive.posSize_0[1]
+            .max(primitive.posSize_0[3])
+            .max(primitive.extra_0[1]);
         [x0, y0, x1, y1]
     } else {
         [0.0, 0.0, 0.0, 0.0]
@@ -415,9 +415,9 @@ fn text_scene_bounds(text_data: &FixedTextSceneData) -> Option<[f32; 4]> {
     let mut found = false;
 
     for inst in text_data.char_instances.iter().take(count) {
-        let x = inst.pos_and_char[0];
-        let y = inst.pos_and_char[1];
-        let font_size = inst.pos_and_char[2].abs();
+        let x = inst.posAndChar_0[0];
+        let y = inst.posAndChar_0[1];
+        let font_size = inst.posAndChar_0[2].abs();
 
         if font_size <= 0.0 {
             continue;
@@ -465,7 +465,7 @@ pub fn recolor_physical_char_instances(
     char_instances
         .iter()
         .map(|inst| {
-            let flags = inst.color_flags[3];
+            let flags = inst.colorFlags_0[3];
             let color = if flags == 2.0 {
                 colors.heading
             } else if flags == 1.0 {
@@ -479,10 +479,7 @@ pub fn recolor_physical_char_instances(
             } else {
                 colors.active
             };
-            GpuCharInstanceEx {
-                pos_and_char: inst.pos_and_char,
-                color_flags: [color[0], color[1], color[2], flags],
-            }
+            gpu_char_instance_ex(inst.posAndChar_0, [color[0], color[1], color[2], flags])
         })
         .collect()
 }
@@ -710,7 +707,7 @@ impl UiPhysicalPassHost {
                         .expect("ThemeUniforms must be non-zero"),
                 ),
             ],
-            &[2, 3, 4, 5, 6, 7, 8, 9],
+            &[2, 3, 4, 5, 6, 7],
             wgpu::ShaderStages::FRAGMENT,
         );
         let bind_group = create_bind_group_with_storage(
@@ -719,7 +716,7 @@ impl UiPhysicalPassHost {
             &bind_group_layout,
             &[(0, uniform_buffer), (1, theme_buffer)],
             storage_buffers,
-            &[2, 3, 4, 5, 6, 7, 8, 9],
+            &[2, 3, 4, 5, 6, 7],
         );
         let shader_module = retained_ui_physical_shader::create_shader_module_embed_source(device);
         let pipeline = create_fullscreen_pipeline(
@@ -756,7 +753,7 @@ impl UiPhysicalPassHost {
             &self.bind_group_layout,
             &[(0, uniform_buffer), (1, theme_buffer)],
             storage_buffers,
-            &[2, 3, 4, 5, 6, 7, 8, 9],
+            &[2, 3, 4, 5, 6, 7],
         );
         self.storage_revision = storage_revision;
     }
@@ -2545,7 +2542,7 @@ mod tests {
     fn load_test_atlas() -> Arc<VectorFontAtlas> {
         let font_data = std::fs::read("assets/fonts/DejaVuSans.ttf").expect("load test font");
         let font = VectorFont::from_ttf(&font_data).expect("parse test font");
-        Arc::new(VectorFontAtlas::from_font(&font, 32))
+        Arc::new(VectorFontAtlas::from_font(&font))
     }
 
     fn colors() -> TextColors {
@@ -2578,13 +2575,7 @@ mod tests {
     fn physical_bootstrap_fit_check_uses_config_limits() {
         let bootstrap = UiPhysicalSceneBootstrap {
             text_data: FixedTextSceneData {
-                char_instances: vec![
-                    GpuCharInstanceEx {
-                        pos_and_char: [0.0; 4],
-                        color_flags: [0.0; 4],
-                    };
-                    8
-                ],
+                char_instances: vec![gpu_char_instance_ex([0.0; 4], [0.0; 4]); 8],
                 char_count: 8,
                 char_grid_params: [0.0; 4],
                 char_grid_bounds: [0.0; 4],
@@ -2595,15 +2586,7 @@ mod tests {
                 char_grid_indices: vec![0; 16],
             },
             ui_data: GpuUiSceneData {
-                primitives: vec![
-                    GpuUiPrimitive {
-                        pos_size: [0.0; 4],
-                        color: [0.0; 4],
-                        params: [0.0; 4],
-                        extra: [0.0; 4],
-                    };
-                    4
-                ],
+                primitives: vec![GpuUiPrimitive::new([0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]); 4],
                 primitive_count: 4,
             },
             layout: UiPhysicalLayout {
@@ -2786,12 +2769,12 @@ mod tests {
             char_grid_indices: Vec::new(),
         };
         let ui_data = GpuUiSceneData {
-            primitives: vec![GpuUiPrimitive {
-                pos_size: [140.0, 165.0, 240.0, 30.0],
-                color: [0.0; 4],
-                params: [0.0; 4],
-                extra: [0.0; 4],
-            }],
+            primitives: vec![GpuUiPrimitive::new(
+                [140.0, 165.0, 240.0, 30.0],
+                [0.0; 4],
+                [0.0; 4],
+                [0.0; 4],
+            )],
             primitive_count: 1,
         };
 
@@ -2813,12 +2796,7 @@ mod tests {
             ui: Some(crate::demos::ui2d_runtime::Ui2dRuntimeUiUpdate::Partial(
                 vec![crate::retained::ui::GpuUiPatch {
                     offset: 4,
-                    primitives: vec![GpuUiPrimitive {
-                        pos_size: [0.0; 4],
-                        color: [0.0; 4],
-                        params: [0.0; 4],
-                        extra: [0.0; 4],
-                    }],
+                    primitives: vec![GpuUiPrimitive::new([0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4])],
                 }],
             )),
         };

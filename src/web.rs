@@ -17,8 +17,8 @@ use crate::demo_core::{
 };
 use crate::gpu_runtime_common::{
     build_font_gpu_data, create_bind_group_layout_with_storage, create_bind_group_with_storage,
-    create_fullscreen_pipeline, create_storage_buffers, GpuBezierCurve, GpuGlyphData, GpuGridCell,
-    PresentHost, UiStorageBuffers, VectorFontGpuData, PRESENT_INTERMEDIATE_FORMAT,
+    create_fullscreen_pipeline, create_storage_buffers, GpuBezierCurve, GpuGlyphData, PresentHost,
+    UiStorageBuffers, VectorFontGpuData, PRESENT_INTERMEDIATE_FORMAT,
 };
 use crate::retained::fixed_scene::{
     BuiltFixedUi2dScene, FixedUi2dSceneModelBuilder, FixedUi2dSceneModelCapture,
@@ -165,8 +165,6 @@ struct WebWorld3dStorageBinding<'a> {
 }
 
 struct WebVectorTextStorageBuffers<'a> {
-    grid_cells: &'a wgpu::Buffer,
-    curve_indices: &'a wgpu::Buffer,
     curves: &'a wgpu::Buffer,
     glyph_data: &'a wgpu::Buffer,
     char_instances: &'a wgpu::Buffer,
@@ -183,40 +181,28 @@ fn web_vector_text_storage_bindings<'a>(
             binding: 1,
             visibility: wgpu::ShaderStages::FRAGMENT,
             read_only: true,
-            buffer: buffers.grid_cells,
+            buffer: buffers.curves,
         },
         WebWorld3dStorageBinding {
             binding: 2,
             visibility: wgpu::ShaderStages::FRAGMENT,
             read_only: true,
-            buffer: buffers.curve_indices,
+            buffer: buffers.glyph_data,
         },
         WebWorld3dStorageBinding {
             binding: 3,
             visibility: wgpu::ShaderStages::FRAGMENT,
             read_only: true,
-            buffer: buffers.curves,
+            buffer: buffers.char_instances,
         },
         WebWorld3dStorageBinding {
             binding: 4,
             visibility: wgpu::ShaderStages::FRAGMENT,
             read_only: true,
-            buffer: buffers.glyph_data,
-        },
-        WebWorld3dStorageBinding {
-            binding: 5,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            read_only: true,
-            buffer: buffers.char_instances,
-        },
-        WebWorld3dStorageBinding {
-            binding: 6,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            read_only: true,
             buffer: buffers.char_grid_cells,
         },
         WebWorld3dStorageBinding {
-            binding: 7,
+            binding: 5,
             visibility: wgpu::ShaderStages::FRAGMENT,
             read_only: true,
             buffer: buffers.char_grid_indices,
@@ -224,7 +210,7 @@ fn web_vector_text_storage_bindings<'a>(
     ];
     if let Some(distances) = buffers.char_grid_distances {
         bindings.push(WebWorld3dStorageBinding {
-            binding: 8,
+            binding: 6,
             visibility: wgpu::ShaderStages::FRAGMENT,
             read_only: true,
             buffer: distances,
@@ -793,8 +779,6 @@ fn compute_web_text_shadow_aabb(
 }
 
 struct WebVectorTextBuffers {
-    grid_cells_buffer: wgpu::Buffer,
-    curve_indices_buffer: wgpu::Buffer,
     curves_buffer: wgpu::Buffer,
     glyph_data_buffer: wgpu::Buffer,
     char_instances_buffer: wgpu::Buffer,
@@ -811,34 +795,13 @@ fn create_web_vector_text_buffers<T: Pod>(
     char_grid_indices: &[u32],
     char_grid_distances: Option<&[u32]>,
 ) -> WebVectorTextBuffers {
-    let grid_cells_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Web Vector Grid Cells Buffer"),
-        contents: bytemuck::cast_slice(if atlas_gpu_data.grid_cells.is_empty() {
-            &[GpuGridCell {
-                curve_start_and_count: 0,
-            }]
-        } else {
-            &atlas_gpu_data.grid_cells
-        }),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let curve_indices_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Web Vector Curve Indices Buffer"),
-        contents: bytemuck::cast_slice(if atlas_gpu_data.curve_indices.is_empty() {
-            &[0u32]
-        } else {
-            &atlas_gpu_data.curve_indices
-        }),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    let empty_curve = [GpuBezierCurve::new([0.0; 4], [0.0; 4], [0.0; 4])];
+    let empty_glyph = [GpuGlyphData::new([0.0; 4], [0; 4])];
+
     let curves_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Web Vector Curves Buffer"),
         contents: bytemuck::cast_slice(if atlas_gpu_data.curves.is_empty() {
-            &[GpuBezierCurve {
-                points01: [0.0; 4],
-                points2bbox: [0.0; 4],
-                bbox_flags: [0.0; 4],
-            }]
+            &empty_curve
         } else {
             &atlas_gpu_data.curves
         }),
@@ -847,11 +810,7 @@ fn create_web_vector_text_buffers<T: Pod>(
     let glyph_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Web Vector Glyph Data Buffer"),
         contents: bytemuck::cast_slice(if atlas_gpu_data.glyph_data.is_empty() {
-            &[GpuGlyphData {
-                bounds: [0.0; 4],
-                grid_info: [0; 4],
-                curve_info: [0; 4],
-            }]
+            &empty_glyph
         } else {
             &atlas_gpu_data.glyph_data
         }),
@@ -885,8 +844,6 @@ fn create_web_vector_text_buffers<T: Pod>(
     });
 
     WebVectorTextBuffers {
-        grid_cells_buffer,
-        curve_indices_buffer,
         curves_buffer,
         glyph_data_buffer,
         char_instances_buffer,
@@ -899,7 +856,7 @@ fn create_web_vector_text_buffers<T: Pod>(
 fn load_web_dejavu_font_atlas() -> VectorFontAtlas {
     let font_data = include_bytes!("../assets/fonts/DejaVuSans.ttf");
     let font = VectorFont::from_ttf(font_data).expect("parse web DejaVuSans font");
-    VectorFontAtlas::from_font(&font, 32)
+    VectorFontAtlas::from_font(&font)
 }
 
 struct WebClayDemo {
@@ -937,8 +894,6 @@ impl WebClayDemo {
             None,
         );
         let storage_bindings = web_vector_text_storage_bindings(WebVectorTextStorageBuffers {
-            grid_cells: &buffers.grid_cells_buffer,
-            curve_indices: &buffers.curve_indices_buffer,
             curves: &buffers.curves_buffer,
             glyph_data: &buffers.glyph_data_buffer,
             char_instances: &buffers.char_instances_buffer,
@@ -1059,8 +1014,6 @@ impl WebTextShadowDemo {
             Some(&char_grid.cell_distances),
         );
         let storage_bindings = web_vector_text_storage_bindings(WebVectorTextStorageBuffers {
-            grid_cells: &buffers.grid_cells_buffer,
-            curve_indices: &buffers.curve_indices_buffer,
             curves: &buffers.curves_buffer,
             glyph_data: &buffers.glyph_data_buffer,
             char_instances: &buffers.char_instances_buffer,
@@ -1334,7 +1287,7 @@ impl WebDemo for PlaceholderDemo {
 // Note: The Text2D demo uses a vector text renderer which requires storage buffers.
 // WebGL2 may not support this. For now, we use the same shader pattern.
 
-const WEB_UI2D_STORAGE_BINDINGS: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+const WEB_UI2D_STORAGE_BINDINGS: [u32; 6] = [1, 2, 3, 4, 5, 6];
 const WEB_RETAINED_SCROLL_STEP: f32 = 24.0;
 const TEXT2D_SCROLL_STEP: f32 = 48.0;
 const TEXT2D_MARGIN: f32 = 20.0;
@@ -1406,7 +1359,7 @@ const TODOMVC_3D_KEYBINDINGS_WEB: &[(&str, &str)] = &[
     ("M", "Toggle dark mode"),
 ];
 const WEB_TODOMVC_ITALIC_CODEPOINT_OFFSET: u32 = 0x10000;
-const WEB_UI_PHYSICAL_STORAGE_BINDINGS: [u32; 8] = [2, 3, 4, 5, 6, 7, 8, 9];
+const WEB_UI_PHYSICAL_STORAGE_BINDINGS: [u32; 6] = [2, 3, 4, 5, 6, 7];
 const SHOWCASE_PHYSICAL_CARD_SIZE: [f32; 2] = [392.0, 224.0];
 const TEXT_PHYSICAL_FRAME_SIZE: [f32; 2] = [760.0, 560.0];
 const TEXT_PHYSICAL_TEXT_MARGIN: f32 = 20.0;
@@ -1725,7 +1678,7 @@ fn load_web_retained_font_atlas() -> Arc<VectorFontAtlas> {
     let mut font = VectorFont::from_ttf(regular).expect("parse retained web regular font");
     font.merge_from_ttf(italic, 0x10000)
         .expect("merge retained web italic font");
-    Arc::new(VectorFontAtlas::from_font(&font, 32))
+    Arc::new(VectorFontAtlas::from_font(&font))
 }
 
 fn web_retained_init_from_built(
@@ -1796,43 +1749,43 @@ fn text_physical_scene_model() -> WrappedTextSceneModel {
 }
 
 fn gpu_ui_primitive_bounds(primitive: &GpuUiPrimitive) -> [f32; 4] {
-    let prim_type = primitive.params[3];
+    let prim_type = primitive.params_0[3];
     if prim_type < 0.5 || (prim_type >= 4.5 && prim_type < 5.5) {
-        let x = primitive.pos_size[0];
-        let y = primitive.pos_size[1];
-        let w = primitive.pos_size[2];
-        let h = primitive.pos_size[3];
+        let x = primitive.posSize_0[0];
+        let y = primitive.posSize_0[1];
+        let w = primitive.posSize_0[2];
+        let h = primitive.posSize_0[3];
         [x, y, x + w, y + h]
     } else if prim_type < 1.5 {
-        let x = primitive.pos_size[0];
-        let y = primitive.pos_size[1];
-        let w = primitive.pos_size[2];
-        let h = primitive.pos_size[3];
+        let x = primitive.posSize_0[0];
+        let y = primitive.posSize_0[1];
+        let w = primitive.posSize_0[2];
+        let h = primitive.posSize_0[3];
         [x, y, x + w, y + h]
     } else if prim_type < 3.5 {
-        let cx = primitive.pos_size[0];
-        let cy = primitive.pos_size[1];
-        let r = primitive.pos_size[2].abs();
+        let cx = primitive.posSize_0[0];
+        let cy = primitive.posSize_0[1];
+        let r = primitive.posSize_0[2].abs();
         [cx - r, cy - r, cx + r, cy + r]
     } else if prim_type < 4.5 {
-        let x0 = primitive.pos_size[0].min(primitive.pos_size[2]);
-        let y0 = primitive.pos_size[1].min(primitive.pos_size[3]);
-        let x1 = primitive.pos_size[0].max(primitive.pos_size[2]);
-        let y1 = primitive.pos_size[1].max(primitive.pos_size[3]);
+        let x0 = primitive.posSize_0[0].min(primitive.posSize_0[2]);
+        let y0 = primitive.posSize_0[1].min(primitive.posSize_0[3]);
+        let x1 = primitive.posSize_0[0].max(primitive.posSize_0[2]);
+        let y1 = primitive.posSize_0[1].max(primitive.posSize_0[3]);
         [x0, y0, x1, y1]
     } else if prim_type < 6.5 {
-        let x0 = primitive.pos_size[0]
-            .min(primitive.pos_size[2])
-            .min(primitive.extra[0]);
-        let y0 = primitive.pos_size[1]
-            .min(primitive.pos_size[3])
-            .min(primitive.extra[1]);
-        let x1 = primitive.pos_size[0]
-            .max(primitive.pos_size[2])
-            .max(primitive.extra[0]);
-        let y1 = primitive.pos_size[1]
-            .max(primitive.pos_size[3])
-            .max(primitive.extra[1]);
+        let x0 = primitive.posSize_0[0]
+            .min(primitive.posSize_0[2])
+            .min(primitive.extra_0[0]);
+        let y0 = primitive.posSize_0[1]
+            .min(primitive.posSize_0[3])
+            .min(primitive.extra_0[1]);
+        let x1 = primitive.posSize_0[0]
+            .max(primitive.posSize_0[2])
+            .max(primitive.extra_0[0]);
+        let y1 = primitive.posSize_0[1]
+            .max(primitive.posSize_0[3])
+            .max(primitive.extra_0[1]);
         [x0, y0, x1, y1]
     } else {
         [0.0; 4]
@@ -1852,9 +1805,9 @@ fn text_scene_bounds(text_data: &FixedTextSceneData) -> Option<[f32; 4]> {
     let mut found = false;
 
     for inst in text_data.char_instances.iter().take(count) {
-        let x = inst.pos_and_char[0];
-        let y = inst.pos_and_char[1];
-        let font_size = inst.pos_and_char[2].abs();
+        let x = inst.posAndChar_0[0];
+        let y = inst.posAndChar_0[1];
+        let font_size = inst.posAndChar_0[2].abs();
         if font_size <= 0.0 {
             continue;
         }

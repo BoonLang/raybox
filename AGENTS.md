@@ -32,12 +32,13 @@ Tracked shader source belongs only in `shaders/*.slang`. Do not add repo-tracked
 - generated shader code emitted into `$OUT_DIR`
 - runtime hot-reload compiled output consumed by the shader loader
 
-The generated shader binding layer from `build.rs` + `wgsl_bindgen` is the source of truth for the CPU/GPU ABI. When generated binding types exist, use them instead of handwritten Rust mirrors. In particular:
+The generated shader binding layer from `build.rs` + `wgsl_bindgen` is the source of truth for the CPU/GPU ABI of every live shader surface. Do not keep handwritten Rust fallback mirrors for dead or removed shader ABI. In particular:
 
 - prefer generated `*_std140_0` / `*_std430_0` types over manual `#[repr(C)]` buffer structs
 - prefer generated bind group and pipeline layout helpers over handwritten layout duplication
 - avoid `min_binding_size: None` on uniform bindings when a generated type size is available
 - if a new utility shader is needed, add a new `.slang` file and extend `build.rs`; do not embed WGSL strings in repo-tracked runtime or example code
+- do not reintroduce the removed per-glyph `GridCell` / `curveIndices` glyph-grid ABI; the active vector-text path uses generated bindings for the live curve/glyph/char-grid surfaces only
 
 For web runs, Chromium is the default supported browser target. Launch it through the repo-managed commands (`just open-browser`, `just open-browser-hotreload`, or `raybox-ctl web-open`) instead of ad hoc manual flags so WebGPU and diagnostics stay consistent.
 

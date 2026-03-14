@@ -960,7 +960,7 @@ mod tests {
     fn load_test_atlas() -> VectorFontAtlas {
         let font_data = std::fs::read("assets/fonts/DejaVuSans.ttf").expect("load test font");
         let font = VectorFont::from_ttf(&font_data).expect("parse test font");
-        VectorFontAtlas::from_font(&font, 32)
+        VectorFontAtlas::from_font(&font)
     }
 
     fn text_colors() -> TextColors {
@@ -988,18 +988,18 @@ mod tests {
 
         assert_eq!(ui_scene.primitive_count, 7);
         assert_eq!(
-            ui_scene.primitives[0].params[3],
+            ui_scene.primitives[0].params_0[3],
             super::super::ui::PRIM_BOX_SHADOW
         );
         assert_eq!(
-            ui_scene.primitives[1].params[3],
+            ui_scene.primitives[1].params_0[3],
             super::super::ui::PRIM_FILLED_RECT
         );
-        assert_eq!(ui_scene.primitives[2].params[3], PRIM_LINE);
-        assert_eq!(ui_scene.primitives[3].params[3], PRIM_STROKED_CIRCLE);
-        assert_eq!(ui_scene.primitives[4].params[3], PRIM_CHECKMARK_V);
-        assert_eq!(ui_scene.primitives[5].params[3], PRIM_LINE);
-        assert_eq!(ui_scene.primitives[6].params[3], PRIM_STROKED_RECT);
+        assert_eq!(ui_scene.primitives[2].params_0[3], PRIM_LINE);
+        assert_eq!(ui_scene.primitives[3].params_0[3], PRIM_STROKED_CIRCLE);
+        assert_eq!(ui_scene.primitives[4].params_0[3], PRIM_CHECKMARK_V);
+        assert_eq!(ui_scene.primitives[5].params_0[3], PRIM_LINE);
+        assert_eq!(ui_scene.primitives[6].params_0[3], PRIM_STROKED_RECT);
     }
 
     #[test]
@@ -1033,15 +1033,15 @@ mod tests {
 
         assert_eq!(ui_scene.primitive_count, 4);
         assert_eq!(
-            ui_scene.primitives[0].params[3],
+            ui_scene.primitives[0].params_0[3],
             super::super::ui::PRIM_BOX_SHADOW
         );
         assert_eq!(
-            ui_scene.primitives[1].params[3],
+            ui_scene.primitives[1].params_0[3],
             super::super::ui::PRIM_FILLED_RECT
         );
-        assert_eq!(ui_scene.primitives[2].params[3], PRIM_LINE);
-        assert_eq!(ui_scene.primitives[3].params[3], PRIM_STROKED_RECT);
+        assert_eq!(ui_scene.primitives[2].params_0[3], PRIM_LINE);
+        assert_eq!(ui_scene.primitives[3].params_0[3], PRIM_STROKED_RECT);
     }
 
     #[test]

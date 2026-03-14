@@ -150,7 +150,7 @@ mod tests {
     fn load_test_atlas() -> VectorFontAtlas {
         let font_data = std::fs::read("assets/fonts/DejaVuSans.ttf").expect("load test font");
         let font = VectorFont::from_ttf(&font_data).expect("parse test font");
-        VectorFontAtlas::from_font(&font, 32)
+        VectorFontAtlas::from_font(&font)
     }
 
     fn colors() -> TextColors {

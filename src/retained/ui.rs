@@ -1,7 +1,6 @@
 use super::{
     ElementKind, RenderNode, RetainedScene, TextRole, ToggleState, UiVisualRole, UiVisualStyle,
 };
-use bytemuck::{Pod, Zeroable};
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -35,14 +34,7 @@ pub struct UiPrimitive {
     pub extra: [f32; 4],
 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
-pub struct GpuUiPrimitive {
-    pub pos_size: [f32; 4],
-    pub color: [f32; 4],
-    pub params: [f32; 4],
-    pub extra: [f32; 4],
-}
+pub type GpuUiPrimitive = crate::ui2d_shader_bindings::UiPrimitive_std430_0;
 
 pub struct UiSceneData {
     pub primitives: Vec<UiPrimitive>,
@@ -190,12 +182,7 @@ pub fn pack_gpu_ui_primitive(primitive: UiPrimitive) -> GpuUiPrimitive {
         _ => primitive.extra,
     };
 
-    GpuUiPrimitive {
-        pos_size: primitive.pos_size,
-        color: primitive.color,
-        params,
-        extra,
-    }
+    GpuUiPrimitive::new(primitive.pos_size, primitive.color, params, extra)
 }
 
 fn build_static_ui_primitive(
@@ -649,7 +636,7 @@ mod tests {
         assert_eq!(full.primitive_count, 1);
         assert_eq!(patch.offset, 0);
         assert_eq!(patch.primitives, full.primitives);
-        assert_eq!(patch.primitives[0].params[3], PRIM_STROKED_RECT);
+        assert_eq!(patch.primitives[0].params_0[3], PRIM_STROKED_RECT);
     }
 
     #[test]
@@ -707,9 +694,9 @@ mod tests {
             },
         );
         assert_eq!(gpu_scene.primitive_count, 3);
-        assert_eq!(gpu_scene.primitives[0].params[3], PRIM_STROKED_CIRCLE);
-        assert_eq!(gpu_scene.primitives[1].params[3], PRIM_CHECKMARK_V);
-        assert_eq!(gpu_scene.primitives[2].params[3], PRIM_LINE);
+        assert_eq!(gpu_scene.primitives[0].params_0[3], PRIM_STROKED_CIRCLE);
+        assert_eq!(gpu_scene.primitives[1].params_0[3], PRIM_CHECKMARK_V);
+        assert_eq!(gpu_scene.primitives[2].params_0[3], PRIM_LINE);
 
         let patch = build_gpu_ui_patch_for_slot(
             &scene,
@@ -721,8 +708,8 @@ mod tests {
         )
         .expect("composite slot patch");
         assert_eq!(patch.primitives.len(), 3);
-        assert_eq!(patch.primitives[0].params[3], PRIM_STROKED_CIRCLE);
-        assert_eq!(patch.primitives[1].params[3], PRIM_CHECKMARK_V);
-        assert_eq!(patch.primitives[2].params[3], PRIM_LINE);
+        assert_eq!(patch.primitives[0].params_0[3], PRIM_STROKED_CIRCLE);
+        assert_eq!(patch.primitives[1].params_0[3], PRIM_CHECKMARK_V);
+        assert_eq!(patch.primitives[2].params_0[3], PRIM_LINE);
     }
 }

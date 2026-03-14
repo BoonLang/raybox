@@ -30,11 +30,6 @@ struct ThemeUniforms {
     float4 extraParams;         // textReliefDepth, textReliefMode(0=raised,1=carved), themeId, darkMode
 };
 
-// Grid cell structure
-struct GridCell {
-    uint curveStartAndCount;
-};
-
 // Bézier curve (packed format)
 struct BezierCurve {
     float4 points01;
@@ -45,7 +40,6 @@ struct BezierCurve {
 // Glyph metadata
 struct GlyphData {
     float4 bounds;
-    uint4 gridInfo;
     uint4 curveInfo;
 };
 
@@ -75,27 +69,21 @@ ConstantBuffer<Uniforms> uniforms;
 ConstantBuffer<ThemeUniforms> theme;
 
 [[vk::binding(2, 0)]]
-StructuredBuffer<GridCell> gridCells;
-
-[[vk::binding(3, 0)]]
-StructuredBuffer<uint> curveIndices;
-
-[[vk::binding(4, 0)]]
 StructuredBuffer<BezierCurve> curves;
 
-[[vk::binding(5, 0)]]
+[[vk::binding(3, 0)]]
 StructuredBuffer<GlyphData> glyphData;
 
-[[vk::binding(6, 0)]]
+[[vk::binding(4, 0)]]
 StructuredBuffer<CharInstanceEx> charInstances;
 
-[[vk::binding(7, 0)]]
+[[vk::binding(5, 0)]]
 StructuredBuffer<CharGridCellData> charGridCells;
 
-[[vk::binding(8, 0)]]
+[[vk::binding(6, 0)]]
 StructuredBuffer<uint> charGridIndices;
 
-[[vk::binding(9, 0)]]
+[[vk::binding(7, 0)]]
 StructuredBuffer<UiPrimitive> uiPrimitives;
 
 struct VertexOutput {
@@ -371,7 +359,7 @@ int curveWindingContribution(float2 point, float2 p0, float2 p1, float2 p2) {
     return crossings;
 }
 
-float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
+float sdGlyph(float2 localPos, float4 bounds, uint4 curveInfo) {
     uint glyphCurveOffset = curveInfo.x;
     uint glyphCurveCount = curveInfo.y;
 
@@ -576,7 +564,7 @@ TextHit sdTextRelief3D(float3 p, float depth) {
                     localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
                     float d2d = glassTheme
                         ? sdGlyphBruteForce(localP, glyph.curveInfo) * charScaleWorld
-                        : sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScaleWorld;
+                        : sdGlyph(localP, bounds, glyph.curveInfo) * charScaleWorld;
                     // Glass heading: subtle rounding for smooth edges
                     float roundR = 0.0;
                     if (glassTheme && ch.colorFlags.w == 2.0) {

@@ -12,6 +12,6 @@ pub use char_grid::{
     CharGridCell, FixedCharGridSpec,
 };
 #[allow(unused_imports)]
-pub use glyph_atlas::{GlyphAtlasEntry, GridCell, VectorFontAtlas};
+pub use glyph_atlas::{GlyphAtlasEntry, VectorFontAtlas};
 #[allow(unused_imports)]
 pub use vector_font::{BezierCurve, VectorFont, VectorGlyphMetrics};

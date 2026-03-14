@@ -44,7 +44,7 @@ type GpuCharInstance = shader_bindings::sdf_clay_vector::CharInstance_std430_0;
 
 const EMPTY_CHAR_GRID_CELLS: [GpuCharGridCell; 1] = [GpuCharGridCell::new(0, 0)];
 const EMPTY_CURVES: [GpuBezierCurve; 1] = [GpuBezierCurve::new([0.0; 4], [0.0; 4], [0.0; 4])];
-const EMPTY_GLYPH_DATA: [GpuGlyphData; 1] = [GpuGlyphData::new([0.0; 4], [0; 4], [0; 4])];
+const EMPTY_GLYPH_DATA: [GpuGlyphData; 1] = [GpuGlyphData::new([0.0; 4], [0; 4])];
 const EMPTY_CHAR_INSTANCES: [GpuCharInstance; 1] = [GpuCharInstance::new([0.0; 4])];
 const EMPTY_U32: [u32; 1] = [0];
 
@@ -255,7 +255,7 @@ fn run_windowed() -> Result<()> {
             let font_data =
                 std::fs::read("assets/fonts/DejaVuSans.ttf").context("Failed to load font file")?;
             let font = VectorFont::from_ttf(&font_data).map_err(|e| anyhow::anyhow!(e))?;
-            let atlas = VectorFontAtlas::from_font(&font, 8);
+            let atlas = VectorFontAtlas::from_font(&font);
 
             // Build text layout
             let char_instances = build_clay_text_layout(&atlas, 2.3, 1.6);
@@ -296,11 +296,7 @@ fn run_windowed() -> Result<()> {
                 .glyph_list
                 .iter()
                 .map(|(_, entry)| {
-                    GpuGlyphData::new(
-                        entry.bounds,
-                        [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
-                        [entry.curve_offset, entry.curve_count, 0, 0],
-                    )
+                    GpuGlyphData::new(entry.bounds, [entry.curve_offset, entry.curve_count, 0, 0])
                 })
                 .collect();
 
@@ -672,7 +668,7 @@ fn run_headless_screenshot() -> Result<()> {
     let font_data =
         std::fs::read("assets/fonts/DejaVuSans.ttf").context("Failed to load font file")?;
     let font = VectorFont::from_ttf(&font_data).map_err(|e| anyhow::anyhow!(e))?;
-    let atlas = VectorFontAtlas::from_font(&font, 8);
+    let atlas = VectorFontAtlas::from_font(&font);
 
     // Build text layout
     let char_instances = build_clay_text_layout(&atlas, 2.3, 1.6);
@@ -680,10 +676,9 @@ fn run_headless_screenshot() -> Result<()> {
 
     println!("Text has {} characters", char_count);
     println!(
-        "Atlas has {} glyphs, {} curves, {} grid cells",
+        "Atlas has {} glyphs and {} curves",
         atlas.glyph_list.len(),
-        atlas.curves.len(),
-        atlas.grid_cells.len()
+        atlas.curves.len()
     );
 
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -763,11 +758,7 @@ fn run_headless_screenshot() -> Result<()> {
         .glyph_list
         .iter()
         .map(|(_, entry)| {
-            GpuGlyphData::new(
-                entry.bounds,
-                [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
-                [entry.curve_offset, entry.curve_count, 0, 0],
-            )
+            GpuGlyphData::new(entry.bounds, [entry.curve_offset, entry.curve_count, 0, 0])
         })
         .collect();
 

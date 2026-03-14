@@ -12,8 +12,8 @@ use crate::retained::fixed_scene::{
 use crate::retained::samples::{SampleSceneAction, SampleSceneDeckTarget, SampleSceneModel};
 use crate::retained::showcase::{ShowcaseSceneAction, ShowcaseSceneDeckTarget, ShowcaseSceneModel};
 use crate::retained::text::{
-    FixedTextGridCache, FixedTextRunLayout, FixedTextRuntimeUpdate, FixedTextSceneData,
-    FixedTextScenePatch, FixedTextSceneState, GpuCharInstanceEx,
+    gpu_char_instance_ex, FixedTextGridCache, FixedTextRunLayout, FixedTextRuntimeUpdate,
+    FixedTextSceneData, FixedTextScenePatch, FixedTextSceneState, GpuCharInstanceEx,
 };
 use crate::retained::text::{TextColors, TextRenderSpace};
 use crate::retained::ui::UiRenderSpace;
@@ -92,7 +92,7 @@ impl Ui2DViewState {
     }
 }
 
-const UI2D_STORAGE_BINDINGS: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+const UI2D_STORAGE_BINDINGS: [u32; 6] = [1, 2, 3, 4, 5, 6];
 
 pub struct Ui2dPassHost {
     pass: UiTextAndPrimitivesPass,
@@ -333,15 +333,10 @@ impl UiPrimitivesOnlyPass {
             ctx.device,
             ctx.queue,
             &VectorFontGpuData {
-                grid_cells: Vec::new(),
-                curve_indices: Vec::new(),
                 curves: Vec::new(),
                 glyph_data: Vec::new(),
             },
-            bytemuck::cast_slice(&[GpuCharInstanceEx {
-                pos_and_char: [0.0; 4],
-                color_flags: [0.0; 4],
-            }]),
+            bytemuck::cast_slice(&[gpu_char_instance_ex([0.0; 4], [0.0; 4])]),
             std::mem::size_of::<GpuCharInstanceEx>(),
             &[CharGridCell {
                 offset: 0,
@@ -1941,7 +1936,7 @@ impl<H: Ui2dDeckHost + ListCommandTarget> ListCommandTarget for Ui2dSceneDeck<H>
 pub fn load_dejavu_font_atlas() -> Result<Arc<VectorFontAtlas>> {
     let font_data = fs::read("assets/fonts/DejaVuSans.ttf").context("Failed to load font file")?;
     let font = VectorFont::from_ttf(&font_data).map_err(|e| anyhow::anyhow!(e))?;
-    Ok(Arc::new(VectorFontAtlas::from_font(&font, 32)))
+    Ok(Arc::new(VectorFontAtlas::from_font(&font)))
 }
 
 pub fn create_showcase_ui2d_deck(

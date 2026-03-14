@@ -3,7 +3,6 @@ use crate::text::{
     build_fixed_char_grid, fixed_char_grid_cells_for_instance, CharGridCell, FixedCharGridSpec,
     VectorFontAtlas,
 };
-use bytemuck::{Pod, Zeroable};
 use std::collections::BTreeSet;
 
 pub const ROLE_ACTIVE: f32 = 0.0;
@@ -13,11 +12,13 @@ pub const ROLE_PLACEHOLDER: f32 = 3.0;
 pub const ROLE_BODY: f32 = 4.0;
 pub const ROLE_INFO: f32 = 5.0;
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable, PartialEq)]
-pub struct GpuCharInstanceEx {
-    pub pos_and_char: [f32; 4],
-    pub color_flags: [f32; 4],
+pub type GpuCharInstanceEx = crate::ui2d_shader_bindings::CharInstanceEx_std430_0;
+
+pub const fn gpu_char_instance_ex(
+    pos_and_char: [f32; 4],
+    color_flags: [f32; 4],
+) -> GpuCharInstanceEx {
+    GpuCharInstanceEx::new(pos_and_char, color_flags)
 }
 
 #[derive(Clone, Copy)]
@@ -93,10 +94,10 @@ fn push_text_instances(
         let codepoint = ch as u32 + codepoint_offset;
         if let Some(idx) = atlas.glyph_list.iter().position(|(cp, _)| *cp == codepoint) {
             let entry = &atlas.glyph_list[idx].1;
-            instances.push(GpuCharInstanceEx {
-                pos_and_char: [cx, baseline_y, font_size, idx as f32],
-                color_flags: [color[0], color[1], color[2], flags],
-            });
+            instances.push(gpu_char_instance_ex(
+                [cx, baseline_y, font_size, idx as f32],
+                [color[0], color[1], color[2], flags],
+            ));
             cx += entry.advance * font_size;
         }
     }
@@ -205,15 +206,12 @@ pub fn count_active_char_instances(
 ) -> u32 {
     instances
         .iter()
-        .filter(|instance| instance.pos_and_char[3] < atlas.glyph_list.len() as f32)
+        .filter(|instance| instance.posAndChar_0[3] < atlas.glyph_list.len() as f32)
         .count() as u32
 }
 
 pub fn inactive_char_instance(atlas: &VectorFontAtlas) -> GpuCharInstanceEx {
-    GpuCharInstanceEx {
-        pos_and_char: [0.0, 0.0, 0.0, atlas.glyph_list.len() as f32],
-        color_flags: [0.0; 4],
-    }
+    gpu_char_instance_ex([0.0, 0.0, 0.0, atlas.glyph_list.len() as f32], [0.0; 4])
 }
 
 pub fn build_fixed_text_run_slot_buffer(
@@ -606,7 +604,7 @@ impl FixedTextGridCache {
         atlas: &VectorFontAtlas,
         layout: FixedTextRunLayout<'_>,
     ) -> Self {
-        let instance_data: Vec<[f32; 4]> = instances.iter().map(|c| c.pos_and_char).collect();
+        let instance_data: Vec<[f32; 4]> = instances.iter().map(|c| c.posAndChar_0).collect();
         let grid = build_fixed_char_grid(&instance_data, atlas, layout.grid_spec);
         let mut run_offsets = Vec::with_capacity(layout.run_capacities.len());
         let mut offset = 0usize;
@@ -683,7 +681,7 @@ impl FixedTextGridCache {
             }
 
             for cell_idx in
-                fixed_char_grid_cells_for_instance(instance.pos_and_char, atlas, self.grid_spec)
+                fixed_char_grid_cells_for_instance(instance.posAndChar_0, atlas, self.grid_spec)
             {
                 let cell_idx = cell_idx as usize;
                 let cell_chars = &mut self.cell_chars[cell_idx];
@@ -749,7 +747,7 @@ mod tests {
     fn load_test_atlas() -> VectorFontAtlas {
         let font_data = std::fs::read("assets/fonts/DejaVuSans.ttf").expect("load test font");
         let font = VectorFont::from_ttf(&font_data).expect("parse test font");
-        VectorFontAtlas::from_font(&font, 32)
+        VectorFontAtlas::from_font(&font)
     }
 
     fn text_slot(scene: &crate::retained::RetainedScene, name: &str) -> u16 {
@@ -773,7 +771,7 @@ mod tests {
         );
         let roles = instances
             .iter()
-            .map(|instance| instance.color_flags[3] as u32)
+            .map(|instance| instance.colorFlags_0[3] as u32)
             .collect::<BTreeSet<_>>();
         assert_eq!(
             roles,

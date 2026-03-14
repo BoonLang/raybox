@@ -15,12 +15,6 @@ use wgpu::util::DeviceExt;
 
 const LOREM: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Curabitur pretium tincidunt lacus. Nulla gravida orci a odio. Nullam varius, turpis et commodo pharetra, est eros bibendum elit, nec luctus magna felis sollicitudin mauris. Integer in mauris eu nibh euismod gravida. Duis ac tellus et risus vulputate vehicula. Donec lobortis risus a elit. Etiam tempor. Ut ullamcorper, ligula eu tempor congue, eros est euismod turpis, id tincidunt sapien risus a quam. Maecenas fermentum consequat mi. Donec fermentum. Pellentesque malesuada nulla a mi. Duis sapien sem, aliquet sed, vulputate eget, feugiat non, orci. Sed neque. Sed eget lacus. Mauris non dui nec urna suscipit nonummy. Fusce fermentum fermentum arcu. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae.";
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct AtlasGridCell {
-    curve_start_and_count: u32,
-}
-
 type GpuBezierCurve = sdf_clay_vector::BezierCurve_std430_0;
 type GpuGlyphData = sdf_clay_vector::GlyphData_std430_0;
 type GpuCharInstance = sdf_clay_vector::CharInstance_std430_0;
@@ -138,7 +132,7 @@ impl ClayDemo {
         let font_data =
             std::fs::read("assets/fonts/DejaVuSans.ttf").context("Failed to load font file")?;
         let font = VectorFont::from_ttf(&font_data).map_err(|e| anyhow::anyhow!(e))?;
-        let atlas = VectorFontAtlas::from_font(&font, 32);
+        let atlas = VectorFontAtlas::from_font(&font);
 
         // Build text layout
         let char_instances = build_clay_text_layout(&atlas, 3.3, 2.3);
@@ -157,18 +151,6 @@ impl ClayDemo {
         let char_grid_bounds = char_grid.bounds;
 
         // Prepare GPU data
-        let gpu_grid_cells: Vec<AtlasGridCell> = atlas
-            .grid_cells
-            .iter()
-            .map(|c| AtlasGridCell {
-                curve_start_and_count: (c.curve_start as u32)
-                    | ((c.curve_count as u32) << 16)
-                    | ((c.flags as u32) << 24),
-            })
-            .collect();
-
-        let gpu_curve_indices: Vec<u32> = atlas.curve_indices.iter().map(|&i| i as u32).collect();
-
         let gpu_curves: Vec<GpuBezierCurve> = atlas
             .curves
             .iter()
@@ -188,15 +170,11 @@ impl ClayDemo {
             .glyph_list
             .iter()
             .map(|(_, entry)| {
-                GpuGlyphData::new(
-                    entry.bounds,
-                    [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
-                    [entry.curve_offset, entry.curve_count, 0, 0],
-                )
+                GpuGlyphData::new(entry.bounds, [entry.curve_offset, entry.curve_count, 0, 0])
             })
             .collect();
         let empty_curve = [GpuBezierCurve::new([0.0; 4], [0.0; 4], [0.0; 4])];
-        let empty_glyph = [GpuGlyphData::new([0.0; 4], [0; 4], [0; 4])];
+        let empty_glyph = [GpuGlyphData::new([0.0; 4], [0; 4])];
         let empty_char_instance = [GpuCharInstance::new([0.0; 4])];
 
         let uniforms = clay_uniforms(
@@ -208,32 +186,6 @@ impl ClayDemo {
             char_grid_params,
             char_grid_bounds,
         );
-
-        let grid_cells_buffer = ctx
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Grid Cells Buffer"),
-                contents: bytemuck::cast_slice(if gpu_grid_cells.is_empty() {
-                    &[AtlasGridCell {
-                        curve_start_and_count: 0,
-                    }]
-                } else {
-                    &gpu_grid_cells
-                }),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
-
-        let curve_indices_buffer =
-            ctx.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Curve Indices Buffer"),
-                    contents: bytemuck::cast_slice(if gpu_curve_indices.is_empty() {
-                        &[0u32]
-                    } else {
-                        &gpu_curve_indices
-                    }),
-                    usage: wgpu::BufferUsages::STORAGE,
-                });
 
         let curves_buffer = ctx
             .device
@@ -289,8 +241,6 @@ impl ClayDemo {
 
         let shader_module = sdf_clay_vector::create_shader_module_embed_source(ctx.device);
         let storage_bindings = vector_text_storage_bindings(VectorTextStorageBuffers {
-            grid_cells: &grid_cells_buffer,
-            curve_indices: &curve_indices_buffer,
             curves: &curves_buffer,
             glyph_data: &glyph_data_buffer,
             char_instances: &char_instances_buffer,

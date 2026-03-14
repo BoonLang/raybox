@@ -12,11 +12,6 @@ struct Uniforms {
     float4 charGridBounds;    // xy = gridMin, zw = gridMax
 };
 
-// Grid cell structure
-struct GridCell {
-    uint curveStartAndCount; // Lower 16 bits = start, upper 8 = count, top 8 = flags
-};
-
 // Bézier curve (packed format)
 struct BezierCurve {
     float4 points01;    // p0.xy, p1.xy
@@ -32,7 +27,6 @@ struct CharInstance {
 // Glyph metadata
 struct GlyphData {
     float4 bounds;      // left, bottom, right, top in em units
-    uint4 gridInfo;     // gridOffset, gridSizeX, gridSizeY, unused
     uint4 curveInfo;    // curveOffset, curveCount, unused, unused
 };
 
@@ -46,27 +40,21 @@ struct CharGridCellData {
 ConstantBuffer<Uniforms> uniforms;
 
 [[vk::binding(1, 0)]]
-StructuredBuffer<GridCell> gridCells;
-
-[[vk::binding(2, 0)]]
-StructuredBuffer<uint> curveIndices;
-
-[[vk::binding(3, 0)]]
 StructuredBuffer<BezierCurve> curves;
 
-[[vk::binding(4, 0)]]
+[[vk::binding(2, 0)]]
 StructuredBuffer<GlyphData> glyphData;
 
-[[vk::binding(5, 0)]]
+[[vk::binding(3, 0)]]
 StructuredBuffer<CharInstance> charInstances;
 
-[[vk::binding(6, 0)]]
+[[vk::binding(4, 0)]]
 StructuredBuffer<CharGridCellData> charGridCells;
 
-[[vk::binding(7, 0)]]
+[[vk::binding(5, 0)]]
 StructuredBuffer<uint> charGridIndices;
 
-[[vk::binding(8, 0)]]
+[[vk::binding(6, 0)]]
 StructuredBuffer<uint> charGridDistField;
 
 struct VertexOutput {
@@ -204,7 +192,7 @@ int curveWindingContribution(float2 point, float2 p0, float2 p1, float2 p2) {
 }
 
 // Compute SDF for a single glyph at local coordinates
-float sdGlyph(float2 localPos, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
+float sdGlyph(float2 localPos, float4 bounds, uint4 curveInfo) {
     uint glyphCurveOffset = curveInfo.x;
     uint glyphCurveCount = curveInfo.y;
 
@@ -295,7 +283,7 @@ float sdText3D(float3 p, float depth) {
 
         if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
             localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
-            float d2d = sdGlyph(localP, bounds, glyph.gridInfo, glyph.curveInfo) * charScale;
+            float d2d = sdGlyph(localP, bounds, glyph.curveInfo) * charScale;
             float d3d = opExtrusion(d2d, p.z, halfDepth);
             minDist = min(minDist, d3d);
         }

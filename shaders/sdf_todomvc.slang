@@ -10,11 +10,6 @@ struct Uniforms {
     float4 charGridBounds;  // xy = gridMin, zw = gridMax
 };
 
-// Grid cell structure (glyph spatial grid)
-struct GridCell {
-    uint curveStartAndCount; // Lower 16 bits = start, upper 8 = count, top 8 = flags
-};
-
 // Bézier curve (packed format)
 struct BezierCurve {
     float4 points01;    // p0.xy, p1.xy
@@ -25,7 +20,6 @@ struct BezierCurve {
 // Glyph data
 struct GlyphData {
     float4 bounds;      // min_x, min_y, max_x, max_y
-    uint4 gridInfo;     // gridOffset, gridSizeX, gridSizeY, unused
     uint4 curveInfo;    // curveOffset, curveCount, unused, unused
 };
 
@@ -56,27 +50,21 @@ struct UiPrimitive {
 ConstantBuffer<Uniforms> uniforms;
 
 [[vk::binding(1, 0)]]
-StructuredBuffer<GridCell> gridCells;
-
-[[vk::binding(2, 0)]]
-StructuredBuffer<uint> curveIndices;
-
-[[vk::binding(3, 0)]]
 StructuredBuffer<BezierCurve> curves;
 
-[[vk::binding(4, 0)]]
+[[vk::binding(2, 0)]]
 StructuredBuffer<GlyphData> glyphData;
 
-[[vk::binding(5, 0)]]
+[[vk::binding(3, 0)]]
 StructuredBuffer<CharInstanceEx> charInstances;
 
-[[vk::binding(6, 0)]]
+[[vk::binding(4, 0)]]
 StructuredBuffer<CharGridCellData> charGridCells;
 
-[[vk::binding(7, 0)]]
+[[vk::binding(5, 0)]]
 StructuredBuffer<uint> charGridIndices;
 
-[[vk::binding(8, 0)]]
+[[vk::binding(6, 0)]]
 StructuredBuffer<UiPrimitive> uiPrimitives;
 
 struct VertexOutput {
@@ -233,7 +221,7 @@ int curveWindingContribution(float2 point, float2 p0, float2 p1, float2 p2) {
     return crossings;
 }
 
-float sdGlyphAt(float2 localPos, uint glyphIdx, float4 bounds, uint4 gridInfo, uint4 curveInfo) {
+float sdGlyphAt(float2 localPos, float4 bounds, uint4 curveInfo) {
     uint glyphCurveOffset = curveInfo.x;
     uint glyphCurveCount = curveInfo.y;
 
@@ -392,7 +380,7 @@ float4 renderText(float2 pixelPos, float scale) {
 
         if (localPos.x >= bounds.x - 0.1 && localPos.x <= bounds.z + 0.1 &&
             localPos.y >= bounds.y - 0.1 && localPos.y <= bounds.w + 0.1) {
-            float d = sdGlyphAt(localPos, glyphIdx, bounds, glyph.gridInfo, glyph.curveInfo);
+            float d = sdGlyphAt(localPos, bounds, glyph.curveInfo);
             float dist = d * charScale;
             float alpha = smoothstep(aa, -aa, dist);
 

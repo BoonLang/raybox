@@ -9,7 +9,7 @@ Raybox now uses one graphics authoring pipeline everywhere:
 1. tracked shader source lives only in `shaders/*.slang`
 2. `build.rs` compiles Slang to WGSL
 3. `wgsl_bindgen` generates Rust bindings in `$OUT_DIR/shader_bindings.rs`
-4. runtime and examples consume generated shader modules, generated layout helpers, and generated ABI types
+4. runtime and examples consume generated shader modules, generated bind-group/layout helpers, and generated ABI types for all live shader ABI surfaces
 
 This plan removed the remaining repo-tracked handwritten WGSL utility paths, moved utility shaders into the tracked Slang pipeline, replaced the main hand-mirrored world-demo ABI structs with generated types, tightened bind group sizing, migrated examples to the same rule, and added repo guardrails so the architecture cannot quietly regress.
 
@@ -19,7 +19,7 @@ The end-state rule is strict:
 
 - repo-tracked shader source is `.slang` only
 - repo-tracked runtime/example WGSL source is not allowed
-- host-side GPU layout structs should come from generated bindings, not hand-written `#[repr(C)]` mirrors, when a generated binding type exists
+- host-side GPU layout structs should come from generated bindings, not hand-written `#[repr(C)]` mirrors
 - bind group layout entries should carry explicit `min_binding_size` based on generated types, not `None`
 - native, web, and `examples/` must all follow the same shader/layout architecture
 
@@ -38,11 +38,12 @@ The required architecture is in place across runtime and examples:
   - `shaders/present.slang`
 - `build.rs` includes those utility shaders in the tracked Slang build
 - runtime and web now use generated utility shader bindings for empty, overlay, and present passes
-- the native/world/web demo families use generated uniform types for the main world demos and text-heavy demos where bindings exist
-- the retained `Ui2D` and `UiPhysical` runtime/web passes now use generated `sdf_todomvc` / `sdf_todomvc_3d` uniform and theme ABI types instead of local mirrors
+- the native/world/web demo families use generated uniform types for the main world demos and text-heavy demos
+- the retained `Ui2D` and `UiPhysical` runtime/web passes now use generated `sdf_todomvc` / `sdf_todomvc_3d` ABI types for uniforms, themes, shared text instances, shared UI primitives, and live vector-text storage structs
+- the obsolete per-glyph `GridCell` / `curveIndices` path was removed from Slang shaders, host/runtime uploads, and the CPU glyph atlas instead of being kept as fallback ABI
 - runtime and examples no longer leave `min_binding_size` implicit in repo-tracked code
 - `AGENTS.md` and `CLAUDE.md` now codify the same shader-pipeline rule
-- `scripts/check_shader_architecture.sh` plus `src/architecture_guard.rs` enforce the rule in CI/test runs
+- `scripts/check_shader_architecture.sh` plus `src/architecture_guard.rs` enforce the rule in repo checks (`just check-shader-arch` / script plus `cargo test`)
 
 ## In-Scope Work
 
@@ -86,7 +87,7 @@ Examples are not allowed to keep a parallel hand-written graphics stack just bec
 Add repo checks and documentation so the architecture stays pure:
 
 - fail on new repo-tracked runtime/example WGSL outside the allowlist
-- fail on new hand-written GPU ABI structs where generated bindings already exist
+- fail on reintroduced hand-written GPU ABI mirror structs or removed glyph-grid runtime plumbing
 - document the rule in `AGENTS.md`
 - sync any overlapping guidance in `CLAUDE.md`
 
@@ -106,9 +107,10 @@ Done:
 Done:
 
 1. replaced the hand-mirrored world-demo uniforms with generated types for the main world demos
-2. migrated the clay/text-shadow demo uniforms and key storage-side instance types to generated bindings
-3. migrated the retained `Ui2D` and native `UiPhysical` runtime uniforms/theme ABI to generated bindings
+2. migrated the clay/text-shadow demo uniforms and live generated storage-side bindings to generated types
+3. migrated the retained `Ui2D` and native `UiPhysical` runtime uniforms/theme ABI plus shared text/UI storage ABI to generated bindings
 4. tightened runtime bind-group sizing so uniform/storage bindings no longer rely on implicit minimum sizes
+5. removed the dead per-glyph `GridCell` / `curveIndices` shader ABI and the matching host-side fallback buffers
 
 ### Phase 3. Web ABI Cleanup
 
@@ -118,7 +120,8 @@ Done:
 2. migrated the web simple world demos to generated uniform types
 3. migrated the web clay/text-shadow uniform and instance ABI to generated bindings
 4. migrated the web retained `Ui2D` / `UiPhysical` uniform ABI to the generated bindings
-5. kept browser-specific logic focused on platform behavior rather than shader/layout authoring
+5. removed the dead per-glyph glyph-grid upload/binding path from the web vector-text demos
+6. kept browser-specific logic focused on platform behavior rather than shader/layout authoring
 
 ### Phase 4. Examples Cleanup
 
@@ -126,7 +129,8 @@ Done:
 
 1. examples use the generated shader path
 2. examples no longer leave `min_binding_size` implicit
-3. examples now use generated GPU ABI types where bindings exist for the SDF/text examples
+3. examples now use generated GPU ABI types for the live SDF/text surfaces
+4. examples no longer upload or bind the removed per-glyph glyph-grid buffers
 
 ### Phase 5. Guardrails And Docs
 
@@ -137,6 +141,7 @@ Done:
 3. added:
    - `scripts/check_shader_architecture.sh`
    - `src/architecture_guard.rs`
+4. extended the guardrails to reject reintroduced handwritten GPU ABI mirror structs, reject the removed per-glyph glyph-grid shader/runtime path, and assert shared retained ABI parity between `sdf_todomvc` and `sdf_todomvc_3d`
 
 ## Acceptance Criteria
 
@@ -144,9 +149,10 @@ This plan is complete when all of the following are true:
 
 - all repo-tracked shader source lives in `shaders/*.slang`
 - no runtime/example handwritten WGSL remains outside the explicit allowlist
-- generated binding types are the authoritative GPU ABI source wherever bindings exist
+- generated binding types are the authoritative GPU ABI source for every live shader ABI surface
 - manual bind group layouts use explicit `min_binding_size`
 - native demos, web demos, and examples all still build and run
+- the removed per-glyph `GridCell` / `curveIndices` path does not exist in tracked shaders or runtime/example plumbing
 - the old class of host/shader uniform size mismatch is prevented by construction
 
 ## Canonical Commands
@@ -171,6 +177,7 @@ Direct Cargo / CLI:
 
 - `cargo build --bin demos --features windowed,control,mcp`
 - `cargo test`
+- `just check-shader-arch`
 - `cargo run --bin raybox-ctl --features control -- status`
 - `cargo run --bin raybox-ctl --features control -- web-open --control --hotreload --demo 8`
 
@@ -184,6 +191,7 @@ Browser policy:
 Automated:
 
 - `./scripts/check_shader_architecture.sh`
+- `just check-shader-arch`
 - `cargo test`
 - `cargo build --bin demos --features windowed,control,mcp`
 - `cargo build --examples --features windowed`
@@ -195,6 +203,10 @@ Manual:
 - run web demos with `just web`
 - confirm utility paths like present/overlay/empty still render correctly after migration
 - confirm hot-reload still works for `.slang` edits
+- captured text-heavy native screenshots for demos `5`, `6`, `7`, `8`, `10`, and `11`
+  into `output/manual_check/native_*.png`
+- captured controlled web screenshots for demos `5`, `6`, `7`, `8`, `10`, and `11`
+  into `output/manual_check/web_ctrl_*.png`
 
 ## Notes
 

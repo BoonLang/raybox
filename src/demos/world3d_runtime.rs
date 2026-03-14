@@ -23,8 +23,6 @@ pub struct World3dStorageBinding<'a> {
 }
 
 pub struct VectorTextStorageBuffers<'a> {
-    pub grid_cells: &'a wgpu::Buffer,
-    pub curve_indices: &'a wgpu::Buffer,
     pub curves: &'a wgpu::Buffer,
     pub glyph_data: &'a wgpu::Buffer,
     pub char_instances: &'a wgpu::Buffer,
@@ -45,40 +43,28 @@ pub fn vector_text_storage_bindings<'a>(
             binding: 1,
             visibility: wgpu::ShaderStages::FRAGMENT,
             read_only: true,
-            buffer: buffers.grid_cells,
+            buffer: buffers.curves,
         },
         World3dStorageBinding {
             binding: 2,
             visibility: wgpu::ShaderStages::FRAGMENT,
             read_only: true,
-            buffer: buffers.curve_indices,
+            buffer: buffers.glyph_data,
         },
         World3dStorageBinding {
             binding: 3,
             visibility: wgpu::ShaderStages::FRAGMENT,
             read_only: true,
-            buffer: buffers.curves,
+            buffer: buffers.char_instances,
         },
         World3dStorageBinding {
             binding: 4,
             visibility: wgpu::ShaderStages::FRAGMENT,
             read_only: true,
-            buffer: buffers.glyph_data,
-        },
-        World3dStorageBinding {
-            binding: 5,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            read_only: true,
-            buffer: buffers.char_instances,
-        },
-        World3dStorageBinding {
-            binding: 6,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            read_only: true,
             buffer: buffers.char_grid_cells,
         },
         World3dStorageBinding {
-            binding: 7,
+            binding: 5,
             visibility: wgpu::ShaderStages::FRAGMENT,
             read_only: true,
             buffer: buffers.char_grid_indices,
@@ -86,7 +72,7 @@ pub fn vector_text_storage_bindings<'a>(
     ];
     if let Some(distances) = buffers.char_grid_distances {
         bindings.push(World3dStorageBinding {
-            binding: 8,
+            binding: 6,
             visibility: wgpu::ShaderStages::FRAGMENT,
             read_only: true,
             buffer: distances,

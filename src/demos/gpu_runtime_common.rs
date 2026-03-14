@@ -1,41 +1,17 @@
 use crate::shader_bindings::present;
 use crate::text::{CharGridCell, VectorFont, VectorFontAtlas};
 use anyhow::{Context, Result};
-use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct GpuGridCell {
-    pub curve_start_and_count: u32,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct GpuBezierCurve {
-    pub points01: [f32; 4],
-    pub points2bbox: [f32; 4],
-    pub bbox_flags: [f32; 4],
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct GpuGlyphData {
-    pub bounds: [f32; 4],
-    pub grid_info: [u32; 4],
-    pub curve_info: [u32; 4],
-}
+pub type GpuBezierCurve = crate::ui2d_shader_bindings::BezierCurve_std430_0;
+pub type GpuGlyphData = crate::ui2d_shader_bindings::GlyphData_std430_0;
 
 pub struct VectorFontGpuData {
-    pub grid_cells: Vec<GpuGridCell>,
-    pub curve_indices: Vec<u32>,
     pub curves: Vec<GpuBezierCurve>,
     pub glyph_data: Vec<GpuGlyphData>,
 }
 
 pub struct UiStorageBuffers {
-    pub grid_cells_buffer: wgpu::Buffer,
-    pub curve_indices_buffer: wgpu::Buffer,
     pub curves_buffer: wgpu::Buffer,
     pub glyph_data_buffer: wgpu::Buffer,
     pub char_instances_buffer: wgpu::Buffer,
@@ -45,6 +21,9 @@ pub struct UiStorageBuffers {
 }
 
 pub const ITALIC_CODEPOINT_OFFSET: u32 = 0x10000;
+const EMPTY_BEZIER_CURVES: [GpuBezierCurve; 1] =
+    [GpuBezierCurve::new([0.0; 4], [0.0; 4], [0.0; 4])];
+const EMPTY_GLYPH_DATA: [GpuGlyphData; 1] = [GpuGlyphData::new([0.0; 4], [0; 4])];
 
 pub fn load_shared_vector_font_atlas() -> Result<VectorFontAtlas> {
     let font_data = std::fs::read("assets/fonts/LiberationSans-Regular.ttf")
@@ -56,22 +35,10 @@ pub fn load_shared_vector_font_atlas() -> Result<VectorFontAtlas> {
     font.merge_from_ttf(&italic_data, ITALIC_CODEPOINT_OFFSET)
         .map_err(|e| anyhow::anyhow!(e))?;
 
-    Ok(VectorFontAtlas::from_font(&font, 32))
+    Ok(VectorFontAtlas::from_font(&font))
 }
 
 pub fn build_font_gpu_data(atlas: &VectorFontAtlas) -> VectorFontGpuData {
-    let grid_cells = atlas
-        .grid_cells
-        .iter()
-        .map(|c| GpuGridCell {
-            curve_start_and_count: (c.curve_start as u32)
-                | ((c.curve_count as u32) << 16)
-                | ((c.flags as u32) << 24),
-        })
-        .collect();
-
-    let curve_indices = atlas.curve_indices.iter().map(|&i| i as u32).collect();
-
     let curves = atlas
         .curves
         .iter()
@@ -79,30 +46,23 @@ pub fn build_font_gpu_data(atlas: &VectorFontAtlas) -> VectorFontGpuData {
             let p0 = c.p0();
             let p1 = c.p1();
             let p2 = c.p2();
-            GpuBezierCurve {
-                points01: [p0.0, p0.1, p1.0, p1.1],
-                points2bbox: [p2.0, p2.1, c.bbox[0], c.bbox[1]],
-                bbox_flags: [c.bbox[2], c.bbox[3], c.flags as f32, 0.0],
-            }
+            GpuBezierCurve::new(
+                [p0.0, p0.1, p1.0, p1.1],
+                [p2.0, p2.1, c.bbox[0], c.bbox[1]],
+                [c.bbox[2], c.bbox[3], c.flags as f32, 0.0],
+            )
         })
         .collect();
 
     let glyph_data = atlas
         .glyph_list
         .iter()
-        .map(|(_, entry)| GpuGlyphData {
-            bounds: entry.bounds,
-            grid_info: [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
-            curve_info: [entry.curve_offset, entry.curve_count, 0, 0],
+        .map(|(_, entry)| {
+            GpuGlyphData::new(entry.bounds, [entry.curve_offset, entry.curve_count, 0, 0])
         })
         .collect();
 
-    VectorFontGpuData {
-        grid_cells,
-        curve_indices,
-        curves,
-        glyph_data,
-    }
+    VectorFontGpuData { curves, glyph_data }
 }
 
 pub fn create_storage_buffers(
@@ -118,36 +78,10 @@ pub fn create_storage_buffers(
     ui_primitive_capacity_bytes: usize,
     ui_primitives_label: &str,
 ) -> UiStorageBuffers {
-    let grid_cells_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Grid Cells Buffer"),
-        contents: bytemuck::cast_slice(if gpu_font_data.grid_cells.is_empty() {
-            &[GpuGridCell {
-                curve_start_and_count: 0,
-            }]
-        } else {
-            &gpu_font_data.grid_cells
-        }),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-
-    let curve_indices_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Curve Indices Buffer"),
-        contents: bytemuck::cast_slice(if gpu_font_data.curve_indices.is_empty() {
-            &[0u32]
-        } else {
-            &gpu_font_data.curve_indices
-        }),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-
     let curves_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Curves Buffer"),
         contents: bytemuck::cast_slice(if gpu_font_data.curves.is_empty() {
-            &[GpuBezierCurve {
-                points01: [0.0; 4],
-                points2bbox: [0.0; 4],
-                bbox_flags: [0.0; 4],
-            }]
+            &EMPTY_BEZIER_CURVES
         } else {
             &gpu_font_data.curves
         }),
@@ -157,11 +91,7 @@ pub fn create_storage_buffers(
     let glyph_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Glyph Data Buffer"),
         contents: bytemuck::cast_slice(if gpu_font_data.glyph_data.is_empty() {
-            &[GpuGlyphData {
-                bounds: [0.0; 4],
-                grid_info: [0; 4],
-                curve_info: [0; 4],
-            }]
+            &EMPTY_GLYPH_DATA
         } else {
             &gpu_font_data.glyph_data
         }),
@@ -200,8 +130,6 @@ pub fn create_storage_buffers(
     queue.write_buffer(&ui_primitives_buffer, 0, ui_primitives_bytes);
 
     UiStorageBuffers {
-        grid_cells_buffer,
-        curve_indices_buffer,
         curves_buffer,
         glyph_data_buffer,
         char_instances_buffer,
@@ -217,10 +145,6 @@ pub fn storage_bind_group_layout_entries(
 ) -> Vec<wgpu::BindGroupLayoutEntry> {
     let min_sizes =
         [
-            std::num::NonZeroU64::new(std::mem::size_of::<GpuGridCell>() as u64)
-                .expect("GpuGridCell must be non-zero"),
-            std::num::NonZeroU64::new(std::mem::size_of::<u32>() as u64)
-                .expect("u32 must be non-zero"),
             std::num::NonZeroU64::new(std::mem::size_of::<GpuBezierCurve>() as u64)
                 .expect("GpuBezierCurve must be non-zero"),
             std::num::NonZeroU64::new(std::mem::size_of::<GpuGlyphData>() as u64)
@@ -241,7 +165,7 @@ pub fn storage_bind_group_layout_entries(
     assert_eq!(
         bindings.len(),
         min_sizes.len(),
-        "UI storage bindings must have 8 entries"
+        "UI storage bindings must have 6 entries"
     );
     bindings
         .iter()
@@ -263,21 +187,19 @@ pub fn storage_bind_group_entries<'a>(
     buffers: &'a UiStorageBuffers,
     bindings: &[u32],
 ) -> Vec<wgpu::BindGroupEntry<'a>> {
-    assert_eq!(bindings.len(), 8, "UI storage bindings must have 8 entries");
+    assert_eq!(bindings.len(), 6, "UI storage bindings must have 6 entries");
     bindings
         .iter()
         .enumerate()
         .map(|(index, binding)| wgpu::BindGroupEntry {
             binding: *binding,
             resource: match index {
-                0 => buffers.grid_cells_buffer.as_entire_binding(),
-                1 => buffers.curve_indices_buffer.as_entire_binding(),
-                2 => buffers.curves_buffer.as_entire_binding(),
-                3 => buffers.glyph_data_buffer.as_entire_binding(),
-                4 => buffers.char_instances_buffer.as_entire_binding(),
-                5 => buffers.char_grid_cells_buffer.as_entire_binding(),
-                6 => buffers.char_grid_indices_buffer.as_entire_binding(),
-                7 => buffers.ui_primitives_buffer.as_entire_binding(),
+                0 => buffers.curves_buffer.as_entire_binding(),
+                1 => buffers.glyph_data_buffer.as_entire_binding(),
+                2 => buffers.char_instances_buffer.as_entire_binding(),
+                3 => buffers.char_grid_cells_buffer.as_entire_binding(),
+                4 => buffers.char_grid_indices_buffer.as_entire_binding(),
+                5 => buffers.ui_primitives_buffer.as_entire_binding(),
                 _ => unreachable!(),
             },
         })
