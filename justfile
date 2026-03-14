@@ -41,6 +41,9 @@ build-web:
     RUSTFLAGS="--cfg=web_sys_unstable_apis" cargo build --lib --target wasm32-unknown-unknown --release
     wasm-bindgen target/wasm32-unknown-unknown/release/raybox.wasm --out-dir pkg --target web
 
+check-shader-arch:
+    ./scripts/check_shader_architecture.sh
+
 # Start dev server
 serve:
     miniserve . --port 8000 --index index.html

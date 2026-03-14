@@ -509,7 +509,15 @@ impl InputHandler {
                 let sys_stats = self.system_monitor.format_stats(mode);
                 let title = format!(
                     "{} | FPS: {:.0} | {} | Pos: ({:.1}, {:.1}, {:.1}) | Yaw: {:.0} Pitch: {:.0} | Speed: {:.1}",
-                    base_title, self.last_fps, sys_stats, pos.x, pos.y, pos.z, yaw_deg, pitch_deg, camera.move_speed
+                    base_title,
+                    self.last_fps,
+                    sys_stats,
+                    pos.x,
+                    pos.y,
+                    pos.z,
+                    yaw_deg,
+                    pitch_deg,
+                    camera.move_speed
                 );
                 window.set_title(&title);
             }

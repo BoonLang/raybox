@@ -5,27 +5,27 @@
 use super::{
     world3d_runtime::World3dUniformHost, Demo, DemoContext, DemoId, DemoType, KEYBINDINGS_3D,
 };
-use crate::camera::{FlyCamera, Uniforms};
+use crate::camera::{towers_uniforms_from_fly, FlyCamera};
 use crate::input::CameraConfig;
 use crate::shader_bindings::sdf_towers;
 use anyhow::Result;
 
 pub struct TowersDemo {
-    host: World3dUniformHost<Uniforms>,
+    host: World3dUniformHost<sdf_towers::Uniforms_std140_0>,
 }
 
 impl TowersDemo {
     pub fn new(ctx: &DemoContext) -> Result<Self> {
         let shader_module = sdf_towers::create_shader_module_embed_source(ctx.device);
 
-        let host =
-            World3dUniformHost::new(ctx, "Towers Demo", &shader_module, &Uniforms::default())?;
+        let uniforms = towers_uniforms_from_fly(&FlyCamera::default(), ctx.width, ctx.height, 0.0);
+        let host = World3dUniformHost::new(ctx, "Towers Demo", &shader_module, &uniforms)?;
         Ok(Self { host })
     }
 
     pub fn update_uniforms(&self, queue: &wgpu::Queue, camera: &FlyCamera, time: f32) {
-        let mut uniforms = Uniforms::default();
-        uniforms.update_from_fly_camera(camera, self.host.width(), self.host.height(), time);
+        let uniforms =
+            towers_uniforms_from_fly(camera, self.host.width(), self.host.height(), time);
         self.host.write_uniforms(queue, &uniforms);
     }
 }

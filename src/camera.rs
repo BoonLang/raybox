@@ -1,3 +1,4 @@
+use crate::shader_bindings::{sdf_raymarch, sdf_towers};
 use glam::{Mat4, Quat, Vec3};
 
 const MAX_PITCH: f32 = 1.553; // ~89°
@@ -313,64 +314,60 @@ impl OrbitalCamera {
     }
 }
 
-/// GPU-compatible uniform structure for the camera and rendering parameters
-/// Packed for std140 alignment (vec3 fields packed into vec4)
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Uniforms {
-    /// Inverse view-projection matrix for ray generation
-    pub inv_view_proj: [[f32; 4]; 4],
-    /// xyz = camera position, w = time
-    pub camera_pos_time: [f32; 4],
-    /// xyz = light direction (normalized), w = light intensity
-    pub light_dir_intensity: [f32; 4],
-    /// xy = resolution, z = ao_radius, w = shadow_softness
-    pub render_params: [f32; 4],
+fn matrix_storage(data: [[f32; 4]; 4]) -> sdf_raymarch::_MatrixStorage_float4x4_ColMajorstd140_0 {
+    sdf_raymarch::_MatrixStorage_float4x4_ColMajorstd140_0::new(data)
 }
 
-impl Default for Uniforms {
-    fn default() -> Self {
-        Self {
-            inv_view_proj: Mat4::IDENTITY.to_cols_array_2d(),
-            camera_pos_time: [0.0, 0.0, 5.0, 0.0],
-            light_dir_intensity: [0.577, 0.577, 0.577, 1.0], // normalized (1,1,1), intensity 1
-            render_params: [800.0, 600.0, 0.5, 16.0], // resolution, ao_radius, shadow_softness
-        }
-    }
+fn towers_matrix_storage(
+    data: [[f32; 4]; 4],
+) -> sdf_towers::_MatrixStorage_float4x4_ColMajorstd140_0 {
+    sdf_towers::_MatrixStorage_float4x4_ColMajorstd140_0::new(data)
 }
 
-impl Uniforms {
-    /// Update uniforms from orbital camera state
-    #[allow(dead_code)]
-    pub fn update_from_camera(
-        &mut self,
-        camera: &OrbitalCamera,
-        width: u32,
-        height: u32,
-        time: f32,
-    ) {
-        let aspect = width as f32 / height as f32;
-        self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
-        let pos = camera.position();
-        self.camera_pos_time = [pos.x, pos.y, pos.z, time];
-        self.render_params[0] = width as f32;
-        self.render_params[1] = height as f32;
-    }
+pub fn raymarch_uniforms_from_orbital(
+    camera: &OrbitalCamera,
+    width: u32,
+    height: u32,
+    time: f32,
+) -> sdf_raymarch::Uniforms_std140_0 {
+    let aspect = width as f32 / height as f32;
+    let pos = camera.position();
+    sdf_raymarch::Uniforms_std140_0::new(
+        matrix_storage(camera.inv_view_projection_matrix(aspect).to_cols_array_2d()),
+        [pos.x, pos.y, pos.z, time],
+        [0.577, 0.577, 0.577, 1.0],
+        [width as f32, height as f32, 0.5, 16.0],
+    )
+}
 
-    /// Update uniforms from fly camera state
-    #[allow(dead_code)]
-    pub fn update_from_fly_camera(
-        &mut self,
-        camera: &FlyCamera,
-        width: u32,
-        height: u32,
-        time: f32,
-    ) {
-        let aspect = width as f32 / height as f32;
-        self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
-        let pos = camera.position();
-        self.camera_pos_time = [pos.x, pos.y, pos.z, time];
-        self.render_params[0] = width as f32;
-        self.render_params[1] = height as f32;
-    }
+pub fn raymarch_uniforms_from_fly(
+    camera: &FlyCamera,
+    width: u32,
+    height: u32,
+    time: f32,
+) -> sdf_raymarch::Uniforms_std140_0 {
+    let aspect = width as f32 / height as f32;
+    let pos = camera.position();
+    sdf_raymarch::Uniforms_std140_0::new(
+        matrix_storage(camera.inv_view_projection_matrix(aspect).to_cols_array_2d()),
+        [pos.x, pos.y, pos.z, time],
+        [0.577, 0.577, 0.577, 1.0],
+        [width as f32, height as f32, 0.5, 16.0],
+    )
+}
+
+pub fn towers_uniforms_from_fly(
+    camera: &FlyCamera,
+    width: u32,
+    height: u32,
+    time: f32,
+) -> sdf_towers::Uniforms_std140_0 {
+    let aspect = width as f32 / height as f32;
+    let pos = camera.position();
+    sdf_towers::Uniforms_std140_0::new(
+        towers_matrix_storage(camera.inv_view_projection_matrix(aspect).to_cols_array_2d()),
+        [pos.x, pos.y, pos.z, time],
+        [0.577, 0.577, 0.577, 1.0],
+        [width as f32, height as f32, 0.5, 16.0],
+    )
 }

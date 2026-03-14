@@ -5,21 +5,22 @@
 use super::{
     world3d_runtime::World3dUniformHost, Demo, DemoContext, DemoId, DemoType, KEYBINDINGS_3D,
 };
-use crate::camera::{FlyCamera, Uniforms};
+use crate::camera::{raymarch_uniforms_from_fly, FlyCamera};
 use crate::input::CameraConfig;
 use crate::shader_bindings::sdf_raymarch;
 use anyhow::Result;
 
 pub struct ObjectsDemo {
-    host: World3dUniformHost<Uniforms>,
+    host: World3dUniformHost<sdf_raymarch::Uniforms_std140_0>,
 }
 
 impl ObjectsDemo {
     pub fn new(ctx: &DemoContext) -> Result<Self> {
         let shader_module = sdf_raymarch::create_shader_module_embed_source(ctx.device);
 
-        let host =
-            World3dUniformHost::new(ctx, "Objects Demo", &shader_module, &Uniforms::default())?;
+        let uniforms =
+            raymarch_uniforms_from_fly(&FlyCamera::default(), ctx.width, ctx.height, 0.0);
+        let host = World3dUniformHost::new(ctx, "Objects Demo", &shader_module, &uniforms)?;
         Ok(Self { host })
     }
 }
@@ -75,8 +76,8 @@ impl Demo for ObjectsDemo {
 impl ObjectsDemo {
     /// Update uniforms with camera state (called by runner)
     pub fn update_uniforms(&self, queue: &wgpu::Queue, camera: &FlyCamera, time: f32) {
-        let mut uniforms = Uniforms::default();
-        uniforms.update_from_fly_camera(camera, self.host.width(), self.host.height(), time);
+        let uniforms =
+            raymarch_uniforms_from_fly(camera, self.host.width(), self.host.height(), time);
         self.host.write_uniforms(queue, &uniforms);
     }
 }

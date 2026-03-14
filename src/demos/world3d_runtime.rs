@@ -110,11 +110,13 @@ fn create_uniform_buffer<U: Pod>(
 fn create_world3d_bind_group_layout(
     device: &wgpu::Device,
     label: &str,
+    uniform_min_size: std::num::NonZeroU64,
     extra_entries: &[wgpu::BindGroupLayoutEntry],
 ) -> wgpu::BindGroupLayout {
     let mut entries = vec![uniform_bind_group_layout_entry(
         0,
         wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+        uniform_min_size,
     )];
     entries.extend_from_slice(extra_entries);
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -152,8 +154,14 @@ impl<U: Pod> World3dHostCore<U> {
         extra_bind_group_entries: &[wgpu::BindGroupEntry<'_>],
     ) -> Result<Self> {
         let uniform_buffer = create_uniform_buffer(&ctx.device, label, initial_uniforms);
-        let bind_group_layout =
-            create_world3d_bind_group_layout(&ctx.device, label, extra_layout_entries);
+        let uniform_min_size = std::num::NonZeroU64::new(std::mem::size_of::<U>() as u64)
+            .expect("uniform size must be non-zero");
+        let bind_group_layout = create_world3d_bind_group_layout(
+            &ctx.device,
+            label,
+            uniform_min_size,
+            extra_layout_entries,
+        );
         let bind_group = create_world3d_bind_group(
             &ctx.device,
             label,
@@ -259,7 +267,7 @@ impl<U: Pod> World3dStorageHost<U> {
                         read_only: entry.read_only,
                     },
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    min_binding_size: std::num::NonZeroU64::new(entry.buffer.size()),
                 },
                 count: None,
             })

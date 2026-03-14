@@ -1,6 +1,6 @@
 #[cfg(feature = "windowed")]
 pub mod windowed {
-    use crate::camera::{OrbitalCamera, Uniforms};
+    use crate::camera::{raymarch_uniforms_from_orbital, OrbitalCamera};
     use crate::constants::{HEIGHT, WIDTH};
     use crate::shader_bindings::sdf_raymarch;
     use anyhow::{Context, Result};
@@ -92,8 +92,8 @@ pub mod windowed {
 
             // Create uniform buffer
             let camera = OrbitalCamera::default();
-            let mut uniforms = Uniforms::default();
-            uniforms.update_from_camera(&camera, config.width, config.height, 0.0);
+            let uniforms =
+                raymarch_uniforms_from_orbital(&camera, config.width, config.height, 0.0);
 
             let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Uniform Buffer"),
@@ -111,7 +111,11 @@ pub mod windowed {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
-                            min_binding_size: None,
+                            min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
+                                sdf_raymarch::Uniforms_std140_0,
+                            >(
+                            )
+                                as u64),
                         },
                         count: None,
                     }],
@@ -214,8 +218,12 @@ pub mod windowed {
 
         fn update_uniforms(&self) {
             let time = self.start_time.elapsed().as_secs_f32();
-            let mut uniforms = Uniforms::default();
-            uniforms.update_from_camera(&self.camera, self.config.width, self.config.height, time);
+            let uniforms = raymarch_uniforms_from_orbital(
+                &self.camera,
+                self.config.width,
+                self.config.height,
+                time,
+            );
             self.queue
                 .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         }

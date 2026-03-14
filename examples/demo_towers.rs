@@ -21,6 +21,10 @@ mod camera;
 #[path = "../src/constants.rs"]
 mod constants;
 #[cfg(feature = "windowed")]
+mod demo_core {
+    pub use raybox::demo_core::*;
+}
+#[cfg(feature = "windowed")]
 #[path = "../src/input.rs"]
 mod input;
 
@@ -35,7 +39,7 @@ const DEMO_TITLE: &str = "Demo 3: Towers";
 
 #[cfg(feature = "windowed")]
 fn run_windowed() -> anyhow::Result<()> {
-    use camera::{FlyCamera, Uniforms};
+    use camera::FlyCamera;
     use constants::{HEIGHT, WIDTH};
     use input::{CameraConfig, InputAction, InputHandler};
     use shader_bindings::sdf_towers;
@@ -64,6 +68,28 @@ fn run_windowed() -> anyhow::Result<()> {
         input: InputHandler,
         start_time: std::time::Instant,
         last_frame_time: std::time::Instant,
+    }
+
+    fn build_uniforms(
+        camera: &FlyCamera,
+        width: u32,
+        height: u32,
+        time: f32,
+    ) -> sdf_towers::Uniforms_std140_0 {
+        let aspect = width as f32 / height as f32;
+        sdf_towers::Uniforms_std140_0::new(
+            sdf_towers::_MatrixStorage_float4x4_ColMajorstd140_0::new(
+                camera.inv_view_projection_matrix(aspect).to_cols_array_2d(),
+            ),
+            [
+                camera.position().x,
+                camera.position().y,
+                camera.position().z,
+                time,
+            ],
+            [0.577, 0.577, 0.577, 1.0],
+            [width as f32, height as f32, 0.5, 16.0],
+        )
     }
 
     impl Renderer {
@@ -126,8 +152,7 @@ fn run_windowed() -> anyhow::Result<()> {
             let mut camera = FlyCamera::default();
             input.setup_camera(&mut camera);
 
-            let mut uniforms = Uniforms::default();
-            uniforms.update_from_fly_camera(&camera, config.width, config.height, 0.0);
+            let uniforms = build_uniforms(&camera, config.width, config.height, 0.0);
 
             let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Uniform Buffer"),
@@ -136,19 +161,7 @@ fn run_windowed() -> anyhow::Result<()> {
             });
 
             let bind_group_layout =
-                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Uniform Bind Group Layout"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    }],
-                });
+                device.create_bind_group_layout(&sdf_towers::WgpuBindGroup0::LAYOUT_DESCRIPTOR);
 
             let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Uniform Bind Group"),
@@ -220,13 +233,8 @@ fn run_windowed() -> anyhow::Result<()> {
 
         fn render(&self) -> Result<(), wgpu::SurfaceError> {
             let time = self.start_time.elapsed().as_secs_f32();
-            let mut uniforms = Uniforms::default();
-            uniforms.update_from_fly_camera(
-                &self.camera,
-                self.config.width,
-                self.config.height,
-                time,
-            );
+            let uniforms =
+                build_uniforms(&self.camera, self.config.width, self.config.height, time);
             self.queue
                 .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 

@@ -1,3 +1,4 @@
+use crate::shader_bindings::present;
 use crate::text::{CharGridCell, VectorFont, VectorFontAtlas};
 use anyhow::{Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -214,15 +215,44 @@ pub fn storage_bind_group_layout_entries(
     bindings: &[u32],
     visibility: wgpu::ShaderStages,
 ) -> Vec<wgpu::BindGroupLayoutEntry> {
+    let min_sizes =
+        [
+            std::num::NonZeroU64::new(std::mem::size_of::<GpuGridCell>() as u64)
+                .expect("GpuGridCell must be non-zero"),
+            std::num::NonZeroU64::new(std::mem::size_of::<u32>() as u64)
+                .expect("u32 must be non-zero"),
+            std::num::NonZeroU64::new(std::mem::size_of::<GpuBezierCurve>() as u64)
+                .expect("GpuBezierCurve must be non-zero"),
+            std::num::NonZeroU64::new(std::mem::size_of::<GpuGlyphData>() as u64)
+                .expect("GpuGlyphData must be non-zero"),
+            std::num::NonZeroU64::new(
+                std::mem::size_of::<crate::retained::text::GpuCharInstanceEx>() as u64,
+            )
+            .expect("GpuCharInstanceEx must be non-zero"),
+            std::num::NonZeroU64::new(std::mem::size_of::<CharGridCell>() as u64)
+                .expect("CharGridCell must be non-zero"),
+            std::num::NonZeroU64::new(std::mem::size_of::<u32>() as u64)
+                .expect("u32 must be non-zero"),
+            std::num::NonZeroU64::new(
+                std::mem::size_of::<crate::retained::ui::GpuUiPrimitive>() as u64
+            )
+            .expect("GpuUiPrimitive must be non-zero"),
+        ];
+    assert_eq!(
+        bindings.len(),
+        min_sizes.len(),
+        "UI storage bindings must have 8 entries"
+    );
     bindings
         .iter()
-        .map(|binding| wgpu::BindGroupLayoutEntry {
+        .enumerate()
+        .map(|(index, binding)| wgpu::BindGroupLayoutEntry {
             binding: *binding,
             visibility,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Storage { read_only: true },
                 has_dynamic_offset: false,
-                min_binding_size: None,
+                min_binding_size: Some(min_sizes[index]),
             },
             count: None,
         })
@@ -257,6 +287,7 @@ pub fn storage_bind_group_entries<'a>(
 pub fn uniform_bind_group_layout_entry(
     binding: u32,
     visibility: wgpu::ShaderStages,
+    min_binding_size: std::num::NonZeroU64,
 ) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -264,7 +295,7 @@ pub fn uniform_bind_group_layout_entry(
         ty: wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
             has_dynamic_offset: false,
-            min_binding_size: None,
+            min_binding_size: Some(min_binding_size),
         },
         count: None,
     }
@@ -273,13 +304,15 @@ pub fn uniform_bind_group_layout_entry(
 pub fn create_bind_group_layout_with_storage(
     device: &wgpu::Device,
     label: &str,
-    uniform_entries: &[(u32, wgpu::ShaderStages)],
+    uniform_entries: &[(u32, wgpu::ShaderStages, std::num::NonZeroU64)],
     storage_bindings: &[u32],
     storage_visibility: wgpu::ShaderStages,
 ) -> wgpu::BindGroupLayout {
     let mut entries = uniform_entries
         .iter()
-        .map(|(binding, visibility)| uniform_bind_group_layout_entry(*binding, *visibility))
+        .map(|(binding, visibility, min_binding_size)| {
+            uniform_bind_group_layout_entry(*binding, *visibility, *min_binding_size)
+        })
         .collect::<Vec<_>>();
     entries.extend(storage_bind_group_layout_entries(
         storage_bindings,
@@ -359,77 +392,12 @@ pub fn create_fullscreen_pipeline(
 
 pub const PRESENT_INTERMEDIATE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-const PRESENT_SHADER: &str = r#"
-struct PresentUniforms {
-    flags: vec4<u32>,
-}
-
-@group(0) @binding(0) var scene_tex: texture_2d<f32>;
-@group(0) @binding(1) var scene_sampler: sampler;
-@group(0) @binding(2) var<uniform> uniforms: PresentUniforms;
-
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-
-fn srgb_to_linear_component(c: f32) -> f32 {
-    if (c <= 0.04045) {
-        return c / 12.92;
-    }
-    return pow((c + 0.055) / 1.055, 2.4);
-}
-
-fn srgb_to_linear(color: vec3<f32>) -> vec3<f32> {
-    return vec3<f32>(
-        srgb_to_linear_component(color.x),
-        srgb_to_linear_component(color.y),
-        srgb_to_linear_component(color.z),
-    );
-}
-
-@vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0),
-    );
-    var uvs = array<vec2<f32>, 3>(
-        vec2<f32>(0.0, 1.0),
-        vec2<f32>(2.0, 1.0),
-        vec2<f32>(0.0, -1.0),
-    );
-    var out: VertexOutput;
-    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
-    out.uv = uvs[vertex_index];
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let sampled = textureSample(scene_tex, scene_sampler, in.uv);
-    if (uniforms.flags.x != 0u) {
-        return vec4<f32>(srgb_to_linear(sampled.rgb), sampled.a);
-    }
-    return sampled;
-}
-"#;
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct PresentUniforms {
-    flags: [u32; 4],
-    _padding: [u32; 4],
-}
-
 pub struct PresentHost {
     scene_texture: wgpu::Texture,
     scene_view: wgpu::TextureView,
-    bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     uniform_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
+    bind_group: present::WgpuBindGroup0,
     pipeline: wgpu::RenderPipeline,
     surface_format: wgpu::TextureFormat,
     width: u32,
@@ -444,57 +412,19 @@ impl PresentHost {
         surface_format: wgpu::TextureFormat,
         label: &str,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(&format!("{label} Present Shader")),
-            source: wgpu::ShaderSource::Wgsl(PRESENT_SHADER.into()),
-        });
-
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some(&format!("{label} Present Bind Group Layout")),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                uniform_bind_group_layout_entry(2, wgpu::ShaderStages::FRAGMENT),
-            ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(&format!("{label} Present Pipeline Layout")),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let shader = present::create_shader_module_embed_source(device);
+        let pipeline_layout = present::create_pipeline_layout(device);
+        let vertex_entry = present::vs_main_entry();
+        let fragment_entry = present::fs_main_entry([Some(wgpu::ColorTargetState {
+            format: surface_format,
+            blend: Some(wgpu::BlendState::REPLACE),
+            write_mask: wgpu::ColorWrites::ALL,
+        })]);
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(&format!("{label} Present Pipeline")),
             layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
+            vertex: present::vertex_state(&shader, &vertex_entry),
+            fragment: Some(present::fragment_state(&shader, &fragment_entry)),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
@@ -511,37 +441,28 @@ impl PresentHost {
         });
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{label} Present Uniform Buffer")),
-            contents: bytemuck::bytes_of(&PresentUniforms {
-                flags: [surface_format.is_srgb() as u32, 0, 0, 0],
-                _padding: [0; 4],
-            }),
+            contents: bytemuck::bytes_of(&present::Uniforms_std140_0::new([
+                surface_format.is_srgb() as u32,
+                0,
+                0,
+                0,
+            ])),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let (scene_texture, scene_view) =
             Self::create_scene_target(device, width.max(1), height.max(1), label);
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&format!("{label} Present Bind Group")),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&scene_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let bind_group = present::WgpuBindGroup0::from_bindings(
+            device,
+            present::WgpuBindGroup0Entries::new(present::WgpuBindGroup0EntriesParams {
+                sceneTexture_0: &scene_view,
+                sceneSampler_0: &sampler,
+                uniforms_0: uniform_buffer.as_entire_buffer_binding(),
+            }),
+        );
 
         Self {
             scene_texture,
             scene_view,
-            bind_group_layout,
             sampler,
             uniform_buffer,
             bind_group,
@@ -587,24 +508,14 @@ impl PresentHost {
         let (scene_texture, scene_view) = Self::create_scene_target(device, width, height, label);
         self.scene_texture = scene_texture;
         self.scene_view = scene_view;
-        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&format!("{label} Present Bind Group")),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.scene_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.uniform_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        self.bind_group = present::WgpuBindGroup0::from_bindings(
+            device,
+            present::WgpuBindGroup0Entries::new(present::WgpuBindGroup0EntriesParams {
+                sceneTexture_0: &self.scene_view,
+                sceneSampler_0: &self.sampler,
+                uniforms_0: self.uniform_buffer.as_entire_buffer_binding(),
+            }),
+        );
         self.width = width;
         self.height = height;
     }
@@ -617,34 +528,19 @@ impl PresentHost {
         label: &str,
     ) {
         if self.surface_format != surface_format {
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(&format!("{label} Present Shader")),
-                source: wgpu::ShaderSource::Wgsl(PRESENT_SHADER.into()),
-            });
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(&format!("{label} Present Pipeline Layout")),
-                bind_group_layouts: &[&self.bind_group_layout],
-                push_constant_ranges: &[],
-            });
+            let shader = present::create_shader_module_embed_source(device);
+            let pipeline_layout = present::create_pipeline_layout(device);
+            let vertex_entry = present::vs_main_entry();
+            let fragment_entry = present::fs_main_entry([Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })]);
             self.pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(&format!("{label} Present Pipeline")),
                 layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface_format,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
+                vertex: present::vertex_state(&shader, &vertex_entry),
+                fragment: Some(present::fragment_state(&shader, &fragment_entry)),
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
@@ -656,10 +552,12 @@ impl PresentHost {
         queue.write_buffer(
             &self.uniform_buffer,
             0,
-            bytemuck::bytes_of(&PresentUniforms {
-                flags: [surface_format.is_srgb() as u32, 0, 0, 0],
-                _padding: [0; 4],
-            }),
+            bytemuck::bytes_of(&present::Uniforms_std140_0::new([
+                surface_format.is_srgb() as u32,
+                0,
+                0,
+                0,
+            ])),
         );
     }
 
@@ -691,7 +589,7 @@ impl PresentHost {
             occlusion_query_set: None,
         });
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
+        self.bind_group.set(&mut render_pass);
         render_pass.draw(0..3, 0..1);
     }
 }

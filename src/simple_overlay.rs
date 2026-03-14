@@ -6,6 +6,7 @@
 //! - Works identically on native and web platforms
 //! - Has minimal impact on demo resource measurements
 
+use crate::shader_bindings::overlay;
 use anyhow::{Context, Result};
 use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache};
 use std::time::Instant;
@@ -18,8 +19,7 @@ pub struct SimpleOverlay {
     texture: wgpu::Texture,
     texture_view: wgpu::TextureView,
     sampler: wgpu::Sampler,
-    bind_group: wgpu::BindGroup,
-    bind_group_layout: wgpu::BindGroupLayout,
+    bind_group: overlay::WgpuBindGroup0,
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     // Current text content
@@ -38,66 +38,7 @@ pub struct SimpleOverlay {
 }
 
 // Vertex for textured quad
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct OverlayVertex {
-    position: [f32; 2],
-    tex_coords: [f32; 2],
-}
-
-impl OverlayVertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<OverlayVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-            ],
-        }
-    }
-}
-
-// Shader for overlay rendering
-const OVERLAY_SHADER: &str = r#"
-struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) tex_coords: vec2<f32>,
-}
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) tex_coords: vec2<f32>,
-}
-
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    out.clip_position = vec4<f32>(in.position, 0.0, 1.0);
-    out.tex_coords = in.tex_coords;
-    return out;
-}
-
-@group(0) @binding(0)
-var t_text: texture_2d<f32>;
-@group(0) @binding(1)
-var s_text: sampler;
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let tex_color = textureSample(t_text, s_text, in.tex_coords);
-    // Pre-multiplied alpha blending
-    return tex_color;
-}
-"#;
+type OverlayVertex = overlay::vertexInput_0;
 
 impl SimpleOverlay {
     /// Create a new simple overlay renderer
@@ -150,87 +91,41 @@ impl SimpleOverlay {
         });
 
         // Create bind group layout
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Overlay Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Overlay Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
+        let bind_group = overlay::WgpuBindGroup0::from_bindings(
+            device,
+            overlay::WgpuBindGroup0Entries::new(overlay::WgpuBindGroup0EntriesParams {
+                overlayTexture_0: &texture_view,
+                overlaySampler_0: &sampler,
+            }),
+        );
 
         // Create shader module
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Overlay Shader"),
-            source: wgpu::ShaderSource::Wgsl(OVERLAY_SHADER.into()),
-        });
-
-        // Create pipeline layout
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Overlay Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let shader = overlay::create_shader_module_embed_source(device);
+        let pipeline_layout = overlay::create_pipeline_layout(device);
+        let vertex_entry = overlay::vs_main_entry(wgpu::VertexStepMode::Vertex);
+        let fragment_entry = overlay::fs_main_entry([Some(wgpu::ColorTargetState {
+            format: surface_format,
+            blend: Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            }),
+            write_mask: wgpu::ColorWrites::ALL,
+        })]);
 
         // Create render pipeline
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Overlay Pipeline"),
             layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[OverlayVertex::desc()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
+            vertex: overlay::vertex_state(&shader, &vertex_entry),
+            fragment: Some(overlay::fragment_state(&shader, &fragment_entry)),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
@@ -248,30 +143,12 @@ impl SimpleOverlay {
 
         // Create vertex buffer for fullscreen quad
         let vertices: [OverlayVertex; 6] = [
-            OverlayVertex {
-                position: [-1.0, -1.0],
-                tex_coords: [0.0, 1.0],
-            },
-            OverlayVertex {
-                position: [1.0, -1.0],
-                tex_coords: [1.0, 1.0],
-            },
-            OverlayVertex {
-                position: [1.0, 1.0],
-                tex_coords: [1.0, 0.0],
-            },
-            OverlayVertex {
-                position: [-1.0, -1.0],
-                tex_coords: [0.0, 1.0],
-            },
-            OverlayVertex {
-                position: [1.0, 1.0],
-                tex_coords: [1.0, 0.0],
-            },
-            OverlayVertex {
-                position: [-1.0, 1.0],
-                tex_coords: [0.0, 0.0],
-            },
+            OverlayVertex::new([-1.0, -1.0], [0.0, 1.0]),
+            OverlayVertex::new([1.0, -1.0], [1.0, 1.0]),
+            OverlayVertex::new([1.0, 1.0], [1.0, 0.0]),
+            OverlayVertex::new([-1.0, -1.0], [0.0, 1.0]),
+            OverlayVertex::new([1.0, 1.0], [1.0, 0.0]),
+            OverlayVertex::new([-1.0, 1.0], [0.0, 0.0]),
         ];
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -287,7 +164,6 @@ impl SimpleOverlay {
             texture_view,
             sampler,
             bind_group,
-            bind_group_layout,
             pipeline,
             vertex_buffer,
             stats_text: String::new(),
@@ -377,20 +253,13 @@ impl SimpleOverlay {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         // Recreate bind group with new texture view
-        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Overlay Bind Group"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        });
+        self.bind_group = overlay::WgpuBindGroup0::from_bindings(
+            device,
+            overlay::WgpuBindGroup0Entries::new(overlay::WgpuBindGroup0EntriesParams {
+                overlayTexture_0: &self.texture_view,
+                overlaySampler_0: &self.sampler,
+            }),
+        );
     }
 
     fn rasterize_text(&mut self, queue: &wgpu::Queue) {
@@ -551,7 +420,7 @@ impl SimpleOverlay {
         }
 
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
+        self.bind_group.set(render_pass);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.draw(0..6, 0..1);
     }

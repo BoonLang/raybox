@@ -9,6 +9,10 @@ mod camera;
 #[path = "../src/constants.rs"]
 mod constants;
 #[cfg(feature = "windowed")]
+mod demo_core {
+    pub use raybox::demo_core::*;
+}
+#[cfg(feature = "windowed")]
 #[path = "../src/input.rs"]
 mod input;
 #[path = "../src/text/mod.rs"]
@@ -23,82 +27,55 @@ use camera::FlyCamera;
 use constants::{HEIGHT, WIDTH};
 #[cfg(feature = "windowed")]
 use input::{CameraConfig, InputAction, InputHandler};
-use text::{VectorFont, VectorFontAtlas};
+use text::{build_char_grid, VectorFont, VectorFontAtlas};
 
 use anyhow::{Context, Result};
-use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 // ~175 words per paragraph
 const LOREM: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Curabitur pretium tincidunt lacus. Nulla gravida orci a odio. Nullam varius, turpis et commodo pharetra, est eros bibendum elit, nec luctus magna felis sollicitudin mauris. Integer in mauris eu nibh euismod gravida. Duis ac tellus et risus vulputate vehicula. Donec lobortis risus a elit. Etiam tempor. Ut ullamcorper, ligula eu tempor congue, eros est euismod turpis, id tincidunt sapien risus a quam. Maecenas fermentum consequat mi. Donec fermentum. Pellentesque malesuada nulla a mi. Duis sapien sem, aliquet sed, vulputate eget, feugiat non, orci. Sed neque. Sed eget lacus. Mauris non dui nec urna suscipit nonummy. Fusce fermentum fermentum arcu. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae.";
+const TEXT_GRID_DIMS: [u32; 2] = [64, 48];
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct Uniforms {
-    inv_view_proj: [[f32; 4]; 4],
-    camera_pos_time: [f32; 4],
-    light_dir_intensity: [f32; 4],
-    render_params: [f32; 4], // xy = resolution, z = textDepth, w = textScale
-    text_params: [f32; 4],   // x = charCount, y = numLines, z = lineHeight, w = reserved
-}
+type Uniforms = shader_bindings::sdf_text_shadow_vector::Uniforms_std140_0;
+type GpuCharGridCell = shader_bindings::sdf_text_shadow_vector::CharGridCellData_std430_0;
+type GpuBezierCurve = shader_bindings::sdf_text_shadow_vector::BezierCurve_std430_0;
+type GpuGlyphData = shader_bindings::sdf_text_shadow_vector::GlyphData_std430_0;
+type GpuCharInstance = shader_bindings::sdf_text_shadow_vector::CharInstance_std430_0;
 
-impl Default for Uniforms {
-    fn default() -> Self {
-        Self {
-            inv_view_proj: [[0.0; 4]; 4],
-            camera_pos_time: [0.0, 0.5, 3.0, 0.0],
-            light_dir_intensity: [0.4, 0.8, 0.5, 1.3], // Light from upper-right
-            render_params: [WIDTH as f32, HEIGHT as f32, 0.15, 1.0], // depth = 0.15 for text extrusion
-            text_params: [0.0, 0.0, 0.4, 0.0],
-        }
-    }
-}
+const EMPTY_CHAR_GRID_CELLS: [GpuCharGridCell; 1] = [GpuCharGridCell::new(0, 0)];
+const EMPTY_CURVES: [GpuBezierCurve; 1] = [GpuBezierCurve::new([0.0; 4], [0.0; 4], [0.0; 4])];
+const EMPTY_GLYPH_DATA: [GpuGlyphData; 1] = [GpuGlyphData::new([0.0; 4], [0; 4], [0; 4])];
+const EMPTY_CHAR_INSTANCES: [GpuCharInstance; 1] = [GpuCharInstance::new([0.0; 4])];
+const EMPTY_U32: [u32; 1] = [0];
 
-impl Uniforms {
-    fn update_from_camera(&mut self, camera: &FlyCamera, width: u32, height: u32, time: f32) {
-        let aspect = width as f32 / height as f32;
-        self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
-        self.camera_pos_time = [
+fn build_uniforms(
+    camera: &FlyCamera,
+    width: u32,
+    height: u32,
+    time: f32,
+    char_count: u32,
+    text_aabb: [f32; 4],
+    char_grid_params: [f32; 4],
+    char_grid_bounds: [f32; 4],
+) -> Uniforms {
+    let aspect = width as f32 / height as f32;
+    Uniforms::new(
+        shader_bindings::sdf_text_shadow_vector::_MatrixStorage_float4x4_ColMajorstd140_0::new(
+            camera.inv_view_projection_matrix(aspect).to_cols_array_2d(),
+        ),
+        [
             camera.position().x,
             camera.position().y,
             camera.position().z,
             time,
-        ];
-        self.render_params[0] = width as f32;
-        self.render_params[1] = height as f32;
-    }
-}
-
-/// GPU grid cell (packed)
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct GpuGridCell {
-    curve_start_and_count: u32,
-}
-
-/// GPU Bézier curve
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct GpuBezierCurve {
-    points01: [f32; 4],
-    points2bbox: [f32; 4],
-    bbox_flags: [f32; 4],
-}
-
-/// Glyph metadata for GPU
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct GpuGlyphData {
-    bounds: [f32; 4],
-    grid_info: [u32; 4],  // gridOffset, gridSizeX, gridSizeY, unused
-    curve_info: [u32; 4], // curveOffset, curveCount, unused, unused
-}
-
-/// Character instance for text layout
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct GpuCharInstance {
-    pos_and_char: [f32; 4], // xy = position, z = scale, w = glyph index
+        ],
+        [0.4, 0.8, 0.5, 1.3],
+        [width as f32, height as f32, 0.15, 1.0],
+        [char_count as f32, 0.0, 0.4, 0.0],
+        text_aabb,
+        char_grid_params,
+        char_grid_bounds,
+    )
 }
 
 /// Build text layout for floating text (vertical layout on XY plane facing camera)
@@ -159,9 +136,7 @@ fn build_shadow_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstance> {
                 }
             }
 
-            instances.push(GpuCharInstance {
-                pos_and_char: [x, y, scale, glyph_idx as f32],
-            });
+            instances.push(GpuCharInstance::new([x, y, scale, glyph_idx as f32]));
 
             x += advance;
         } else if ch == ' ' {
@@ -175,6 +150,31 @@ fn build_shadow_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstance> {
     }
 
     instances
+}
+
+fn compute_text_aabb(instances: &[GpuCharInstance], atlas: &VectorFontAtlas) -> [f32; 4] {
+    let mut min_x = f32::MAX;
+    let mut min_y = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut max_y = f32::MIN;
+
+    for inst in instances {
+        let x = inst.posAndChar_0[0];
+        let y = inst.posAndChar_0[1];
+        let scale = inst.posAndChar_0[2];
+        let glyph_idx = inst.posAndChar_0[3] as usize;
+
+        if glyph_idx < atlas.glyph_list.len() {
+            let (_, entry) = &atlas.glyph_list[glyph_idx];
+            let bounds = entry.bounds;
+            min_x = min_x.min(x + bounds[0] * scale);
+            min_y = min_y.min(y + bounds[1] * scale);
+            max_x = max_x.max(x + bounds[2] * scale);
+            max_y = max_y.max(y + bounds[3] * scale);
+        }
+    }
+
+    [min_x - 0.05, min_y - 0.05, max_x + 0.05, max_y + 0.05]
 }
 
 fn main() -> Result<()> {
@@ -223,6 +223,9 @@ fn run_windowed() -> Result<()> {
         start_time: std::time::Instant,
         last_frame_time: std::time::Instant,
         char_count: u32,
+        text_aabb: [f32; 4],
+        char_grid_params: [f32; 4],
+        char_grid_bounds: [f32; 4],
     }
 
     impl Renderer {
@@ -281,21 +284,24 @@ fn run_windowed() -> Result<()> {
             // Build text layout
             let char_instances = build_shadow_text_layout(&atlas);
             let char_count = char_instances.len() as u32;
-
-            // Prepare GPU data
-            let gpu_grid_cells: Vec<GpuGridCell> = atlas
-                .grid_cells
+            let text_aabb = compute_text_aabb(&char_instances, &atlas);
+            let instance_data: Vec<[f32; 4]> =
+                char_instances.iter().map(|c| c.posAndChar_0).collect();
+            let char_grid = build_char_grid(&instance_data, &atlas, TEXT_GRID_DIMS);
+            let char_grid_params = [
+                char_grid.dims[0] as f32,
+                char_grid.dims[1] as f32,
+                char_grid.cell_size[0],
+                char_grid.cell_size[1],
+            ];
+            let char_grid_bounds = char_grid.bounds;
+            let gpu_char_grid_cells: Vec<GpuCharGridCell> = char_grid
+                .cells
                 .iter()
-                .map(|c| GpuGridCell {
-                    curve_start_and_count: (c.curve_start as u32)
-                        | ((c.curve_count as u32) << 16)
-                        | ((c.flags as u32) << 24),
-                })
+                .map(|c| GpuCharGridCell::new(c.offset, c.count))
                 .collect();
 
-            let gpu_curve_indices: Vec<u32> =
-                atlas.curve_indices.iter().map(|&i| i as u32).collect();
-
+            // Prepare GPU data
             let gpu_curves: Vec<GpuBezierCurve> = atlas
                 .curves
                 .iter()
@@ -303,21 +309,23 @@ fn run_windowed() -> Result<()> {
                     let p0 = c.p0();
                     let p1 = c.p1();
                     let p2 = c.p2();
-                    GpuBezierCurve {
-                        points01: [p0.0, p0.1, p1.0, p1.1],
-                        points2bbox: [p2.0, p2.1, c.bbox[0], c.bbox[1]],
-                        bbox_flags: [c.bbox[2], c.bbox[3], c.flags as f32, 0.0],
-                    }
+                    GpuBezierCurve::new(
+                        [p0.0, p0.1, p1.0, p1.1],
+                        [p2.0, p2.1, c.bbox[0], c.bbox[1]],
+                        [c.bbox[2], c.bbox[3], c.flags as f32, 0.0],
+                    )
                 })
                 .collect();
 
             let gpu_glyph_data: Vec<GpuGlyphData> = atlas
                 .glyph_list
                 .iter()
-                .map(|(_, entry)| GpuGlyphData {
-                    bounds: entry.bounds,
-                    grid_info: [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
-                    curve_info: [entry.curve_offset, entry.curve_count, 0, 0],
+                .map(|(_, entry)| {
+                    GpuGlyphData::new(
+                        entry.bounds,
+                        [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
+                        [entry.curve_offset, entry.curve_count, 0, 0],
+                    )
                 })
                 .collect();
 
@@ -331,9 +339,16 @@ fn run_windowed() -> Result<()> {
             let mut camera = FlyCamera::default();
             input.setup_camera(&mut camera);
 
-            let mut uniforms = Uniforms::default();
-            uniforms.update_from_camera(&camera, WIDTH, HEIGHT, 0.0);
-            uniforms.text_params[0] = char_count as f32;
+            let uniforms = build_uniforms(
+                &camera,
+                WIDTH,
+                HEIGHT,
+                0.0,
+                char_count,
+                text_aabb,
+                char_grid_params,
+                char_grid_bounds,
+            );
 
             let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Uniform Buffer"),
@@ -341,37 +356,10 @@ fn run_windowed() -> Result<()> {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
-            let grid_cells_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Grid Cells Buffer"),
-                contents: bytemuck::cast_slice(if gpu_grid_cells.is_empty() {
-                    &[GpuGridCell {
-                        curve_start_and_count: 0,
-                    }]
-                } else {
-                    &gpu_grid_cells
-                }),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
-
-            let curve_indices_buffer =
-                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Curve Indices Buffer"),
-                    contents: bytemuck::cast_slice(if gpu_curve_indices.is_empty() {
-                        &[0u32]
-                    } else {
-                        &gpu_curve_indices
-                    }),
-                    usage: wgpu::BufferUsages::STORAGE,
-                });
-
             let curves_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Curves Buffer"),
                 contents: bytemuck::cast_slice(if gpu_curves.is_empty() {
-                    &[GpuBezierCurve {
-                        points01: [0.0; 4],
-                        points2bbox: [0.0; 4],
-                        bbox_flags: [0.0; 4],
-                    }]
+                    &EMPTY_CURVES
                 } else {
                     &gpu_curves
                 }),
@@ -381,11 +369,7 @@ fn run_windowed() -> Result<()> {
             let glyph_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Glyph Data Buffer"),
                 contents: bytemuck::cast_slice(if gpu_glyph_data.is_empty() {
-                    &[GpuGlyphData {
-                        bounds: [0.0; 4],
-                        grid_info: [0; 4],
-                        curve_info: [0; 4],
-                    }]
+                    &EMPTY_GLYPH_DATA
                 } else {
                     &gpu_glyph_data
                 }),
@@ -396,112 +380,94 @@ fn run_windowed() -> Result<()> {
                 device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Char Instances Buffer"),
                     contents: bytemuck::cast_slice(if char_instances.is_empty() {
-                        &[GpuCharInstance {
-                            pos_and_char: [0.0; 4],
-                        }]
+                        &EMPTY_CHAR_INSTANCES
                     } else {
                         &char_instances
                     }),
                     usage: wgpu::BufferUsages::STORAGE,
                 });
 
-            // Create bind group layout
-            let bind_group_layout =
-                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Bind Group Layout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 2,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 3,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 4,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 5,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                    ],
+            let char_grid_cells_buffer =
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Char Grid Cells Buffer"),
+                    contents: bytemuck::cast_slice(if gpu_char_grid_cells.is_empty() {
+                        &EMPTY_CHAR_GRID_CELLS
+                    } else {
+                        &gpu_char_grid_cells
+                    }),
+                    usage: wgpu::BufferUsages::STORAGE,
                 });
+
+            let char_grid_indices_buffer =
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Char Grid Indices Buffer"),
+                    contents: bytemuck::cast_slice(if char_grid.char_indices.is_empty() {
+                        &EMPTY_U32
+                    } else {
+                        &char_grid.char_indices
+                    }),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
+
+            let char_grid_dist_field_buffer =
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Char Grid Distance Field Buffer"),
+                    contents: bytemuck::cast_slice(if char_grid.cell_distances.is_empty() {
+                        &EMPTY_U32
+                    } else {
+                        &char_grid.cell_distances
+                    }),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
+
+            let bind_group_layout = device.create_bind_group_layout(
+                &shader_bindings::sdf_text_shadow_vector::WgpuBindGroup0::LAYOUT_DESCRIPTOR,
+            );
+            let bind_group_entries =
+                shader_bindings::sdf_text_shadow_vector::WgpuBindGroup0Entries::new(
+                    shader_bindings::sdf_text_shadow_vector::WgpuBindGroup0EntriesParams {
+                        uniforms_0: wgpu::BufferBinding {
+                            buffer: &uniform_buffer,
+                            offset: 0,
+                            size: None,
+                        },
+                        charGridCells_0: wgpu::BufferBinding {
+                            buffer: &char_grid_cells_buffer,
+                            offset: 0,
+                            size: None,
+                        },
+                        charGridIndices_0: wgpu::BufferBinding {
+                            buffer: &char_grid_indices_buffer,
+                            offset: 0,
+                            size: None,
+                        },
+                        charInstances_0: wgpu::BufferBinding {
+                            buffer: &char_instances_buffer,
+                            offset: 0,
+                            size: None,
+                        },
+                        glyphData_0: wgpu::BufferBinding {
+                            buffer: &glyph_data_buffer,
+                            offset: 0,
+                            size: None,
+                        },
+                        curves_0: wgpu::BufferBinding {
+                            buffer: &curves_buffer,
+                            offset: 0,
+                            size: None,
+                        },
+                        charGridDistField_0: wgpu::BufferBinding {
+                            buffer: &char_grid_dist_field_buffer,
+                            offset: 0,
+                            size: None,
+                        },
+                    },
+                );
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Bind Group"),
                 layout: &bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: grid_cells_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: curve_indices_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: curves_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: glyph_data_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: char_instances_buffer.as_entire_binding(),
-                    },
-                ],
+                entries: &bind_group_entries.as_array(),
             });
 
             // Create pipeline
@@ -554,6 +520,9 @@ fn run_windowed() -> Result<()> {
                 start_time: std::time::Instant::now(),
                 last_frame_time: std::time::Instant::now(),
                 char_count,
+                text_aabb,
+                char_grid_params,
+                char_grid_bounds,
             })
         }
 
@@ -570,9 +539,16 @@ fn run_windowed() -> Result<()> {
 
         fn render(&self) -> Result<(), wgpu::SurfaceError> {
             let time = self.start_time.elapsed().as_secs_f32();
-            let mut uniforms = Uniforms::default();
-            uniforms.update_from_camera(&self.camera, self.config.width, self.config.height, time);
-            uniforms.text_params[0] = self.char_count as f32;
+            let uniforms = build_uniforms(
+                &self.camera,
+                self.config.width,
+                self.config.height,
+                time,
+                self.char_count,
+                self.text_aabb,
+                self.char_grid_params,
+                self.char_grid_bounds,
+            );
             self.queue
                 .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
@@ -797,18 +773,21 @@ fn run_headless_screenshot() -> Result<()> {
     });
     let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-    // Prepare GPU data
-    let gpu_grid_cells: Vec<GpuGridCell> = atlas
-        .grid_cells
+    let text_aabb = compute_text_aabb(&char_instances, &atlas);
+    let instance_data: Vec<[f32; 4]> = char_instances.iter().map(|c| c.posAndChar_0).collect();
+    let char_grid = build_char_grid(&instance_data, &atlas, TEXT_GRID_DIMS);
+    let char_grid_params = [
+        char_grid.dims[0] as f32,
+        char_grid.dims[1] as f32,
+        char_grid.cell_size[0],
+        char_grid.cell_size[1],
+    ];
+    let char_grid_bounds = char_grid.bounds;
+    let gpu_char_grid_cells: Vec<GpuCharGridCell> = char_grid
+        .cells
         .iter()
-        .map(|c| GpuGridCell {
-            curve_start_and_count: (c.curve_start as u32)
-                | ((c.curve_count as u32) << 16)
-                | ((c.flags as u32) << 24),
-        })
+        .map(|c| GpuCharGridCell::new(c.offset, c.count))
         .collect();
-
-    let gpu_curve_indices: Vec<u32> = atlas.curve_indices.iter().map(|&i| i as u32).collect();
 
     let gpu_curves: Vec<GpuBezierCurve> = atlas
         .curves
@@ -817,21 +796,23 @@ fn run_headless_screenshot() -> Result<()> {
             let p0 = c.p0();
             let p1 = c.p1();
             let p2 = c.p2();
-            GpuBezierCurve {
-                points01: [p0.0, p0.1, p1.0, p1.1],
-                points2bbox: [p2.0, p2.1, c.bbox[0], c.bbox[1]],
-                bbox_flags: [c.bbox[2], c.bbox[3], c.flags as f32, 0.0],
-            }
+            GpuBezierCurve::new(
+                [p0.0, p0.1, p1.0, p1.1],
+                [p2.0, p2.1, c.bbox[0], c.bbox[1]],
+                [c.bbox[2], c.bbox[3], c.flags as f32, 0.0],
+            )
         })
         .collect();
 
     let gpu_glyph_data: Vec<GpuGlyphData> = atlas
         .glyph_list
         .iter()
-        .map(|(_, entry)| GpuGlyphData {
-            bounds: entry.bounds,
-            grid_info: [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
-            curve_info: [entry.curve_offset, entry.curve_count, 0, 0],
+        .map(|(_, entry)| {
+            GpuGlyphData::new(
+                entry.bounds,
+                [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
+                [entry.curve_offset, entry.curve_count, 0, 0],
+            )
         })
         .collect();
 
@@ -839,9 +820,16 @@ fn run_headless_screenshot() -> Result<()> {
     let mut camera = FlyCamera::default();
     camera.position = glam::Vec3::new(0.0, 0.0, 2.5);
 
-    let mut uniforms = Uniforms::default();
-    uniforms.update_from_camera(&camera, width, height, 0.0);
-    uniforms.text_params[0] = char_count as f32;
+    let uniforms = build_uniforms(
+        &camera,
+        width,
+        height,
+        0.0,
+        char_count,
+        text_aabb,
+        char_grid_params,
+        char_grid_bounds,
+    );
 
     let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Uniform Buffer"),
@@ -849,36 +837,10 @@ fn run_headless_screenshot() -> Result<()> {
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
-    let grid_cells_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Grid Cells Buffer"),
-        contents: bytemuck::cast_slice(if gpu_grid_cells.is_empty() {
-            &[GpuGridCell {
-                curve_start_and_count: 0,
-            }]
-        } else {
-            &gpu_grid_cells
-        }),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-
-    let curve_indices_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Curve Indices Buffer"),
-        contents: bytemuck::cast_slice(if gpu_curve_indices.is_empty() {
-            &[0u32]
-        } else {
-            &gpu_curve_indices
-        }),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-
     let curves_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Curves Buffer"),
         contents: bytemuck::cast_slice(if gpu_curves.is_empty() {
-            &[GpuBezierCurve {
-                points01: [0.0; 4],
-                points2bbox: [0.0; 4],
-                bbox_flags: [0.0; 4],
-            }]
+            &EMPTY_CURVES
         } else {
             &gpu_curves
         }),
@@ -888,11 +850,7 @@ fn run_headless_screenshot() -> Result<()> {
     let glyph_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Glyph Data Buffer"),
         contents: bytemuck::cast_slice(if gpu_glyph_data.is_empty() {
-            &[GpuGlyphData {
-                bounds: [0.0; 4],
-                grid_info: [0; 4],
-                curve_info: [0; 4],
-            }]
+            &EMPTY_GLYPH_DATA
         } else {
             &gpu_glyph_data
         }),
@@ -902,111 +860,91 @@ fn run_headless_screenshot() -> Result<()> {
     let char_instances_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Char Instances Buffer"),
         contents: bytemuck::cast_slice(if char_instances.is_empty() {
-            &[GpuCharInstance {
-                pos_and_char: [0.0; 4],
-            }]
+            &EMPTY_CHAR_INSTANCES
         } else {
             &char_instances
         }),
         usage: wgpu::BufferUsages::STORAGE,
     });
 
-    // Create bind group layout
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Bind Group Layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 4,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 5,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
+    let char_grid_cells_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Char Grid Cells Buffer"),
+        contents: bytemuck::cast_slice(if gpu_char_grid_cells.is_empty() {
+            &EMPTY_CHAR_GRID_CELLS
+        } else {
+            &gpu_char_grid_cells
+        }),
+        usage: wgpu::BufferUsages::STORAGE,
     });
+
+    let char_grid_indices_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Char Grid Indices Buffer"),
+        contents: bytemuck::cast_slice(if char_grid.char_indices.is_empty() {
+            &EMPTY_U32
+        } else {
+            &char_grid.char_indices
+        }),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+
+    let char_grid_dist_field_buffer =
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Char Grid Distance Field Buffer"),
+            contents: bytemuck::cast_slice(if char_grid.cell_distances.is_empty() {
+                &EMPTY_U32
+            } else {
+                &char_grid.cell_distances
+            }),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+    let bind_group_layout = device.create_bind_group_layout(
+        &shader_bindings::sdf_text_shadow_vector::WgpuBindGroup0::LAYOUT_DESCRIPTOR,
+    );
+    let bind_group_entries = shader_bindings::sdf_text_shadow_vector::WgpuBindGroup0Entries::new(
+        shader_bindings::sdf_text_shadow_vector::WgpuBindGroup0EntriesParams {
+            uniforms_0: wgpu::BufferBinding {
+                buffer: &uniform_buffer,
+                offset: 0,
+                size: None,
+            },
+            charGridCells_0: wgpu::BufferBinding {
+                buffer: &char_grid_cells_buffer,
+                offset: 0,
+                size: None,
+            },
+            charGridIndices_0: wgpu::BufferBinding {
+                buffer: &char_grid_indices_buffer,
+                offset: 0,
+                size: None,
+            },
+            charInstances_0: wgpu::BufferBinding {
+                buffer: &char_instances_buffer,
+                offset: 0,
+                size: None,
+            },
+            glyphData_0: wgpu::BufferBinding {
+                buffer: &glyph_data_buffer,
+                offset: 0,
+                size: None,
+            },
+            curves_0: wgpu::BufferBinding {
+                buffer: &curves_buffer,
+                offset: 0,
+                size: None,
+            },
+            charGridDistField_0: wgpu::BufferBinding {
+                buffer: &char_grid_dist_field_buffer,
+                offset: 0,
+                size: None,
+            },
+        },
+    );
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Bind Group"),
         layout: &bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: grid_cells_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: curve_indices_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: curves_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: glyph_data_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: char_instances_buffer.as_entire_binding(),
-            },
-        ],
+        entries: &bind_group_entries.as_array(),
     });
 
     // Create pipeline

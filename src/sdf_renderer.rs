@@ -1,4 +1,4 @@
-use crate::camera::{OrbitalCamera, Uniforms};
+use crate::camera::{raymarch_uniforms_from_orbital, OrbitalCamera};
 use crate::constants::{HEIGHT, TEXTURE_FORMAT, WIDTH};
 use crate::shader_bindings::sdf_raymarch;
 use anyhow::{Context, Result};
@@ -49,8 +49,7 @@ impl SdfRenderer {
 
         // Create uniform buffer
         let camera = OrbitalCamera::default();
-        let mut uniforms = Uniforms::default();
-        uniforms.update_from_camera(&camera, WIDTH, HEIGHT, 0.0);
+        let uniforms = raymarch_uniforms_from_orbital(&camera, WIDTH, HEIGHT, 0.0);
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform Buffer"),
@@ -67,7 +66,9 @@ impl SdfRenderer {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
+                        sdf_raymarch::Uniforms_std140_0,
+                    >() as u64),
                 },
                 count: None,
             }],
@@ -138,8 +139,7 @@ impl SdfRenderer {
     /// Update uniforms from current camera state
     pub fn update_uniforms(&self) {
         let time = self.start_time.elapsed().as_secs_f32();
-        let mut uniforms = Uniforms::default();
-        uniforms.update_from_camera(&self.camera, WIDTH, HEIGHT, time);
+        let uniforms = raymarch_uniforms_from_orbital(&self.camera, WIDTH, HEIGHT, time);
         self.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }

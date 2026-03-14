@@ -8,76 +8,21 @@ use super::{
 };
 use crate::camera::FlyCamera;
 use crate::input::CameraConfig;
+use crate::shader_bindings::empty;
 use anyhow::Result;
-use bytemuck::{Pod, Zeroable};
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct Uniforms {
-    resolution: [f32; 2],
-    time: f32,
-    _padding: f32,
-}
 
 pub struct EmptyDemo {
-    host: World3dUniformHost<Uniforms>,
+    host: World3dUniformHost<empty::Uniforms_std140_0>,
+}
+
+fn empty_uniforms(width: u32, height: u32, time: f32) -> empty::Uniforms_std140_0 {
+    empty::Uniforms_std140_0::new([width as f32, height as f32], time, 0.0)
 }
 
 impl EmptyDemo {
     pub fn new(ctx: &DemoContext) -> Result<Self> {
-        let shader_source = r#"
-struct Uniforms {
-    resolution: vec2<f32>,
-    time: f32,
-    _padding: f32,
-}
-
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
-
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-}
-
-@vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    // Fullscreen triangle
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0)
-    );
-    var out: VertexOutput;
-    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
-    out.uv = positions[vertex_index] * 0.5 + 0.5;
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Simple animated gradient
-    let t = uniforms.time * 0.1;
-    let grad = mix(
-        vec3<f32>(0.05, 0.05, 0.1),  // Dark blue
-        vec3<f32>(0.1, 0.05, 0.15),   // Dark purple
-        in.uv.y + sin(t) * 0.1
-    );
-    return vec4<f32>(grad, 1.0);
-}
-"#;
-
-        let shader = ctx
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Empty Demo Shader"),
-                source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-            });
-
-        let uniforms = Uniforms {
-            resolution: [ctx.width as f32, ctx.height as f32],
-            time: 0.0,
-            _padding: 0.0,
-        };
+        let shader = empty::create_shader_module_embed_source(ctx.device);
+        let uniforms = empty_uniforms(ctx.width, ctx.height, 0.0);
         let host = World3dUniformHost::new(ctx, "Empty Demo", &shader, &uniforms)?;
         Ok(Self { host })
     }
@@ -114,11 +59,7 @@ impl Demo for EmptyDemo {
         queue: &wgpu::Queue,
         time: f32,
     ) {
-        let uniforms = Uniforms {
-            resolution: [self.host.width() as f32, self.host.height() as f32],
-            time,
-            _padding: 0.0,
-        };
+        let uniforms = empty_uniforms(self.host.width(), self.host.height(), time);
         self.host.write_uniforms(queue, &uniforms);
         self.host.render(render_pass);
     }

@@ -11,80 +11,45 @@ use crate::input::CameraConfig;
 use crate::shader_bindings::sdf_text_shadow_vector;
 use crate::text::{build_char_grid, VectorFont, VectorFontAtlas};
 use anyhow::{Context, Result};
-use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 const LOREM: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Curabitur pretium tincidunt lacus. Nulla gravida orci a odio. Nullam varius, turpis et commodo pharetra, est eros bibendum elit, nec luctus magna felis sollicitudin mauris. Integer in mauris eu nibh euismod gravida. Duis ac tellus et risus vulputate vehicula. Donec lobortis risus a elit. Etiam tempor. Ut ullamcorper, ligula eu tempor congue, eros est euismod turpis, id tincidunt sapien risus a quam. Maecenas fermentum consequat mi. Donec fermentum. Pellentesque malesuada nulla a mi. Duis sapien sem, aliquet sed, vulputate eget, feugiat non, orci. Sed neque. Sed eget lacus. Mauris non dui nec urna suscipit nonummy. Fusce fermentum fermentum arcu. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae.";
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct Uniforms {
-    inv_view_proj: [[f32; 4]; 4],
-    camera_pos_time: [f32; 4],
-    light_dir_intensity: [f32; 4],
-    render_params: [f32; 4],
-    text_params: [f32; 4],
-    text_aabb: [f32; 4],
-    char_grid_params: [f32; 4],
-    char_grid_bounds: [f32; 4],
-}
-
-impl Default for Uniforms {
-    fn default() -> Self {
-        Self {
-            inv_view_proj: [[0.0; 4]; 4],
-            camera_pos_time: [0.0, 0.5, 3.0, 0.0],
-            light_dir_intensity: [0.4, 0.8, 0.5, 1.3],
-            render_params: [800.0, 600.0, 0.15, 1.0],
-            text_params: [0.0, 0.0, 0.4, 0.0],
-            text_aabb: [0.0; 4],
-            char_grid_params: [0.0; 4],
-            char_grid_bounds: [0.0; 4],
-        }
-    }
-}
-
-impl Uniforms {
-    fn update_from_camera(&mut self, camera: &FlyCamera, width: u32, height: u32, time: f32) {
-        let aspect = width as f32 / height as f32;
-        self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
-        self.camera_pos_time = [
-            camera.position().x,
-            camera.position().y,
-            camera.position().z,
-            time,
-        ];
-        self.render_params[0] = width as f32;
-        self.render_params[1] = height as f32;
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct GpuGridCell {
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct AtlasGridCell {
     curve_start_and_count: u32,
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct GpuBezierCurve {
-    points01: [f32; 4],
-    points2bbox: [f32; 4],
-    bbox_flags: [f32; 4],
-}
+type GpuBezierCurve = sdf_text_shadow_vector::BezierCurve_std430_0;
+type GpuGlyphData = sdf_text_shadow_vector::GlyphData_std430_0;
+type GpuCharInstance = sdf_text_shadow_vector::CharInstance_std430_0;
+type TextShadowUniforms = sdf_text_shadow_vector::Uniforms_std140_0;
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct GpuGlyphData {
-    bounds: [f32; 4],
-    grid_info: [u32; 4],
-    curve_info: [u32; 4],
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct GpuCharInstance {
-    pos_and_char: [f32; 4],
+fn text_shadow_uniforms(
+    camera: &FlyCamera,
+    width: u32,
+    height: u32,
+    time: f32,
+    char_count: u32,
+    text_aabb: [f32; 4],
+    char_grid_params: [f32; 4],
+    char_grid_bounds: [f32; 4],
+) -> TextShadowUniforms {
+    let aspect = width as f32 / height as f32;
+    let position = camera.position();
+    TextShadowUniforms::new(
+        sdf_text_shadow_vector::_MatrixStorage_float4x4_ColMajorstd140_0::new(
+            camera.inv_view_projection_matrix(aspect).to_cols_array_2d(),
+        ),
+        [position.x, position.y, position.z, time],
+        [0.4, 0.8, 0.5, 1.3],
+        [width as f32, height as f32, 0.15, 1.0],
+        [char_count as f32, 0.0, 0.4, 0.0],
+        text_aabb,
+        char_grid_params,
+        char_grid_bounds,
+    )
 }
 
 fn build_shadow_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstance> {
@@ -144,9 +109,7 @@ fn build_shadow_text_layout(atlas: &VectorFontAtlas) -> Vec<GpuCharInstance> {
                 }
             }
 
-            instances.push(GpuCharInstance {
-                pos_and_char: [x, y, scale, glyph_idx as f32],
-            });
+            instances.push(GpuCharInstance::new([x, y, scale, glyph_idx as f32]));
 
             x += advance;
         } else if ch == ' ' {
@@ -169,10 +132,10 @@ fn compute_text_aabb(instances: &[GpuCharInstance], atlas: &VectorFontAtlas) -> 
     let mut max_y = f32::MIN;
 
     for inst in instances {
-        let x = inst.pos_and_char[0];
-        let y = inst.pos_and_char[1];
-        let scale = inst.pos_and_char[2];
-        let glyph_idx = inst.pos_and_char[3] as usize;
+        let x = inst.posAndChar_0[0];
+        let y = inst.posAndChar_0[1];
+        let scale = inst.posAndChar_0[2];
+        let glyph_idx = inst.posAndChar_0[3] as usize;
 
         if glyph_idx < atlas.glyph_list.len() {
             let (_, entry) = &atlas.glyph_list[glyph_idx];
@@ -189,7 +152,7 @@ fn compute_text_aabb(instances: &[GpuCharInstance], atlas: &VectorFontAtlas) -> 
 }
 
 pub struct TextShadowDemo {
-    host: World3dStorageHost<Uniforms>,
+    host: World3dStorageHost<TextShadowUniforms>,
     char_count: u32,
     text_aabb: [f32; 4],
     char_grid_params: [f32; 4],
@@ -210,7 +173,7 @@ impl TextShadowDemo {
         let text_aabb = compute_text_aabb(&char_instances, &atlas);
 
         // Build character spatial grid
-        let instance_data: Vec<[f32; 4]> = char_instances.iter().map(|c| c.pos_and_char).collect();
+        let instance_data: Vec<[f32; 4]> = char_instances.iter().map(|c| c.posAndChar_0).collect();
         let char_grid = build_char_grid(&instance_data, &atlas, [64, 48]);
 
         let char_grid_params = [
@@ -222,10 +185,10 @@ impl TextShadowDemo {
         let char_grid_bounds = char_grid.bounds;
 
         // Prepare GPU data
-        let gpu_grid_cells: Vec<GpuGridCell> = atlas
+        let gpu_grid_cells: Vec<AtlasGridCell> = atlas
             .grid_cells
             .iter()
-            .map(|c| GpuGridCell {
+            .map(|c| AtlasGridCell {
                 curve_start_and_count: (c.curve_start as u32)
                     | ((c.curve_count as u32) << 16)
                     | ((c.flags as u32) << 24),
@@ -241,36 +204,46 @@ impl TextShadowDemo {
                 let p0 = c.p0();
                 let p1 = c.p1();
                 let p2 = c.p2();
-                GpuBezierCurve {
-                    points01: [p0.0, p0.1, p1.0, p1.1],
-                    points2bbox: [p2.0, p2.1, c.bbox[0], c.bbox[1]],
-                    bbox_flags: [c.bbox[2], c.bbox[3], c.flags as f32, 0.0],
-                }
+                GpuBezierCurve::new(
+                    [p0.0, p0.1, p1.0, p1.1],
+                    [p2.0, p2.1, c.bbox[0], c.bbox[1]],
+                    [c.bbox[2], c.bbox[3], c.flags as f32, 0.0],
+                )
             })
             .collect();
 
         let gpu_glyph_data: Vec<GpuGlyphData> = atlas
             .glyph_list
             .iter()
-            .map(|(_, entry)| GpuGlyphData {
-                bounds: entry.bounds,
-                grid_info: [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
-                curve_info: [entry.curve_offset, entry.curve_count, 0, 0],
+            .map(|(_, entry)| {
+                GpuGlyphData::new(
+                    entry.bounds,
+                    [entry.grid_offset, entry.grid_size[0], entry.grid_size[1], 0],
+                    [entry.curve_offset, entry.curve_count, 0, 0],
+                )
             })
             .collect();
+        let empty_curve = [GpuBezierCurve::new([0.0; 4], [0.0; 4], [0.0; 4])];
+        let empty_glyph = [GpuGlyphData::new([0.0; 4], [0; 4], [0; 4])];
+        let empty_char_instance = [GpuCharInstance::new([0.0; 4])];
 
-        let mut uniforms = Uniforms::default();
-        uniforms.text_params[0] = char_count as f32;
-        uniforms.text_aabb = text_aabb;
-        uniforms.char_grid_params = char_grid_params;
-        uniforms.char_grid_bounds = char_grid_bounds;
+        let uniforms = text_shadow_uniforms(
+            &FlyCamera::default(),
+            ctx.width,
+            ctx.height,
+            0.0,
+            char_count,
+            text_aabb,
+            char_grid_params,
+            char_grid_bounds,
+        );
 
         let grid_cells_buffer = ctx
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Grid Cells Buffer"),
                 contents: bytemuck::cast_slice(if gpu_grid_cells.is_empty() {
-                    &[GpuGridCell {
+                    &[AtlasGridCell {
                         curve_start_and_count: 0,
                     }]
                 } else {
@@ -296,11 +269,7 @@ impl TextShadowDemo {
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Curves Buffer"),
                 contents: bytemuck::cast_slice(if gpu_curves.is_empty() {
-                    &[GpuBezierCurve {
-                        points01: [0.0; 4],
-                        points2bbox: [0.0; 4],
-                        bbox_flags: [0.0; 4],
-                    }]
+                    &empty_curve
                 } else {
                     &gpu_curves
                 }),
@@ -312,11 +281,7 @@ impl TextShadowDemo {
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Glyph Data Buffer"),
                 contents: bytemuck::cast_slice(if gpu_glyph_data.is_empty() {
-                    &[GpuGlyphData {
-                        bounds: [0.0; 4],
-                        grid_info: [0; 4],
-                        curve_info: [0; 4],
-                    }]
+                    &empty_glyph
                 } else {
                     &gpu_glyph_data
                 }),
@@ -328,9 +293,7 @@ impl TextShadowDemo {
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Char Instances Buffer"),
                     contents: bytemuck::cast_slice(if char_instances.is_empty() {
-                        &[GpuCharInstance {
-                            pos_and_char: [0.0; 4],
-                        }]
+                        &empty_char_instance
                     } else {
                         &char_instances
                     }),
@@ -390,12 +353,16 @@ impl TextShadowDemo {
     }
 
     pub fn update_uniforms(&self, queue: &wgpu::Queue, camera: &FlyCamera, time: f32) {
-        let mut uniforms = Uniforms::default();
-        uniforms.update_from_camera(camera, self.host.width(), self.host.height(), time);
-        uniforms.text_params[0] = self.char_count as f32;
-        uniforms.text_aabb = self.text_aabb;
-        uniforms.char_grid_params = self.char_grid_params;
-        uniforms.char_grid_bounds = self.char_grid_bounds;
+        let uniforms = text_shadow_uniforms(
+            camera,
+            self.host.width(),
+            self.host.height(),
+            time,
+            self.char_count,
+            self.text_aabb,
+            self.char_grid_params,
+            self.char_grid_bounds,
+        );
         self.host.write_uniforms(queue, &uniforms);
     }
 }

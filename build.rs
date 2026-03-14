@@ -29,6 +29,18 @@ fn main() -> Result<()> {
             entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },
         ShaderConfig {
+            name: "empty",
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
+        },
+        ShaderConfig {
+            name: "overlay",
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
+        },
+        ShaderConfig {
+            name: "present",
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
+        },
+        ShaderConfig {
             name: "sdf_raymarch",
             entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },

@@ -31,10 +31,16 @@ just ctl ping                # test connection
 just ctl status              # get current demo/FPS/camera
 just ctl switch 3            # switch to demo 3
 just ctl screenshot          # capture PNG
+cargo run --bin raybox-ctl --features control -- web-open
+cargo run --bin raybox-ctl --features control -- web-open --control --hotreload --demo 8
+cargo run --bin raybox-ctl --features control -- web-smoke --control --output output/web_smoke.png
 
 # Web/WASM mode
 just build-web               # compile WASM + generate JS bindings
 just web                     # build, serve, and open Chromium
+just open-browser            # launch Chromium through Raybox's WebGPU launcher
+just open-browser-hotreload  # launch Chromium with control + hot reload URL params
+just web-smoke               # prove browser launch + control + screenshot work
 
 # Screenshots
 just screenshot              # native headless render
@@ -101,7 +107,15 @@ Four build modes controlled by features:
 2. `wgsl_bindgen` generates Rust bindings in `$OUT_DIR/shader_bindings.rs`
 3. Bindings included via `include!()` macro in `lib.rs`
 
-Shaders: `rectangle`, `sdf_raymarch`, `sdf_spheres`, `sdf_towers`, `sdf_text2d_vector`, `sdf_clay_vector`, `sdf_text_shadow_vector`
+Tracked shader source must live only in `shaders/*.slang`. Do not add repo-tracked handwritten WGSL to runtime or example code. The only WGSL allowed outside `shaders/*.slang` is generated output in `$OUT_DIR` or runtime hot-reload compiler output.
+
+Generated shader binding types are the source of truth for the GPU ABI:
+- use generated `*_std140_0` / `*_std430_0` Rust types instead of manual `#[repr(C)]` mirrors when generated types exist
+- prefer generated bind group and pipeline layout helpers over duplicating layouts by hand
+- avoid `min_binding_size: None` on uniform bindings when the generated type size is known
+- if a new utility shader is needed, add a new `.slang` file and extend `build.rs`
+
+Shaders include utility passes and demo shaders such as `empty`, `overlay`, `present`, `rectangle`, `sdf_raymarch`, `sdf_spheres`, `sdf_towers`, `sdf_text2d_vector`, `sdf_clay_vector`, and `sdf_text_shadow_vector`
 
 ### Control Protocol
 
@@ -120,7 +134,23 @@ Commands: `switchDemo`, `setCamera`, `screenshot`, `getStatus`, `toggleOverlay`,
 
 ## Web Mode Details
 
-Chromium flags for WebGPU on Linux (automatically set by `just open-browser`):
+Chromium is the default supported browser target for Raybox web runs. Use `just open-browser`, `just open-browser-hotreload`, or `raybox-ctl web-open` instead of ad hoc manual launches so the repo-managed WebGPU flags and diagnostics are applied consistently.
+
+Chromium flags for WebGPU on Linux (automatically set by the repo launcher):
 ```
---enable-unsafe-webgpu --enable-features=Vulkan,WebGPU,UseSkiaRenderer --use-angle=vulkan
+--enable-unsafe-webgpu
+--enable-webgpu-developer-features
+--enable-features=UnsafeWebGPU,SharedArrayBufferOnDesktop,Vulkan,VulkanFromANGLE,DefaultANGLEVulkan,UseSkiaRenderer
+--enable-vulkan
+--use-angle=vulkan
+--ignore-gpu-blocklist
+--disable-extensions
+--disable-component-extensions-with-background-pages
+--disable-background-networking
+--disable-sync
+--disable-default-apps
+--disable-component-update
+--metrics-recording-only
+--no-service-autorun
+--force-color-profile=srgb
 ```

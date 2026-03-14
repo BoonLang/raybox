@@ -22,22 +22,12 @@ use crate::retained::{NamedScrollSceneModel, RetainedScene, SceneMode};
 use crate::text::{CharGridCell, VectorFont, VectorFontAtlas};
 use crate::ui2d_shader_bindings as retained_ui2d_shader;
 use anyhow::{Context, Result};
-use bytemuck::{Pod, Zeroable};
 use std::cell::Cell;
 use std::fs;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct Ui2DUniforms {
-    pub screen_params: [f32; 4],
-    pub offset: [f32; 2],
-    pub _pad0: [f32; 2],
-    pub text_params: [f32; 4],
-    pub char_grid_params: [f32; 4],
-    pub char_grid_bounds: [f32; 4],
-}
+pub type Ui2DUniforms = retained_ui2d_shader::Uniforms_std140_0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ui2DViewState {
@@ -128,6 +118,32 @@ fn virtual_size_from_bounds(bounds: [f32; 4]) -> [f32; 2] {
     let width = (bounds[2] - bounds[0]).max(1.0);
     let height = (bounds[3] - bounds[1]).max(1.0);
     [width, height]
+}
+
+fn build_ui2d_uniforms(
+    width: u32,
+    height: u32,
+    virtual_size: [f32; 2],
+    offset: [f32; 2],
+    char_count: u32,
+    scale: f32,
+    rotation: f32,
+    ui_prim_count: u32,
+    char_grid_params: [f32; 4],
+    char_grid_bounds: [f32; 4],
+) -> Ui2DUniforms {
+    Ui2DUniforms::new(
+        [
+            width as f32,
+            height as f32,
+            virtual_size[0],
+            virtual_size[1],
+        ],
+        offset,
+        [char_count as f32, scale, rotation, ui_prim_count as f32],
+        char_grid_params,
+        char_grid_bounds,
+    )
 }
 
 impl Ui2dRuntimeUpdate {
@@ -292,19 +308,18 @@ impl UiPrimitivesOnlyPass {
         ui_primitives: &[GpuUiPrimitive],
         primitive_capacity: usize,
     ) -> Self {
-        let uniforms = Ui2DUniforms {
-            screen_params: [
-                ctx.width as f32,
-                ctx.height as f32,
-                ctx.width as f32,
-                ctx.height as f32,
-            ],
-            offset: [0.0, 0.0],
-            _pad0: [0.0; 2],
-            text_params: [0.0, 1.0, 0.0, ui_primitives.len() as f32],
-            char_grid_params: [0.0; 4],
-            char_grid_bounds: [0.0; 4],
-        };
+        let uniforms = build_ui2d_uniforms(
+            ctx.width,
+            ctx.height,
+            [ctx.width as f32, ctx.height as f32],
+            [0.0, 0.0],
+            0,
+            1.0,
+            0.0,
+            ui_primitives.len() as u32,
+            [0.0; 4],
+            [0.0; 4],
+        );
 
         let uniform_buffer = ctx
             .device
@@ -342,7 +357,12 @@ impl UiPrimitivesOnlyPass {
         let bind_group_layout = create_bind_group_layout_with_storage(
             ctx.device,
             &format!("{label_prefix} Bind Group Layout"),
-            &[(0, wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT)],
+            &[(
+                0,
+                wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                std::num::NonZeroU64::new(std::mem::size_of::<Ui2DUniforms>() as u64)
+                    .expect("Ui2DUniforms must be non-zero"),
+            )],
             &UI2D_STORAGE_BINDINGS,
             wgpu::ShaderStages::FRAGMENT,
         );
@@ -383,24 +403,18 @@ impl UiPrimitivesOnlyPass {
             return;
         }
 
-        let uniforms = Ui2DUniforms {
-            screen_params: [
-                self.width as f32,
-                self.height as f32,
-                self.width as f32,
-                self.height as f32,
-            ],
-            offset: self.view_state.offset,
-            _pad0: [0.0; 2],
-            text_params: [
-                0.0,
-                self.view_state.scale,
-                self.view_state.rotation,
-                self.ui_prim_count as f32,
-            ],
-            char_grid_params: [0.0; 4],
-            char_grid_bounds: [0.0; 4],
-        };
+        let uniforms = build_ui2d_uniforms(
+            self.width,
+            self.height,
+            [self.width as f32, self.height as f32],
+            self.view_state.offset,
+            0,
+            self.view_state.scale,
+            self.view_state.rotation,
+            self.ui_prim_count,
+            [0.0; 4],
+            [0.0; 4],
+        );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         self.uniforms_dirty.set(false);
     }
@@ -742,24 +756,18 @@ impl UiTextAndPrimitivesPass {
         grid_index_capacity: usize,
         primitive_capacity: usize,
     ) -> Self {
-        let uniforms = Ui2DUniforms {
-            screen_params: [
-                ctx.width as f32,
-                ctx.height as f32,
-                virtual_size_from_bounds(text_data.char_grid_bounds)[0],
-                virtual_size_from_bounds(text_data.char_grid_bounds)[1],
-            ],
-            offset: [0.0, 0.0],
-            _pad0: [0.0; 2],
-            text_params: [
-                text_data.char_count as f32,
-                1.0,
-                0.0,
-                ui_primitives.len() as f32,
-            ],
-            char_grid_params: text_data.char_grid_params,
-            char_grid_bounds: text_data.char_grid_bounds,
-        };
+        let uniforms = build_ui2d_uniforms(
+            ctx.width,
+            ctx.height,
+            virtual_size_from_bounds(text_data.char_grid_bounds),
+            [0.0, 0.0],
+            text_data.char_count,
+            1.0,
+            0.0,
+            ui_primitives.len() as u32,
+            text_data.char_grid_params,
+            text_data.char_grid_bounds,
+        );
 
         let uniform_buffer = ctx
             .device
@@ -786,7 +794,12 @@ impl UiTextAndPrimitivesPass {
         let bind_group_layout = create_bind_group_layout_with_storage(
             ctx.device,
             &format!("{label_prefix} Bind Group Layout"),
-            &[(0, wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT)],
+            &[(
+                0,
+                wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                std::num::NonZeroU64::new(std::mem::size_of::<Ui2DUniforms>() as u64)
+                    .expect("Ui2DUniforms must be non-zero"),
+            )],
             &UI2D_STORAGE_BINDINGS,
             wgpu::ShaderStages::FRAGMENT,
         );
@@ -1008,24 +1021,18 @@ impl UiTextAndPrimitivesPass {
             return;
         }
 
-        let uniforms = Ui2DUniforms {
-            screen_params: [
-                self.width as f32,
-                self.height as f32,
-                virtual_size_from_bounds(self.char_grid_bounds)[0],
-                virtual_size_from_bounds(self.char_grid_bounds)[1],
-            ],
-            offset: self.view_state.offset,
-            _pad0: [0.0; 2],
-            text_params: [
-                self.char_count as f32,
-                self.view_state.scale,
-                self.view_state.rotation,
-                self.ui_prim_count as f32,
-            ],
-            char_grid_params: self.char_grid_params,
-            char_grid_bounds: self.char_grid_bounds,
-        };
+        let uniforms = build_ui2d_uniforms(
+            self.width,
+            self.height,
+            virtual_size_from_bounds(self.char_grid_bounds),
+            self.view_state.offset,
+            self.char_count,
+            self.view_state.scale,
+            self.view_state.rotation,
+            self.ui_prim_count,
+            self.char_grid_params,
+            self.char_grid_bounds,
+        );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         self.uniforms_dirty.set(false);
     }

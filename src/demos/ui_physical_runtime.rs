@@ -29,7 +29,7 @@ use crate::retained::ui::{
 use crate::retained::{NamedScrollSceneModel, Rect, RetainedScene, UiVisualRole};
 use crate::text::{CharGridCell, VectorFontAtlas};
 use crate::ui_physical_shader_bindings as retained_ui_physical_shader;
-use bytemuck::{Pod, Zeroable};
+use bytemuck::Pod;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -607,67 +607,51 @@ pub type ShowcaseUiPhysicalDeck = ModeledFixedUiPhysicalSceneDeck<ShowcaseSceneM
 pub type WrappedTextUiPhysicalDeck = ModeledFixedUiPhysicalSceneDeck<WrappedTextSceneModel>;
 pub type StateBackedUiPhysicalSceneDeck<S> = UiPhysicalSceneDeck<StateBackedUiPhysicalHost<S>>;
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct UiPhysicalUniforms {
-    pub inv_view_proj: [[f32; 4]; 4],
-    pub camera_pos_time: [f32; 4],
-    pub light_dir_intensity: [f32; 4],
-    pub render_params: [f32; 4],
-    pub text_params: [f32; 4],
-    pub char_grid_params: [f32; 4],
-    pub char_grid_bounds: [f32; 4],
-    pub layout_params0: [f32; 4],
-    pub layout_params1: [f32; 4],
-    pub layout_params2: [f32; 4],
-    pub layout_params3: [f32; 4],
-    pub layout_params4: [f32; 4],
-    pub layout_params5: [f32; 4],
-    pub layout_params6: [f32; 4],
-    pub layout_params7: [f32; 4],
-    pub layout_params8: [f32; 4],
-    pub layout_params9: [f32; 4],
-    pub layout_bounds: [f32; 4],
+pub type UiPhysicalUniforms = retained_ui_physical_shader::Uniforms_std140_0;
+
+fn default_ui_physical_uniforms() -> UiPhysicalUniforms {
+    UiPhysicalUniforms::new(
+        retained_ui_physical_shader::_MatrixStorage_float4x4_ColMajorstd140_0::new([[0.0; 4]; 4]),
+        [0.0, 3.5, 3.5, 0.0],
+        [0.5, 0.8, 0.3, 1.5],
+        [800.0, 600.0, 0.08, 1.0],
+        [0.0; 4],
+        [0.0; 4],
+        [0.0; 4],
+        [350.0, 398.0, UiPhysicalLayout::DEFAULT_PIXEL_TO_WORLD, 1.0],
+        [12.0, 0.0, 8.0, 0.0],
+        [248.0 / 255.0, 250.0 / 255.0, 252.0 / 255.0, 1.0],
+        [203.0 / 255.0, 213.0 / 255.0, 225.0 / 255.0, 1.0],
+        [15.0 / 255.0, 23.0 / 255.0, 42.0 / 255.0, 0.16],
+        [0.0, 14.0, 0.0, 0.0],
+        [12.0, 12.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0; 4],
+        [0.0; 4],
+        [75.0, 225.8, 625.0, 570.0],
+    )
 }
 
-impl Default for UiPhysicalUniforms {
-    fn default() -> Self {
-        Self {
-            inv_view_proj: [[0.0; 4]; 4],
-            camera_pos_time: [0.0, 3.5, 3.5, 0.0],
-            light_dir_intensity: [0.5, 0.8, 0.3, 1.5],
-            render_params: [800.0, 600.0, 0.08, 1.0],
-            text_params: [0.0; 4],
-            char_grid_params: [0.0; 4],
-            char_grid_bounds: [0.0; 4],
-            layout_params0: [350.0, 398.0, UiPhysicalLayout::DEFAULT_PIXEL_TO_WORLD, 1.0],
-            layout_params1: [12.0, 0.0, 8.0, 0.0],
-            layout_params2: [248.0 / 255.0, 250.0 / 255.0, 252.0 / 255.0, 1.0],
-            layout_params3: [203.0 / 255.0, 213.0 / 255.0, 225.0 / 255.0, 1.0],
-            layout_params4: [15.0 / 255.0, 23.0 / 255.0, 42.0 / 255.0, 0.16],
-            layout_params5: [0.0, 14.0, 0.0, 0.0],
-            layout_params6: [12.0, 12.0, 0.0, 0.0],
-            layout_params7: [1.0, 0.0, 0.0, 0.0],
-            layout_params8: [0.0; 4],
-            layout_params9: [0.0; 4],
-            layout_bounds: [75.0, 225.8, 625.0, 570.0],
-        }
-    }
-}
-
-impl UiPhysicalUniforms {
-    pub fn update_from_camera(&mut self, camera: &FlyCamera, width: u32, height: u32, time: f32) {
-        let aspect = width as f32 / height as f32;
-        self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
-        self.camera_pos_time = [
-            camera.position().x,
-            camera.position().y,
-            camera.position().z,
-            time,
-        ];
-        self.render_params[0] = width as f32;
-        self.render_params[1] = height as f32;
-    }
+fn update_ui_physical_uniform_camera(
+    uniforms: &mut UiPhysicalUniforms,
+    camera: &FlyCamera,
+    width: u32,
+    height: u32,
+    time: f32,
+) {
+    let aspect = width as f32 / height as f32;
+    uniforms.invViewProj_0 =
+        retained_ui_physical_shader::_MatrixStorage_float4x4_ColMajorstd140_0::new(
+            camera.inv_view_projection_matrix(aspect).to_cols_array_2d(),
+        );
+    uniforms.cameraPosTime_0 = [
+        camera.position().x,
+        camera.position().y,
+        camera.position().z,
+        time,
+    ];
+    uniforms.renderParams_0[0] = width as f32;
+    uniforms.renderParams_0[1] = height as f32;
 }
 
 pub struct UiPhysicalPassHost {
@@ -713,8 +697,18 @@ impl UiPhysicalPassHost {
             device,
             &format!("{label_prefix} Bind Group Layout"),
             &[
-                (0, wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT),
-                (1, wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT),
+                (
+                    0,
+                    wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    std::num::NonZeroU64::new(std::mem::size_of::<UiPhysicalUniforms>() as u64)
+                        .expect("UiPhysicalUniforms must be non-zero"),
+                ),
+                (
+                    1,
+                    wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    std::num::NonZeroU64::new(std::mem::size_of::<ThemeUniforms>() as u64)
+                        .expect("ThemeUniforms must be non-zero"),
+                ),
             ],
             &[2, 3, 4, 5, 6, 7, 8, 9],
             wgpu::ShaderStages::FRAGMENT,
@@ -855,15 +849,15 @@ impl UiPhysicalFullscreenRenderer {
         layout: UiPhysicalLayout,
         light_dir_intensity: [f32; 4],
     ) {
-        let mut uniforms = UiPhysicalUniforms::default();
-        uniforms.update_from_camera(camera, self.width, self.height, time);
-        uniforms.text_params[0] = char_count as f32;
-        uniforms.text_params[1] = ui_prim_count as f32;
-        uniforms.text_params[2] = self.scale_factor;
-        uniforms.text_params[3] = classic_decal_prim_start;
-        uniforms.char_grid_params = char_grid_params;
-        uniforms.char_grid_bounds = char_grid_bounds;
-        uniforms.layout_params0 = [
+        let mut uniforms = default_ui_physical_uniforms();
+        update_ui_physical_uniform_camera(&mut uniforms, camera, self.width, self.height, time);
+        uniforms.textParams_0[0] = char_count as f32;
+        uniforms.textParams_0[1] = ui_prim_count as f32;
+        uniforms.textParams_0[2] = self.scale_factor;
+        uniforms.textParams_0[3] = classic_decal_prim_start;
+        uniforms.charGridParams_0 = char_grid_params;
+        uniforms.charGridBounds_0 = char_grid_bounds;
+        uniforms.layoutParams0_0 = [
             layout.center_px[0],
             layout.center_px[1],
             layout.pixel_to_world,
@@ -872,38 +866,38 @@ impl UiPhysicalFullscreenRenderer {
                 UiPhysicalGeometryMode::StackedCard => 1.0,
             },
         ];
-        uniforms.layout_params1 = [
+        uniforms.layoutParams1_0 = [
             layout.corner_radius_px,
             layout.elevation_px,
             layout.depth_px,
             0.0,
         ];
-        uniforms.layout_params2 = layout.fill_color;
-        uniforms.layout_params8 = layout.accent_color;
-        uniforms.layout_params9 = layout.detail_color;
-        uniforms.layout_params3 = layout.outline_color;
-        uniforms.layout_params4 = [
+        uniforms.layoutParams2_0 = layout.fill_color;
+        uniforms.layoutParams8_0 = layout.accent_color;
+        uniforms.layoutParams9_0 = layout.detail_color;
+        uniforms.layoutParams3_0 = layout.outline_color;
+        uniforms.layoutParams4_0 = [
             layout.shadow_color[0],
             layout.shadow_color[1],
             layout.shadow_color[2],
             layout.shadow_color[3],
         ];
-        uniforms.layout_params5 = [
+        uniforms.layoutParams5_0 = [
             layout.shadow_offset_px[0],
             layout.shadow_offset_px[1],
             0.0,
             0.0,
         ];
-        uniforms.layout_params6 = [
+        uniforms.layoutParams6_0 = [
             layout.shadow_extra_size_px[0],
             layout.shadow_extra_size_px[1],
             0.0,
             0.0,
         ];
-        uniforms.layout_params7 = [layout.outline_width_px, 0.0, 0.0, 0.0];
-        uniforms.layout_params7[1] = layout.content_inset_px;
-        uniforms.layout_bounds = layout.bounds_px;
-        uniforms.light_dir_intensity = light_dir_intensity;
+        uniforms.layoutParams7_0 = [layout.outline_width_px, 0.0, 0.0, 0.0];
+        uniforms.layoutParams7_0[1] = layout.content_inset_px;
+        uniforms.layoutBounds_0 = layout.bounds_px;
+        uniforms.lightDirIntensity_0 = light_dir_intensity;
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
@@ -956,15 +950,15 @@ impl UiPhysicalRuntimeHost {
         classic_decal_prim_start: f32,
         light_dir_intensity: [f32; 4],
     ) -> Self {
-        let mut uniforms = UiPhysicalUniforms::default();
-        uniforms.text_params[0] = scene.char_count() as f32;
-        uniforms.text_params[1] = scene.ui_prim_count() as f32;
-        uniforms.text_params[2] = ctx.scale_factor;
-        uniforms.text_params[3] = classic_decal_prim_start;
-        uniforms.char_grid_params = scene.char_grid_params();
-        uniforms.char_grid_bounds = scene.char_grid_bounds();
+        let mut uniforms = default_ui_physical_uniforms();
+        uniforms.textParams_0[0] = scene.char_count() as f32;
+        uniforms.textParams_0[1] = scene.ui_prim_count() as f32;
+        uniforms.textParams_0[2] = ctx.scale_factor;
+        uniforms.textParams_0[3] = classic_decal_prim_start;
+        uniforms.charGridParams_0 = scene.char_grid_params();
+        uniforms.charGridBounds_0 = scene.char_grid_bounds();
         let layout = scene.physical_layout();
-        uniforms.layout_params0 = [
+        uniforms.layoutParams0_0 = [
             layout.center_px[0],
             layout.center_px[1],
             layout.pixel_to_world,
@@ -973,38 +967,38 @@ impl UiPhysicalRuntimeHost {
                 UiPhysicalGeometryMode::StackedCard => 1.0,
             },
         ];
-        uniforms.layout_params1 = [
+        uniforms.layoutParams1_0 = [
             layout.corner_radius_px,
             layout.elevation_px,
             layout.depth_px,
             0.0,
         ];
-        uniforms.layout_params2 = layout.fill_color;
-        uniforms.layout_params8 = layout.accent_color;
-        uniforms.layout_params9 = layout.detail_color;
-        uniforms.layout_params3 = layout.outline_color;
-        uniforms.layout_params4 = [
+        uniforms.layoutParams2_0 = layout.fill_color;
+        uniforms.layoutParams8_0 = layout.accent_color;
+        uniforms.layoutParams9_0 = layout.detail_color;
+        uniforms.layoutParams3_0 = layout.outline_color;
+        uniforms.layoutParams4_0 = [
             layout.shadow_color[0],
             layout.shadow_color[1],
             layout.shadow_color[2],
             layout.shadow_color[3],
         ];
-        uniforms.layout_params5 = [
+        uniforms.layoutParams5_0 = [
             layout.shadow_offset_px[0],
             layout.shadow_offset_px[1],
             0.0,
             0.0,
         ];
-        uniforms.layout_params6 = [
+        uniforms.layoutParams6_0 = [
             layout.shadow_extra_size_px[0],
             layout.shadow_extra_size_px[1],
             0.0,
             0.0,
         ];
-        uniforms.layout_params7 = [layout.outline_width_px, 0.0, 0.0, 0.0];
-        uniforms.layout_params7[1] = layout.content_inset_px;
-        uniforms.layout_bounds = layout.bounds_px;
-        uniforms.light_dir_intensity = light_dir_intensity;
+        uniforms.layoutParams7_0 = [layout.outline_width_px, 0.0, 0.0, 0.0];
+        uniforms.layoutParams7_0[1] = layout.content_inset_px;
+        uniforms.layoutBounds_0 = layout.bounds_px;
+        uniforms.lightDirIntensity_0 = light_dir_intensity;
 
         let renderer = UiPhysicalFullscreenRenderer::new(
             ctx,

@@ -395,7 +395,11 @@ impl DemoRunner {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
-                            min_binding_size: None,
+                            min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
+                                crate::shader_bindings::sdf_raymarch::Uniforms_std140_0,
+                            >(
+                            )
+                                as u64),
                         },
                         count: None,
                     }],

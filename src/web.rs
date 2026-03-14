@@ -7,7 +7,9 @@
 
 #![allow(dead_code)]
 
-use crate::camera::{FlyCamera, FlyCamera as OrbitalCamera, Uniforms};
+use crate::camera::{
+    raymarch_uniforms_from_fly, towers_uniforms_from_fly, FlyCamera, FlyCamera as OrbitalCamera,
+};
 use crate::constants::{HEIGHT, WIDTH};
 use crate::demo_core::{
     ui_physical_card_camera_preset, DemoId, DemoType, ListFilter, OverlayMode,
@@ -31,7 +33,7 @@ use crate::retained::{
     SceneMode, TextRole, UiVisualRole,
 };
 use crate::shader_bindings::{
-    sdf_clay_vector, sdf_raymarch, sdf_spheres, sdf_text_shadow_vector, sdf_towers,
+    empty, sdf_clay_vector, sdf_raymarch, sdf_spheres, sdf_text_shadow_vector, sdf_towers,
 };
 use crate::text::{build_char_grid, VectorFont, VectorFontAtlas};
 use crate::todomvc_retained::TodoMvcRetainedScene;
@@ -52,7 +54,7 @@ use crate::web_control::{
 };
 use crate::web_input::WebInputHandler;
 use base64::Engine;
-use bytemuck::{Pod, Zeroable};
+use bytemuck::Pod;
 use image::{imageops, ImageBuffer, ImageFormat, Rgba};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -234,6 +236,7 @@ fn web_vector_text_storage_bindings<'a>(
 fn create_web_world3d_bind_group_layout(
     device: &wgpu::Device,
     label: &str,
+    uniform_min_size: std::num::NonZeroU64,
     extra_entries: &[wgpu::BindGroupLayoutEntry],
 ) -> wgpu::BindGroupLayout {
     let mut entries = vec![wgpu::BindGroupLayoutEntry {
@@ -242,7 +245,7 @@ fn create_web_world3d_bind_group_layout(
         ty: wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
             has_dynamic_offset: false,
-            min_binding_size: None,
+            min_binding_size: Some(uniform_min_size),
         },
         count: None,
     }];
@@ -346,7 +349,10 @@ impl<U: Pod> WebWorld3dUniformHost<U> {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let bind_group_layout = create_web_world3d_bind_group_layout(device, label, &[]);
+        let uniform_min_size = std::num::NonZeroU64::new(std::mem::size_of::<U>() as u64)
+            .expect("uniform size must be non-zero");
+        let bind_group_layout =
+            create_web_world3d_bind_group_layout(device, label, uniform_min_size, &[]);
         let bind_group =
             create_web_world3d_bind_group(device, label, &bind_group_layout, &uniform_buffer, &[]);
         let pipeline =
@@ -405,7 +411,7 @@ impl<U: Pod> WebWorld3dStorageHost<U> {
                         read_only: entry.read_only,
                     },
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    min_binding_size: std::num::NonZeroU64::new(entry.buffer.size()),
                 },
                 count: None,
             })
@@ -418,8 +424,10 @@ impl<U: Pod> WebWorld3dStorageHost<U> {
             })
             .collect();
 
+        let uniform_min_size = std::num::NonZeroU64::new(std::mem::size_of::<U>() as u64)
+            .expect("uniform size must be non-zero");
         let bind_group_layout =
-            create_web_world3d_bind_group_layout(device, label, &layout_entries);
+            create_web_world3d_bind_group_layout(device, label, uniform_min_size, &layout_entries);
         let bind_group = create_web_world3d_bind_group(
             device,
             label,
@@ -456,38 +464,42 @@ impl<U: Pod> WebWorld3dStorageHost<U> {
     }
 }
 
-struct SimpleWorld3dDemo {
+struct SimpleWorld3dDemo<U: Pod> {
     name: &'static str,
     id: DemoId,
     camera_position: glam::Vec3,
     camera_target: glam::Vec3,
-    host: WebWorld3dUniformHost<Uniforms>,
+    host: WebWorld3dUniformHost<U>,
+    build_uniforms: fn(&OrbitalCamera, u32, u32, f32) -> U,
 }
 
-impl SimpleWorld3dDemo {
+impl<U: Pod> SimpleWorld3dDemo<U> {
     fn new(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         label: &str,
         shader_factory: World3dShaderFactory,
+        initial_uniforms: U,
+        build_uniforms: fn(&OrbitalCamera, u32, u32, f32) -> U,
         name: &'static str,
         id: DemoId,
         camera_position: glam::Vec3,
         camera_target: glam::Vec3,
     ) -> Self {
         let host =
-            WebWorld3dUniformHost::new(device, format, label, shader_factory, &Uniforms::default());
+            WebWorld3dUniformHost::new(device, format, label, shader_factory, &initial_uniforms);
         Self {
             name,
             id,
             camera_position,
             camera_target,
             host,
+            build_uniforms,
         }
     }
 }
 
-impl WebDemo for SimpleWorld3dDemo {
+impl<U: Pod> WebDemo for SimpleWorld3dDemo<U> {
     fn name(&self) -> &'static str {
         self.name
     }
@@ -511,8 +523,7 @@ impl WebDemo for SimpleWorld3dDemo {
     fn update(&mut self, _dt: f32) {}
 
     fn update_uniforms(&self, queue: &wgpu::Queue, camera: &OrbitalCamera, time: f32) {
-        let mut uniforms = Uniforms::default();
-        uniforms.update_from_fly_camera(camera, self.host.width, self.host.height, time);
+        let uniforms = (self.build_uniforms)(camera, self.host.width, self.host.height, time);
         self.host.write_uniforms(queue, &uniforms);
     }
 
@@ -525,49 +536,69 @@ impl WebDemo for SimpleWorld3dDemo {
     }
 }
 
+fn web_raymarch_uniforms(
+    camera: &OrbitalCamera,
+    width: u32,
+    height: u32,
+    time: f32,
+) -> sdf_raymarch::Uniforms_std140_0 {
+    raymarch_uniforms_from_fly(camera, width, height, time)
+}
+
+fn web_spheres_uniforms(
+    camera: &OrbitalCamera,
+    width: u32,
+    height: u32,
+    time: f32,
+) -> sdf_spheres::Uniforms_std140_0 {
+    let aspect = width as f32 / height as f32;
+    let position = camera.position();
+    sdf_spheres::Uniforms_std140_0::new(
+        sdf_spheres::_MatrixStorage_float4x4_ColMajorstd140_0::new(
+            camera.inv_view_projection_matrix(aspect).to_cols_array_2d(),
+        ),
+        [position.x, position.y, position.z, time],
+        [0.577, 0.577, 0.577, 1.0],
+        [width as f32, height as f32, 0.5, 16.0],
+    )
+}
+
+fn web_towers_uniforms(
+    camera: &OrbitalCamera,
+    width: u32,
+    height: u32,
+    time: f32,
+) -> sdf_towers::Uniforms_std140_0 {
+    towers_uniforms_from_fly(camera, width, height, time)
+}
+
 const WEB_LOREM: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Curabitur pretium tincidunt lacus. Nulla gravida orci a odio. Nullam varius, turpis et commodo pharetra, est eros bibendum elit, nec luctus magna felis sollicitudin mauris. Integer in mauris eu nibh euismod gravida. Duis ac tellus et risus vulputate vehicula. Donec lobortis risus a elit. Etiam tempor. Ut ullamcorper, ligula eu tempor congue, eros est euismod turpis, id tincidunt sapien risus a quam. Maecenas fermentum consequat mi. Donec fermentum. Pellentesque malesuada nulla a mi. Duis sapien sem, aliquet sed, vulputate eget, feugiat non, orci. Sed neque. Sed eget lacus. Mauris non dui nec urna suscipit nonummy. Fusce fermentum fermentum arcu. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae.";
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct WebClayUniforms {
-    inv_view_proj: [[f32; 4]; 4],
-    camera_pos_time: [f32; 4],
-    light_dir_intensity: [f32; 4],
-    render_params: [f32; 4],
-    text_params: [f32; 4],
+type WebClayUniforms = sdf_clay_vector::Uniforms_std140_0;
+type WebClayCharInstance = sdf_clay_vector::CharInstance_std430_0;
+
+fn web_clay_uniforms(
+    camera: &OrbitalCamera,
+    width: u32,
+    height: u32,
+    time: f32,
+    char_count: u32,
     char_grid_params: [f32; 4],
     char_grid_bounds: [f32; 4],
-}
-
-impl Default for WebClayUniforms {
-    fn default() -> Self {
-        Self {
-            inv_view_proj: [[0.0; 4]; 4],
-            camera_pos_time: [0.0, 2.0, 4.5, 0.0],
-            light_dir_intensity: [0.5, 0.8, 0.3, 1.5],
-            render_params: [800.0, 600.0, 0.2, 1.0],
-            text_params: [0.0, 0.0, 0.4, 0.0],
-            char_grid_params: [0.0; 4],
-            char_grid_bounds: [0.0; 4],
-        }
-    }
-}
-
-impl WebClayUniforms {
-    fn update_from_camera(&mut self, camera: &OrbitalCamera, width: u32, height: u32, time: f32) {
-        let aspect = width as f32 / height as f32;
-        self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
-        let position = camera.position();
-        self.camera_pos_time = [position.x, position.y, position.z, time];
-        self.render_params[0] = width as f32;
-        self.render_params[1] = height as f32;
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct WebClayCharInstance {
-    pos_and_char: [f32; 4],
+) -> WebClayUniforms {
+    let aspect = width as f32 / height as f32;
+    let position = camera.position();
+    WebClayUniforms::new(
+        sdf_clay_vector::_MatrixStorage_float4x4_ColMajorstd140_0::new(
+            camera.inv_view_projection_matrix(aspect).to_cols_array_2d(),
+        ),
+        [position.x, position.y, position.z, time],
+        [0.5, 0.8, 0.3, 1.5],
+        [width as f32, height as f32, 0.2, 1.0],
+        [char_count as f32, 0.0, 0.4, 0.0],
+        char_grid_params,
+        char_grid_bounds,
+    )
 }
 
 fn build_web_clay_text_layout(atlas: &VectorFontAtlas) -> Vec<WebClayCharInstance> {
@@ -620,9 +651,7 @@ fn build_web_clay_text_layout(atlas: &VectorFontAtlas) -> Vec<WebClayCharInstanc
                     break;
                 }
             }
-            instances.push(WebClayCharInstance {
-                pos_and_char: [x, y, scale, glyph_idx as f32],
-            });
+            instances.push(WebClayCharInstance::new([x, y, scale, glyph_idx as f32]));
             x += advance;
         } else if ch == ' ' {
             x += 0.08 * scale;
@@ -637,49 +666,33 @@ fn build_web_clay_text_layout(atlas: &VectorFontAtlas) -> Vec<WebClayCharInstanc
     instances
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct WebTextShadowUniforms {
-    inv_view_proj: [[f32; 4]; 4],
-    camera_pos_time: [f32; 4],
-    light_dir_intensity: [f32; 4],
-    render_params: [f32; 4],
-    text_params: [f32; 4],
+type WebTextShadowUniforms = sdf_text_shadow_vector::Uniforms_std140_0;
+type WebTextShadowCharInstance = sdf_text_shadow_vector::CharInstance_std430_0;
+
+fn web_text_shadow_uniforms(
+    camera: &OrbitalCamera,
+    width: u32,
+    height: u32,
+    time: f32,
+    char_count: u32,
     text_aabb: [f32; 4],
     char_grid_params: [f32; 4],
     char_grid_bounds: [f32; 4],
-}
-
-impl Default for WebTextShadowUniforms {
-    fn default() -> Self {
-        Self {
-            inv_view_proj: [[0.0; 4]; 4],
-            camera_pos_time: [0.0, 0.5, 3.0, 0.0],
-            light_dir_intensity: [0.4, 0.8, 0.5, 1.3],
-            render_params: [800.0, 600.0, 0.15, 1.0],
-            text_params: [0.0, 0.0, 0.4, 0.0],
-            text_aabb: [0.0; 4],
-            char_grid_params: [0.0; 4],
-            char_grid_bounds: [0.0; 4],
-        }
-    }
-}
-
-impl WebTextShadowUniforms {
-    fn update_from_camera(&mut self, camera: &OrbitalCamera, width: u32, height: u32, time: f32) {
-        let aspect = width as f32 / height as f32;
-        self.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
-        let position = camera.position();
-        self.camera_pos_time = [position.x, position.y, position.z, time];
-        self.render_params[0] = width as f32;
-        self.render_params[1] = height as f32;
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct WebTextShadowCharInstance {
-    pos_and_char: [f32; 4],
+) -> WebTextShadowUniforms {
+    let aspect = width as f32 / height as f32;
+    let position = camera.position();
+    WebTextShadowUniforms::new(
+        sdf_text_shadow_vector::_MatrixStorage_float4x4_ColMajorstd140_0::new(
+            camera.inv_view_projection_matrix(aspect).to_cols_array_2d(),
+        ),
+        [position.x, position.y, position.z, time],
+        [0.4, 0.8, 0.5, 1.3],
+        [width as f32, height as f32, 0.15, 1.0],
+        [char_count as f32, 0.0, 0.4, 0.0],
+        text_aabb,
+        char_grid_params,
+        char_grid_bounds,
+    )
 }
 
 fn build_web_text_shadow_layout(atlas: &VectorFontAtlas) -> Vec<WebTextShadowCharInstance> {
@@ -732,9 +745,12 @@ fn build_web_text_shadow_layout(atlas: &VectorFontAtlas) -> Vec<WebTextShadowCha
                     break;
                 }
             }
-            instances.push(WebTextShadowCharInstance {
-                pos_and_char: [x, y, scale, glyph_idx as f32],
-            });
+            instances.push(WebTextShadowCharInstance::new([
+                x,
+                y,
+                scale,
+                glyph_idx as f32,
+            ]));
             x += advance;
         } else if ch == ' ' {
             x += 0.3 * scale;
@@ -759,10 +775,10 @@ fn compute_web_text_shadow_aabb(
     let mut max_y = f32::MIN;
 
     for inst in instances {
-        let x = inst.pos_and_char[0];
-        let y = inst.pos_and_char[1];
-        let scale = inst.pos_and_char[2];
-        let glyph_idx = inst.pos_and_char[3] as usize;
+        let x = inst.posAndChar_0[0];
+        let y = inst.posAndChar_0[1];
+        let scale = inst.posAndChar_0[2];
+        let glyph_idx = inst.posAndChar_0[3] as usize;
         if glyph_idx < atlas.glyph_list.len() {
             let (_, entry) = &atlas.glyph_list[glyph_idx];
             let bounds = entry.bounds;
@@ -902,7 +918,7 @@ impl WebClayDemo {
         let char_count = char_instances.len() as u32;
         let instance_data: Vec<[f32; 4]> = char_instances
             .iter()
-            .map(|inst| inst.pos_and_char)
+            .map(|inst| inst.posAndChar_0)
             .collect();
         let char_grid = build_char_grid(&instance_data, &atlas, [80, 48]);
         let char_grid_params = [
@@ -930,10 +946,15 @@ impl WebClayDemo {
             char_grid_indices: &buffers.char_grid_indices_buffer,
             char_grid_distances: None,
         });
-        let mut uniforms = WebClayUniforms::default();
-        uniforms.text_params[0] = char_count as f32;
-        uniforms.char_grid_params = char_grid_params;
-        uniforms.char_grid_bounds = char_grid_bounds;
+        let uniforms = web_clay_uniforms(
+            &FlyCamera::default(),
+            WIDTH,
+            HEIGHT,
+            0.0,
+            char_count,
+            char_grid_params,
+            char_grid_bounds,
+        );
         let host = WebWorld3dStorageHost::new(
             device,
             format,
@@ -980,11 +1001,15 @@ impl WebDemo for WebClayDemo {
     fn update(&mut self, _dt: f32) {}
 
     fn update_uniforms(&self, queue: &wgpu::Queue, camera: &OrbitalCamera, time: f32) {
-        let mut uniforms = WebClayUniforms::default();
-        uniforms.update_from_camera(camera, self.host.width, self.host.height, time);
-        uniforms.text_params[0] = self.char_count as f32;
-        uniforms.char_grid_params = self.char_grid_params;
-        uniforms.char_grid_bounds = self.char_grid_bounds;
+        let uniforms = web_clay_uniforms(
+            camera,
+            self.host.width,
+            self.host.height,
+            time,
+            self.char_count,
+            self.char_grid_params,
+            self.char_grid_bounds,
+        );
         self.host.write_uniforms(queue, &uniforms);
     }
 
@@ -1015,7 +1040,7 @@ impl WebTextShadowDemo {
         let text_aabb = compute_web_text_shadow_aabb(&char_instances, &atlas);
         let instance_data: Vec<[f32; 4]> = char_instances
             .iter()
-            .map(|inst| inst.pos_and_char)
+            .map(|inst| inst.posAndChar_0)
             .collect();
         let char_grid = build_char_grid(&instance_data, &atlas, [64, 48]);
         let char_grid_params = [
@@ -1043,11 +1068,16 @@ impl WebTextShadowDemo {
             char_grid_indices: &buffers.char_grid_indices_buffer,
             char_grid_distances: buffers.char_grid_distances_buffer.as_ref(),
         });
-        let mut uniforms = WebTextShadowUniforms::default();
-        uniforms.text_params[0] = char_count as f32;
-        uniforms.text_aabb = text_aabb;
-        uniforms.char_grid_params = char_grid_params;
-        uniforms.char_grid_bounds = char_grid_bounds;
+        let uniforms = web_text_shadow_uniforms(
+            &FlyCamera::default(),
+            WIDTH,
+            HEIGHT,
+            0.0,
+            char_count,
+            text_aabb,
+            char_grid_params,
+            char_grid_bounds,
+        );
         let host = WebWorld3dStorageHost::new(
             device,
             format,
@@ -1092,12 +1122,16 @@ impl WebDemo for WebTextShadowDemo {
     fn update(&mut self, _dt: f32) {}
 
     fn update_uniforms(&self, queue: &wgpu::Queue, camera: &OrbitalCamera, time: f32) {
-        let mut uniforms = WebTextShadowUniforms::default();
-        uniforms.update_from_camera(camera, self.host.width, self.host.height, time);
-        uniforms.text_params[0] = self.char_count as f32;
-        uniforms.text_aabb = self.text_aabb;
-        uniforms.char_grid_params = self.char_grid_params;
-        uniforms.char_grid_bounds = self.char_grid_bounds;
+        let uniforms = web_text_shadow_uniforms(
+            camera,
+            self.host.width,
+            self.host.height,
+            time,
+            self.char_count,
+            self.text_aabb,
+            self.char_grid_params,
+            self.char_grid_bounds,
+        );
         self.host.write_uniforms(queue, &uniforms);
     }
 
@@ -1110,76 +1144,22 @@ impl WebDemo for WebTextShadowDemo {
     }
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct EmptyUniforms {
-    resolution: [f32; 2],
-    time: f32,
-    _padding: f32,
-}
-
 struct WebEmptyDemo {
-    host: WebWorld3dUniformHost<EmptyUniforms>,
+    host: WebWorld3dUniformHost<empty::Uniforms_std140_0>,
 }
 
-fn create_empty_demo_shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
-    let shader_source = r#"
-struct Uniforms {
-    resolution: vec2<f32>,
-    time: f32,
-    _padding: f32,
-}
-
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
-
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-}
-
-@vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0)
-    );
-    var out: VertexOutput;
-    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
-    out.uv = positions[vertex_index] * 0.5 + 0.5;
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let t = uniforms.time * 0.1;
-    let grad = mix(
-        vec3<f32>(0.05, 0.05, 0.1),
-        vec3<f32>(0.1, 0.05, 0.15),
-        in.uv.y + sin(t) * 0.1
-    );
-    return vec4<f32>(grad, 1.0);
-}
-"#;
-
-    device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Empty Demo Shader"),
-        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-    })
+fn empty_uniforms(width: u32, height: u32, time: f32) -> empty::Uniforms_std140_0 {
+    empty::Uniforms_std140_0::new([width as f32, height as f32], time, 0.0)
 }
 
 impl WebEmptyDemo {
     fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        let uniforms = EmptyUniforms {
-            resolution: [WIDTH as f32, HEIGHT as f32],
-            time: 0.0,
-            _padding: 0.0,
-        };
+        let uniforms = empty_uniforms(WIDTH, HEIGHT, 0.0);
         let host = WebWorld3dUniformHost::new(
             device,
             format,
             "Empty Web Demo",
-            create_empty_demo_shader_module,
+            empty::create_shader_module_embed_source,
             &uniforms,
         );
         Self { host }
@@ -1210,11 +1190,7 @@ impl WebDemo for WebEmptyDemo {
     fn update(&mut self, _dt: f32) {}
 
     fn update_uniforms(&self, queue: &wgpu::Queue, _camera: &OrbitalCamera, time: f32) {
-        let uniforms = EmptyUniforms {
-            resolution: [self.host.width as f32, self.host.height as f32],
-            time,
-            _padding: 0.0,
-        };
+        let uniforms = empty_uniforms(self.host.width, self.host.height, time);
         self.host.write_uniforms(queue, &uniforms);
     }
 
@@ -1451,16 +1427,7 @@ const TODO_PHYSICAL_SHADOW_COLOR: [f32; 4] = [15.0 / 255.0, 23.0 / 255.0, 42.0 /
 const TEXT_PHYSICAL_LOREM: &str = "Retained physical UI should support text-heavy scenes without collapsing back into Todo-shaped assumptions. This demo exercises wrapped retained text, scrolling, and semantic text mutation through the shared UiPhysical runtime path.\n\nA retained physical scene should stay stable while idle, rebuild only what changed, and let the runtime choose how to realize the card, lighting, and text presentation.\n\nScrolling this text should work through the same retained model + named scroll infrastructure that powers other scenes.";
 const TEXT2D_LOREM: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Curabitur pretium tincidunt lacus. Nulla gravida orci a odio. Nullam varius, turpis et commodo pharetra, est eros bibendum elit, nec luctus magna felis sollicitudin mauris. Integer in mauris eu nibh euismod gravida. Duis ac tellus et risus vulputate vehicula. Donec lobortis risus a elit. Etiam tempor. Ut ullamcorper, ligula eu tempor congue, eros est euismod turpis, id tincidunt sapien risus a quam. Maecenas fermentum consequat mi. Donec fermentum. Pellentesque malesuada nulla a mi. Duis sapien sem, aliquet sed, vulputate eget, feugiat non, orci. Sed neque. Sed eget lacus. Mauris non dui nec urna suscipit nonummy. Fusce fermentum fermentum arcu. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae.";
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, bytemuck::Zeroable)]
-struct WebUi2dUniforms {
-    screen_params: [f32; 4],
-    offset: [f32; 2],
-    _pad0: [f32; 2],
-    text_params: [f32; 4],
-    char_grid_params: [f32; 4],
-    char_grid_bounds: [f32; 4],
-}
+type WebUi2dUniforms = retained_ui2d_shader::Uniforms_std140_0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct WebUi2dViewState {
@@ -1477,6 +1444,32 @@ impl Default for WebUi2dViewState {
             rotation: 0.0,
         }
     }
+}
+
+fn build_web_ui2d_uniforms(
+    width: u32,
+    height: u32,
+    virtual_size: [f32; 2],
+    offset: [f32; 2],
+    char_count: u32,
+    scale: f32,
+    rotation: f32,
+    ui_prim_count: u32,
+    char_grid_params: [f32; 4],
+    char_grid_bounds: [f32; 4],
+) -> WebUi2dUniforms {
+    WebUi2dUniforms::new(
+        [
+            width as f32,
+            height as f32,
+            virtual_size[0],
+            virtual_size[1],
+        ],
+        offset,
+        [char_count as f32, scale, rotation, ui_prim_count as f32],
+        char_grid_params,
+        char_grid_bounds,
+    )
 }
 
 struct WebRetainedUiPass {
@@ -1579,52 +1572,29 @@ impl Default for WebUiPhysicalLayout {
     }
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct WebUiPhysicalUniforms {
-    inv_view_proj: [[f32; 4]; 4],
-    camera_pos_time: [f32; 4],
-    light_dir_intensity: [f32; 4],
-    render_params: [f32; 4],
-    text_params: [f32; 4],
-    char_grid_params: [f32; 4],
-    char_grid_bounds: [f32; 4],
-    layout_params0: [f32; 4],
-    layout_params1: [f32; 4],
-    layout_params2: [f32; 4],
-    layout_params3: [f32; 4],
-    layout_params4: [f32; 4],
-    layout_params5: [f32; 4],
-    layout_params6: [f32; 4],
-    layout_params7: [f32; 4],
-    layout_params8: [f32; 4],
-    layout_params9: [f32; 4],
-    layout_bounds: [f32; 4],
-}
+type WebUiPhysicalUniforms = retained_ui_physical_shader::Uniforms_std140_0;
 
-impl Default for WebUiPhysicalUniforms {
-    fn default() -> Self {
-        Self {
-            inv_view_proj: [[0.0; 4]; 4],
-            camera_pos_time: [0.0, 3.5, 3.5, 0.0],
-            light_dir_intensity: [0.5, 0.8, 0.3, 1.5],
-            render_params: [800.0, 600.0, 0.08, 1.0],
-            text_params: [0.0; 4],
-            char_grid_params: [0.0; 4],
-            char_grid_bounds: [0.0; 4],
-            layout_params0: [350.0, 398.0, 0.01, 1.0],
-            layout_params1: [12.0, 0.0, 8.0, 0.0],
-            layout_params2: [248.0 / 255.0, 250.0 / 255.0, 252.0 / 255.0, 1.0],
-            layout_params3: [203.0 / 255.0, 213.0 / 255.0, 225.0 / 255.0, 1.0],
-            layout_params4: [15.0 / 255.0, 23.0 / 255.0, 42.0 / 255.0, 0.16],
-            layout_params5: [0.0, 14.0, 0.0, 0.0],
-            layout_params6: [12.0, 12.0, 0.0, 0.0],
-            layout_params7: [1.0, 0.0, 0.0, 0.0],
-            layout_params8: [0.0; 4],
-            layout_params9: [0.0; 4],
-            layout_bounds: [75.0, 225.8, 625.0, 570.0],
-        }
-    }
+fn default_web_ui_physical_uniforms() -> WebUiPhysicalUniforms {
+    WebUiPhysicalUniforms::new(
+        retained_ui_physical_shader::_MatrixStorage_float4x4_ColMajorstd140_0::new([[0.0; 4]; 4]),
+        [0.0, 3.5, 3.5, 0.0],
+        [0.5, 0.8, 0.3, 1.5],
+        [800.0, 600.0, 0.08, 1.0],
+        [0.0; 4],
+        [0.0; 4],
+        [0.0; 4],
+        [350.0, 398.0, 0.01, 1.0],
+        [12.0, 0.0, 8.0, 0.0],
+        [248.0 / 255.0, 250.0 / 255.0, 252.0 / 255.0, 1.0],
+        [203.0 / 255.0, 213.0 / 255.0, 225.0 / 255.0, 1.0],
+        [15.0 / 255.0, 23.0 / 255.0, 42.0 / 255.0, 0.16],
+        [0.0, 14.0, 0.0, 0.0],
+        [12.0, 12.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0; 4],
+        [0.0; 4],
+        [75.0, 225.8, 625.0, 570.0],
+    )
 }
 
 struct WebUiPhysicalPass {
@@ -2192,7 +2162,7 @@ impl WebUiPhysicalPass {
     ) -> Self {
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{label} Uniform Buffer")),
-            contents: bytemuck::cast_slice(&[WebUiPhysicalUniforms::default()]),
+            contents: bytemuck::cast_slice(&[default_web_ui_physical_uniforms()]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let theme_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -2219,8 +2189,18 @@ impl WebUiPhysicalPass {
             device,
             &format!("{label} Bind Group Layout"),
             &[
-                (0, wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT),
-                (1, wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT),
+                (
+                    0,
+                    wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    std::num::NonZeroU64::new(std::mem::size_of::<WebUiPhysicalUniforms>() as u64)
+                        .expect("WebUiPhysicalUniforms must be non-zero"),
+                ),
+                (
+                    1,
+                    wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    std::num::NonZeroU64::new(std::mem::size_of::<ThemeUniforms>() as u64)
+                        .expect("ThemeUniforms must be non-zero"),
+                ),
             ],
             &WEB_UI_PHYSICAL_STORAGE_BINDINGS,
             wgpu::ShaderStages::FRAGMENT,
@@ -2320,57 +2300,60 @@ impl WebUiPhysicalPass {
         light_dir_intensity: [f32; 4],
         classic_decal_prim_start: f32,
     ) {
-        let mut uniforms = WebUiPhysicalUniforms::default();
+        let mut uniforms = default_web_ui_physical_uniforms();
         let aspect = self.width as f32 / self.height as f32;
-        uniforms.inv_view_proj = camera.inv_view_projection_matrix(aspect).to_cols_array_2d();
+        uniforms.invViewProj_0 =
+            retained_ui_physical_shader::_MatrixStorage_float4x4_ColMajorstd140_0::new(
+                camera.inv_view_projection_matrix(aspect).to_cols_array_2d(),
+            );
         let pos = camera.position();
-        uniforms.camera_pos_time = [pos.x, pos.y, pos.z, time];
-        uniforms.light_dir_intensity = light_dir_intensity;
-        uniforms.render_params = [self.width as f32, self.height as f32, 0.08, 1.0];
-        uniforms.text_params = [
+        uniforms.cameraPosTime_0 = [pos.x, pos.y, pos.z, time];
+        uniforms.lightDirIntensity_0 = light_dir_intensity;
+        uniforms.renderParams_0 = [self.width as f32, self.height as f32, 0.08, 1.0];
+        uniforms.textParams_0 = [
             self.char_count as f32,
             self.ui_prim_count as f32,
             1.0,
             classic_decal_prim_start,
         ];
-        uniforms.char_grid_params = self.char_grid_params;
-        uniforms.char_grid_bounds = self.char_grid_bounds;
-        uniforms.layout_params0 = [
+        uniforms.charGridParams_0 = self.char_grid_params;
+        uniforms.charGridBounds_0 = self.char_grid_bounds;
+        uniforms.layoutParams0_0 = [
             self.layout.center_px[0],
             self.layout.center_px[1],
             self.layout.pixel_to_world,
             self.layout.geometry_mode,
         ];
-        uniforms.layout_params1 = [
+        uniforms.layoutParams1_0 = [
             self.layout.corner_radius_px,
             self.layout.elevation_px,
             self.layout.depth_px,
             0.0,
         ];
-        uniforms.layout_params2 = self.layout.fill_color;
-        uniforms.layout_params3 = self.layout.outline_color;
-        uniforms.layout_params4 = self.layout.shadow_color;
-        uniforms.layout_params5 = [
+        uniforms.layoutParams2_0 = self.layout.fill_color;
+        uniforms.layoutParams3_0 = self.layout.outline_color;
+        uniforms.layoutParams4_0 = self.layout.shadow_color;
+        uniforms.layoutParams5_0 = [
             self.layout.shadow_offset_px[0],
             self.layout.shadow_offset_px[1],
             0.0,
             0.0,
         ];
-        uniforms.layout_params6 = [
+        uniforms.layoutParams6_0 = [
             self.layout.shadow_extra_size_px[0],
             self.layout.shadow_extra_size_px[1],
             0.0,
             0.0,
         ];
-        uniforms.layout_params7 = [
+        uniforms.layoutParams7_0 = [
             self.layout.outline_width_px,
             self.layout.content_inset_px,
             0.0,
             0.0,
         ];
-        uniforms.layout_params8 = self.layout.accent_color;
-        uniforms.layout_params9 = self.layout.detail_color;
-        uniforms.layout_bounds = self.layout.bounds_px;
+        uniforms.layoutParams8_0 = self.layout.accent_color;
+        uniforms.layoutParams9_0 = self.layout.detail_color;
+        uniforms.layoutBounds_0 = self.layout.bounds_px;
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
@@ -2512,24 +2495,18 @@ impl WebRetainedUiPass {
         grid_index_capacity: usize,
         primitive_capacity: usize,
     ) -> Self {
-        let uniforms = WebUi2dUniforms {
-            screen_params: [
-                width as f32,
-                height as f32,
-                virtual_size_from_bounds(text_data.char_grid_bounds)[0],
-                virtual_size_from_bounds(text_data.char_grid_bounds)[1],
-            ],
-            offset: [0.0, 0.0],
-            _pad0: [0.0; 2],
-            text_params: [
-                text_data.char_count as f32,
-                1.0,
-                0.0,
-                ui_primitives.len() as f32,
-            ],
-            char_grid_params: text_data.char_grid_params,
-            char_grid_bounds: text_data.char_grid_bounds,
-        };
+        let uniforms = build_web_ui2d_uniforms(
+            width,
+            height,
+            virtual_size_from_bounds(text_data.char_grid_bounds),
+            [0.0, 0.0],
+            text_data.char_count,
+            1.0,
+            0.0,
+            ui_primitives.len() as u32,
+            text_data.char_grid_params,
+            text_data.char_grid_bounds,
+        );
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{label} Uniform Buffer")),
             contents: bytemuck::cast_slice(&[uniforms]),
@@ -2553,7 +2530,12 @@ impl WebRetainedUiPass {
         let bind_group_layout = create_bind_group_layout_with_storage(
             device,
             &format!("{label} Bind Group Layout"),
-            &[(0, wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT)],
+            &[(
+                0,
+                wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                std::num::NonZeroU64::new(std::mem::size_of::<WebUi2dUniforms>() as u64)
+                    .expect("WebUi2dUniforms must be non-zero"),
+            )],
             &WEB_UI2D_STORAGE_BINDINGS,
             wgpu::ShaderStages::FRAGMENT,
         );
@@ -2647,24 +2629,18 @@ impl WebRetainedUiPass {
     }
 
     fn write_uniforms(&self, queue: &wgpu::Queue) {
-        let uniforms = WebUi2dUniforms {
-            screen_params: [
-                self.width as f32,
-                self.height as f32,
-                virtual_size_from_bounds(self.char_grid_bounds)[0],
-                virtual_size_from_bounds(self.char_grid_bounds)[1],
-            ],
-            offset: self.view_state.offset,
-            _pad0: [0.0; 2],
-            text_params: [
-                self.char_count as f32,
-                self.view_state.scale,
-                self.view_state.rotation,
-                self.ui_prim_count as f32,
-            ],
-            char_grid_params: self.char_grid_params,
-            char_grid_bounds: self.char_grid_bounds,
-        };
+        let uniforms = build_web_ui2d_uniforms(
+            self.width,
+            self.height,
+            virtual_size_from_bounds(self.char_grid_bounds),
+            self.view_state.offset,
+            self.char_count,
+            self.view_state.scale,
+            self.view_state.rotation,
+            self.ui_prim_count,
+            self.char_grid_params,
+            self.char_grid_bounds,
+        );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
@@ -3851,6 +3827,8 @@ fn create_web_demo(
             format,
             "Objects Web Demo",
             sdf_raymarch::create_shader_module_embed_source,
+            web_raymarch_uniforms(&FlyCamera::default(), width, height, 0.0),
+            web_raymarch_uniforms,
             "Objects",
             DemoId::Objects,
             glam::Vec3::new(0.0, 1.5, 5.0),
@@ -3861,6 +3839,8 @@ fn create_web_demo(
             format,
             "Spheres Web Demo",
             sdf_spheres::create_shader_module_embed_source,
+            web_spheres_uniforms(&FlyCamera::default(), width, height, 0.0),
+            web_spheres_uniforms,
             "Spheres",
             DemoId::Spheres,
             glam::Vec3::new(0.0, 2.0, 8.0),
@@ -3871,6 +3851,8 @@ fn create_web_demo(
             format,
             "Towers Web Demo",
             sdf_towers::create_shader_module_embed_source,
+            web_towers_uniforms(&FlyCamera::default(), width, height, 0.0),
+            web_towers_uniforms,
             "Towers",
             DemoId::Towers,
             glam::Vec3::new(4.0, 6.0, 10.0),

@@ -1,18 +1,19 @@
 use crate::retained::text::TextColors;
-use bytemuck::{Pod, Zeroable};
+use crate::ui_physical_shader_bindings;
 use std::cell::Cell;
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct ThemeUniforms {
-    pub material_colors: [[f32; 4]; 16],
-    pub material_props: [[f32; 4]; 16],
-    pub geometry_params: [f32; 4],
-    pub ambient_color: [f32; 4],
-    pub extra_params: [f32; 4],
+pub type ThemeUniforms = ui_physical_shader_bindings::ThemeUniforms_std140_0;
+
+#[derive(Copy, Clone, Debug)]
+struct ThemeSpec {
+    material_colors: [[f32; 4]; 16],
+    material_props: [[f32; 4]; 16],
+    geometry_params: [f32; 4],
+    ambient_color: [f32; 4],
+    extra_params: [f32; 4],
 }
 
-impl Default for ThemeUniforms {
+impl Default for ThemeSpec {
     fn default() -> Self {
         Self {
             material_colors: [[0.5, 0.5, 0.5, 1.0]; 16],
@@ -21,6 +22,18 @@ impl Default for ThemeUniforms {
             ambient_color: [0.15, 0.14, 0.13, 1.0],
             extra_params: [0.06, 0.0, 0.0, 0.0],
         }
+    }
+}
+
+impl ThemeSpec {
+    fn into_uniforms(self) -> ThemeUniforms {
+        ThemeUniforms::new(
+            self.material_colors,
+            self.material_props,
+            self.geometry_params,
+            self.ambient_color,
+            self.extra_params,
+        )
     }
 }
 
@@ -130,7 +143,7 @@ pub fn canonical_dark_mode(theme_id: ThemeId, dark_mode: bool) -> bool {
 
 pub fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
     let dark_mode = canonical_dark_mode(theme_id, dark_mode);
-    let mut t = ThemeUniforms::default();
+    let mut t = ThemeSpec::default();
     t.extra_params[2] = theme_id as u8 as f32;
     t.extra_params[3] = if dark_mode { 1.0 } else { 0.0 };
 
@@ -318,7 +331,7 @@ pub fn build_theme(theme_id: ThemeId, dark_mode: bool) -> ThemeUniforms {
         (ThemeId::Classic2D, true) => unreachable!("Classic2D is light-only"),
     }
 
-    t
+    t.into_uniforms()
 }
 
 pub fn theme_light(theme_id: ThemeId, dark_mode: bool) -> [f32; 4] {
