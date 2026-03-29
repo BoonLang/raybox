@@ -1,7 +1,14 @@
+use super::retained_ui_runtime_shared::{
+    create_retained_ui_storage_buffers, RetainedUiRuntimeState,
+};
+use super::retained_ui_shared::{
+    PreparedRetainedUiScene, SharedRetainedUiSceneState, SharedRetainedUiUpdate,
+    Ui2dSceneInitCapacities,
+};
 use super::DemoContext;
 use crate::demo_core::{ListCommandTarget, ListFilter, NamedScrollTarget};
 use crate::demos::gpu_runtime_common::{
-    build_font_gpu_data, create_bind_group_layout_with_storage, create_bind_group_with_storage,
+    create_bind_group_layout_with_storage, create_bind_group_with_storage,
     create_fullscreen_pipeline, create_storage_buffers, UiStorageBuffers, VectorFontGpuData,
 };
 use crate::retained::fixed_scene::FixedUi2dSceneUpdate;
@@ -28,6 +35,12 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 pub type Ui2DUniforms = retained_ui2d_shader::Uniforms_std140_0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ui2DBackgroundMode {
+    Opaque,
+    Transparent,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ui2DViewState {
@@ -131,6 +144,7 @@ fn build_ui2d_uniforms(
     ui_prim_count: u32,
     char_grid_params: [f32; 4],
     char_grid_bounds: [f32; 4],
+    background_mode: Ui2DBackgroundMode,
 ) -> Ui2DUniforms {
     Ui2DUniforms::new(
         [
@@ -143,6 +157,12 @@ fn build_ui2d_uniforms(
         [char_count as f32, scale, rotation, ui_prim_count as f32],
         char_grid_params,
         char_grid_bounds,
+        [
+            matches!(background_mode, Ui2DBackgroundMode::Transparent) as u32 as f32,
+            0.0,
+            0.0,
+            0.0,
+        ],
     )
 }
 
@@ -186,12 +206,74 @@ impl From<FixedUi2dSceneUpdate> for Ui2dRuntimeUpdate {
 pub trait Ui2dSceneState {
     fn atlas(&self) -> &VectorFontAtlas;
     fn text_state(&self) -> &FixedTextSceneState;
-    fn build_ui2d_init_data(&self) -> Ui2dSceneInitData;
+    fn build_ui2d_init_data(&self, colors: &TextColors) -> Ui2dSceneInitData;
     fn take_ui2d_runtime_update(&mut self, colors: &TextColors) -> Option<Ui2dRuntimeUpdate>;
     fn mark_view_transform_dirty(&mut self);
     fn set_viewport_size(&mut self, width: u32, height: u32);
     fn scene(&self) -> &RetainedScene;
     fn scene_mut(&mut self) -> &mut RetainedScene;
+}
+
+fn ui2d_init_data_from_prepared(
+    prepared: PreparedRetainedUiScene,
+    capacities: Ui2dSceneInitCapacities,
+) -> Ui2dSceneInitData {
+    Ui2dSceneInitData {
+        text_data: prepared.text_data,
+        ui_primitives: prepared.ui_data.primitives,
+        text_capacity: capacities.text_capacity,
+        grid_index_capacity: capacities.grid_index_capacity,
+        primitive_capacity: capacities.primitive_capacity,
+    }
+}
+
+impl From<SharedRetainedUiUpdate> for Ui2dRuntimeUpdate {
+    fn from(update: SharedRetainedUiUpdate) -> Self {
+        match update {
+            SharedRetainedUiUpdate::Full(prepared) => Self {
+                text: Some(Ui2dRuntimeTextUpdate::Full(prepared.text_data)),
+                ui: Some(Ui2dRuntimeUiUpdate::Full(prepared.ui_data)),
+            },
+            SharedRetainedUiUpdate::Partial { text, ui } => Self { text, ui },
+        }
+    }
+}
+
+impl<T: SharedRetainedUiSceneState> Ui2dSceneState for T {
+    fn atlas(&self) -> &VectorFontAtlas {
+        self.shared_atlas()
+    }
+
+    fn text_state(&self) -> &FixedTextSceneState {
+        self.shared_text_state()
+    }
+
+    fn build_ui2d_init_data(&self, colors: &TextColors) -> Ui2dSceneInitData {
+        let prepared = self.build_prepared_retained_ui_scene(colors);
+        let capacities = self.ui2d_scene_init_capacities(&prepared);
+        ui2d_init_data_from_prepared(prepared, capacities)
+    }
+
+    fn take_ui2d_runtime_update(&mut self, colors: &TextColors) -> Option<Ui2dRuntimeUpdate> {
+        self.take_prepared_retained_ui_update(colors)
+            .map(Into::into)
+    }
+
+    fn mark_view_transform_dirty(&mut self) {
+        self.mark_retained_ui_view_transform_dirty();
+    }
+
+    fn set_viewport_size(&mut self, width: u32, height: u32) {
+        self.set_retained_ui_viewport_size(width, height);
+    }
+
+    fn scene(&self) -> &RetainedScene {
+        self.shared_scene()
+    }
+
+    fn scene_mut(&mut self) -> &mut RetainedScene {
+        self.shared_scene_mut()
+    }
 }
 
 pub struct FixedUi2dSceneHost {
@@ -235,6 +317,7 @@ struct Ui2dRuntimeHost {
     label: String,
     width: u32,
     height: u32,
+    background_mode: Ui2DBackgroundMode,
 }
 
 pub struct UiPrimitivesOnlyPass {
@@ -274,21 +357,12 @@ pub trait Ui2dDeckHost {
 pub struct UiTextAndPrimitivesPass {
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
-    char_instances_buffer: wgpu::Buffer,
-    char_grid_cells_buffer: wgpu::Buffer,
-    char_grid_indices_buffer: wgpu::Buffer,
-    ui_primitives_buffer: wgpu::Buffer,
+    storage_buffers: UiStorageBuffers,
+    retained_ui: RetainedUiRuntimeState,
     bind_group: wgpu::BindGroup,
     width: u32,
     height: u32,
-    char_count: u32,
-    ui_prim_count: u32,
-    char_grid_params: [f32; 4],
-    char_grid_bounds: [f32; 4],
-    text_capacity: usize,
-    grid_cell_capacity: usize,
-    grid_index_capacity: usize,
-    primitive_capacity: usize,
+    background_mode: Ui2DBackgroundMode,
     view_state: Ui2DViewState,
     uniforms_dirty: Cell<bool>,
 }
@@ -319,6 +393,7 @@ impl UiPrimitivesOnlyPass {
             ui_primitives.len() as u32,
             [0.0; 4],
             [0.0; 4],
+            Ui2DBackgroundMode::Opaque,
         );
 
         let uniform_buffer = ctx
@@ -409,6 +484,7 @@ impl UiPrimitivesOnlyPass {
             self.ui_prim_count,
             [0.0; 4],
             [0.0; 4],
+            Ui2DBackgroundMode::Opaque,
         );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         self.uniforms_dirty.set(false);
@@ -471,6 +547,7 @@ impl Ui2dPassHost {
         text_capacity: usize,
         grid_index_capacity: usize,
         primitive_capacity: usize,
+        background_mode: Ui2DBackgroundMode,
     ) -> Self {
         Self {
             pass: UiTextAndPrimitivesPass::new(
@@ -482,6 +559,7 @@ impl Ui2dPassHost {
                 text_capacity,
                 grid_index_capacity,
                 primitive_capacity,
+                background_mode,
             ),
         }
     }
@@ -615,6 +693,7 @@ impl Ui2dRuntimeHost {
         label: &str,
         atlas: &VectorFontAtlas,
         init: &Ui2dSceneInitData,
+        background_mode: Ui2DBackgroundMode,
     ) -> Self {
         let runtime = Ui2dPassHost::new_text_and_primitives(
             ctx,
@@ -625,6 +704,7 @@ impl Ui2dRuntimeHost {
             init.text_capacity.max(1),
             init.grid_index_capacity.max(1),
             init.primitive_capacity.max(1),
+            background_mode,
         );
         Self {
             runtime,
@@ -634,6 +714,7 @@ impl Ui2dRuntimeHost {
             label: label.to_string(),
             width: ctx.width,
             height: ctx.height,
+            background_mode,
         }
     }
 
@@ -706,6 +787,7 @@ impl Ui2dRuntimeHost {
             init.text_capacity.max(1),
             init.grid_index_capacity.max(1),
             init.primitive_capacity.max(1),
+            self.background_mode,
         );
         self.runtime.set_view_state(view_state);
     }
@@ -750,6 +832,7 @@ impl UiTextAndPrimitivesPass {
         text_capacity: usize,
         grid_index_capacity: usize,
         primitive_capacity: usize,
+        background_mode: Ui2DBackgroundMode,
     ) -> Self {
         let uniforms = build_ui2d_uniforms(
             ctx.width,
@@ -762,6 +845,7 @@ impl UiTextAndPrimitivesPass {
             ui_primitives.len() as u32,
             text_data.char_grid_params,
             text_data.char_grid_bounds,
+            background_mode,
         );
 
         let uniform_buffer = ctx
@@ -772,18 +856,23 @@ impl UiTextAndPrimitivesPass {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
-        let storage_buffers = create_storage_buffers(
+        let storage_buffers = create_retained_ui_storage_buffers(
             ctx.device,
             ctx.queue,
-            &build_font_gpu_data(atlas),
-            bytemuck::cast_slice(&text_data.char_instances),
-            text_capacity * std::mem::size_of::<GpuCharInstanceEx>(),
-            &text_data.char_grid_cells,
-            &text_data.char_grid_indices,
+            atlas,
+            text_data,
+            text_capacity,
             grid_index_capacity,
-            bytemuck::cast_slice(ui_primitives),
-            primitive_capacity * std::mem::size_of::<GpuUiPrimitive>(),
+            ui_primitives,
+            primitive_capacity,
             &format!("{label_prefix} Primitives Buffer"),
+        );
+        let retained_ui = RetainedUiRuntimeState::new(
+            text_data,
+            ui_primitives,
+            text_capacity,
+            grid_index_capacity,
+            primitive_capacity,
         );
 
         let bind_group_layout = create_bind_group_layout_with_storage(
@@ -808,14 +897,6 @@ impl UiTextAndPrimitivesPass {
             &UI2D_STORAGE_BINDINGS,
         );
 
-        let UiStorageBuffers {
-            char_instances_buffer,
-            char_grid_cells_buffer,
-            char_grid_indices_buffer,
-            ui_primitives_buffer,
-            ..
-        } = storage_buffers;
-
         let shader_module = retained_ui2d_shader::create_shader_module_embed_source(ctx.device);
         let pipeline = create_fullscreen_pipeline(
             ctx.device,
@@ -828,21 +909,12 @@ impl UiTextAndPrimitivesPass {
         Self {
             pipeline,
             uniform_buffer,
-            char_instances_buffer,
-            char_grid_cells_buffer,
-            char_grid_indices_buffer,
-            ui_primitives_buffer,
+            storage_buffers,
+            retained_ui,
             bind_group,
             width: ctx.width,
             height: ctx.height,
-            char_count: text_data.char_count,
-            ui_prim_count: ui_primitives.len() as u32,
-            char_grid_params: text_data.char_grid_params,
-            char_grid_bounds: text_data.char_grid_bounds,
-            text_capacity,
-            grid_cell_capacity: text_data.char_grid_cells.len(),
-            grid_index_capacity,
-            primitive_capacity,
+            background_mode,
             view_state: Ui2DViewState::default(),
             uniforms_dirty: Cell::new(true),
         }
@@ -854,11 +926,6 @@ impl UiTextAndPrimitivesPass {
         text_data: &FixedTextSceneData,
         ui_primitives: &[GpuUiPrimitive],
     ) {
-        assert!(text_data.char_instances.len() <= self.text_capacity);
-        assert!(text_data.char_grid_cells.len() <= self.grid_cell_capacity);
-        assert!(text_data.char_grid_indices.len() <= self.grid_index_capacity);
-        assert!(ui_primitives.len() <= self.primitive_capacity);
-
         self.sync_text_scene_data(queue, text_data);
         self.sync_ui_scene_data(queue, ui_primitives);
     }
@@ -868,62 +935,25 @@ impl UiTextAndPrimitivesPass {
         text_data: &FixedTextSceneData,
         ui_primitives: &[GpuUiPrimitive],
     ) -> bool {
-        text_data.char_instances.len() <= self.text_capacity
-            && text_data.char_grid_cells.len() <= self.grid_cell_capacity
-            && text_data.char_grid_indices.len() <= self.grid_index_capacity
-            && ui_primitives.len() <= self.primitive_capacity
+        self.retained_ui
+            .can_fit_scene_data(text_data, ui_primitives)
     }
 
     pub fn sync_text_scene_data(&mut self, queue: &wgpu::Queue, text_data: &FixedTextSceneData) {
-        assert!(text_data.char_instances.len() <= self.text_capacity);
-        assert!(text_data.char_grid_cells.len() <= self.grid_cell_capacity);
-        assert!(text_data.char_grid_indices.len() <= self.grid_index_capacity);
-
-        queue.write_buffer(
-            &self.char_instances_buffer,
-            0,
-            bytemuck::cast_slice(&text_data.char_instances),
-        );
-        queue.write_buffer(
-            &self.char_grid_cells_buffer,
-            0,
-            bytemuck::cast_slice(&text_data.char_grid_cells),
-        );
-        queue.write_buffer(
-            &self.char_grid_indices_buffer,
-            0,
-            bytemuck::cast_slice(&text_data.char_grid_indices),
-        );
-
-        self.char_count = text_data.char_count;
-        self.char_grid_params = text_data.char_grid_params;
-        self.char_grid_bounds = text_data.char_grid_bounds;
+        self.retained_ui
+            .sync_text_scene_data(queue, &self.storage_buffers, text_data);
         self.uniforms_dirty.set(true);
     }
 
     pub fn sync_ui_scene_data(&mut self, queue: &wgpu::Queue, ui_primitives: &[GpuUiPrimitive]) {
-        assert!(ui_primitives.len() <= self.primitive_capacity);
-        queue.write_buffer(
-            &self.ui_primitives_buffer,
-            0,
-            bytemuck::cast_slice(ui_primitives),
-        );
-        self.ui_prim_count = ui_primitives.len() as u32;
+        self.retained_ui
+            .sync_ui_scene_data(queue, &self.storage_buffers, ui_primitives);
         self.uniforms_dirty.set(true);
     }
 
     pub fn sync_ui_patches(&mut self, queue: &wgpu::Queue, patches: &[GpuUiPatch]) {
-        let primitive_size = std::mem::size_of::<GpuUiPrimitive>() as u64;
-        for patch in patches {
-            if patch.primitives.is_empty() {
-                continue;
-            }
-            queue.write_buffer(
-                &self.ui_primitives_buffer,
-                patch.offset as u64 * primitive_size,
-                bytemuck::cast_slice(&patch.primitives),
-            );
-        }
+        self.retained_ui
+            .sync_ui_patches(queue, &self.storage_buffers, patches);
         self.uniforms_dirty.set(true);
     }
 
@@ -941,8 +971,9 @@ impl UiTextAndPrimitivesPass {
             if slots.is_empty() {
                 continue;
             }
+            self.retained_ui.char_instances[*offset..*offset + slots.len()].clone_from_slice(slots);
             queue.write_buffer(
-                &self.char_instances_buffer,
+                &self.storage_buffers.char_instances_buffer,
                 *offset as u64 * char_instance_size,
                 bytemuck::cast_slice(slots),
             );
@@ -952,22 +983,21 @@ impl UiTextAndPrimitivesPass {
         let grid_index_size = std::mem::size_of::<u32>() as u64;
         for &cell_idx in changed_cells {
             queue.write_buffer(
-                &self.char_grid_cells_buffer,
+                &self.storage_buffers.char_grid_cells_buffer,
                 cell_idx as u64 * grid_cell_size,
                 bytemuck::cast_slice(&[grid.cells[cell_idx]]),
             );
 
             let index_offset = grid.cell_index_offset(cell_idx);
             queue.write_buffer(
-                &self.char_grid_indices_buffer,
+                &self.storage_buffers.char_grid_indices_buffer,
                 index_offset as u64 * grid_index_size,
                 bytemuck::cast_slice(
                     &grid.indices[index_offset..index_offset + grid_cell_capacity],
                 ),
             );
         }
-
-        self.char_count = char_count;
+        self.retained_ui.char_count = char_count;
         self.uniforms_dirty.set(true);
     }
 
@@ -1019,14 +1049,15 @@ impl UiTextAndPrimitivesPass {
         let uniforms = build_ui2d_uniforms(
             self.width,
             self.height,
-            virtual_size_from_bounds(self.char_grid_bounds),
+            virtual_size_from_bounds(self.retained_ui.char_grid_bounds),
             self.view_state.offset,
-            self.char_count,
+            self.retained_ui.char_count,
             self.view_state.scale,
             self.view_state.rotation,
-            self.ui_prim_count,
-            self.char_grid_params,
-            self.char_grid_bounds,
+            self.retained_ui.ui_prim_count,
+            self.retained_ui.char_grid_params,
+            self.retained_ui.char_grid_bounds,
+            self.background_mode,
         );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         self.uniforms_dirty.set(false);
@@ -1126,6 +1157,7 @@ impl FixedUi2dSceneHost {
                 text_capacity: scene_state.text_state.layout().total_capacity().max(1),
                 grid_index_capacity: scene_state.text_state.layout().grid_index_capacity().max(1),
             },
+            Ui2DBackgroundMode::Opaque,
         );
         scene_state.clear_dirty();
 
@@ -1188,6 +1220,50 @@ impl FixedUi2dSceneHost {
             text_render_space,
             ui_render_space,
         )
+    }
+
+    pub fn new_with_background_mode(
+        ctx: &DemoContext,
+        label: &str,
+        scene: RetainedScene,
+        layout: FixedTextRunLayout<'static>,
+        atlas: Arc<VectorFontAtlas>,
+        text_colors: TextColors,
+        text_render_space: TextRenderSpace,
+        ui_render_space: UiRenderSpace,
+        background_mode: Ui2DBackgroundMode,
+    ) -> Self {
+        let (mut scene_state, init) = FixedUi2dSceneState::new(
+            scene,
+            layout,
+            &atlas,
+            &text_colors,
+            text_render_space,
+            ui_render_space,
+        );
+        let FixedUi2dSceneInit { text_data, ui_data } = init;
+        let runtime_host = Ui2dRuntimeHost::new(
+            ctx,
+            label,
+            &atlas,
+            &Ui2dSceneInitData {
+                text_data,
+                primitive_capacity: ui_data.primitive_count.max(1),
+                ui_primitives: ui_data.primitives,
+                text_capacity: scene_state.text_state.layout().total_capacity().max(1),
+                grid_index_capacity: scene_state.text_state.layout().grid_index_capacity().max(1),
+            },
+            background_mode,
+        );
+        scene_state.clear_dirty();
+        Self {
+            scene_state,
+            runtime_host,
+            atlas,
+            text_colors,
+            text_render_space,
+            ui_render_space,
+        }
     }
 
     pub fn prepare_frame(&mut self) {
@@ -1681,8 +1757,25 @@ impl ShowcaseSceneDeckTarget for Ui2dSceneDeck<ModeledFixedUi2dSceneHost<Showcas
 
 impl<S: Ui2dSceneState> StateBackedUi2dHost<S> {
     pub fn new(ctx: &DemoContext, label: &str, state: S, text_colors: TextColors) -> Self {
-        let init = state.build_ui2d_init_data();
-        let runtime_host = Ui2dRuntimeHost::new(ctx, label, state.atlas(), &init);
+        let init = state.build_ui2d_init_data(&text_colors);
+        let runtime_host =
+            Ui2dRuntimeHost::new(ctx, label, state.atlas(), &init, Ui2DBackgroundMode::Opaque);
+        Self {
+            state,
+            runtime_host,
+            text_colors,
+        }
+    }
+
+    pub fn new_with_background_mode(
+        ctx: &DemoContext,
+        label: &str,
+        state: S,
+        text_colors: TextColors,
+        background_mode: Ui2DBackgroundMode,
+    ) -> Self {
+        let init = state.build_ui2d_init_data(&text_colors);
+        let runtime_host = Ui2dRuntimeHost::new(ctx, label, state.atlas(), &init, background_mode);
         Self {
             state,
             runtime_host,
@@ -1762,7 +1855,7 @@ impl<S: Ui2dSceneState> StateBackedUi2dHost<S> {
         };
 
         if update.needs_full_rebuild() {
-            let init = self.state.build_ui2d_init_data();
+            let init = self.state.build_ui2d_init_data(&self.text_colors);
             if !self
                 .runtime_host
                 .runtime

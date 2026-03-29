@@ -3,10 +3,14 @@
 //! Handles window management, demo switching, input, and overlay rendering.
 //! Supports hot-reload with state preservation.
 
-use super::{create_demo, Demo, DemoContext, DemoId, DemoType};
+use super::{
+    create_demo, CompiledFrameGraph, CompiledFramePass, Demo, DemoContext, DemoId, DemoType,
+    EffectPacket, FramePacket, FrameTarget, OverlayPacket, PresentPacket, UiLayerPacket,
+    WorldViewPacket,
+};
 use crate::camera::FlyCamera;
 use crate::constants::{HEIGHT, WIDTH};
-use crate::gpu_runtime_common::{PresentHost, PRESENT_INTERMEDIATE_FORMAT};
+use crate::gpu_runtime_common::{PresentHost, TextureCompositeHost, PRESENT_INTERMEDIATE_FORMAT};
 #[allow(unused_imports)]
 use crate::input::{InputAction, InputHandler, OverlayMode};
 
@@ -44,7 +48,8 @@ impl From<OverlayModeState> for OverlayMode {
 }
 
 use anyhow::{Context, Result};
-use std::collections::HashSet;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -134,6 +139,11 @@ fn apply_list_item_command(
 }
 
 /// Demo runner state
+struct OffscreenTarget {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+}
+
 pub struct DemoRunner {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
@@ -151,6 +161,8 @@ pub struct DemoRunner {
     // Overlay
     overlay: SimpleOverlay,
     present_host: PresentHost,
+    composite_host: TextureCompositeHost,
+    offscreen_targets: HashMap<Cow<'static, str>, OffscreenTarget>,
     show_keybindings: bool,
 
     // When true, all keyboard input is ignored (Tab to pause, mouse click to resume)
@@ -247,6 +259,8 @@ impl DemoRunner {
         let overlay =
             SimpleOverlay::new(&device, &queue, PRESENT_INTERMEDIATE_FORMAT, WIDTH, HEIGHT)?;
         let present_host = PresentHost::new(&device, WIDTH, HEIGHT, surface_format, "Native");
+        let composite_host =
+            TextureCompositeHost::new(&device, PRESENT_INTERMEDIATE_FORMAT, "Native");
 
         Ok(Self {
             window,
@@ -259,6 +273,8 @@ impl DemoRunner {
             input,
             overlay,
             present_host,
+            composite_host,
+            offscreen_targets: HashMap::new(),
             show_keybindings: false,
             keyboard_paused: true,
             pressed_keys: HashSet::new(),
@@ -467,6 +483,7 @@ impl DemoRunner {
         self.pressed_keys.clear();
 
         self.current_demo = new_demo;
+        self.offscreen_targets.clear();
         self.reset_frame_timing();
         self.mark_needs_redraw();
 
@@ -881,8 +898,10 @@ impl DemoRunner {
                 label: Some("Screenshot Encoder"),
             });
 
-        self.encode_scene_pass(&mut encoder, self.present_host.scene_view(), time);
-        self.encode_overlay_pass(&mut encoder, self.present_host.scene_view());
+        let mut frame_packet = self.current_demo.build_frame_packet(time);
+        frame_packet.push_overlay(OverlayPacket::new("Overlay"));
+        let frame_graph = frame_packet.compile();
+        self.execute_frame_graph(&frame_graph, &mut encoder, None, time);
 
         // Create buffer for reading back
         let bytes_per_row = (self.config.width * 4 + 255) & !255; // Align to 256
@@ -1097,9 +1116,9 @@ impl DemoRunner {
                 label: Some("Render Encoder"),
             });
 
-        self.encode_scene_pass(&mut encoder, self.present_host.scene_view(), time);
-        self.encode_overlay_pass(&mut encoder, self.present_host.scene_view());
-        self.present_host.encode_present_pass(&mut encoder, &view);
+        let frame_packet = self.build_frame_packet(time);
+        let frame_graph = frame_packet.compile();
+        self.execute_frame_graph(&frame_graph, &mut encoder, Some(&view), time);
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
@@ -1115,19 +1134,202 @@ impl DemoRunner {
         self.update_overlay();
     }
 
-    fn encode_scene_pass(
+    fn build_frame_packet(&self, time: f32) -> FramePacket {
+        let mut packet = self.current_demo.build_frame_packet(time);
+        packet.push_overlay(OverlayPacket::new("Overlay"));
+        packet.push_present(PresentPacket::new());
+        packet
+    }
+
+    fn collect_frame_targets(graph: &CompiledFrameGraph) -> Vec<Cow<'static, str>> {
+        let mut names = Vec::new();
+        for pass in graph.passes() {
+            let target = match pass {
+                CompiledFramePass::WorldView(packet) => Some(&packet.target),
+                CompiledFramePass::UiLayer(packet) => Some(&packet.target),
+                CompiledFramePass::Effect(packet) => Some(&packet.target),
+                CompiledFramePass::Overlay(packet) => Some(&packet.target),
+                CompiledFramePass::Present(_) => None,
+            };
+            if let Some(FrameTarget::Offscreen(name)) = target {
+                if !names.iter().any(|existing| existing == name) {
+                    names.push(name.clone());
+                }
+            }
+            if let CompiledFramePass::Effect(packet) = pass {
+                if let FrameTarget::Offscreen(name) = &packet.source {
+                    if !names.iter().any(|existing| existing == name) {
+                        names.push(name.clone());
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    fn create_frame_target_texture(&self, label: &str) -> OffscreenTarget {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: self.config.width.max(1),
+                height: self.config.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: PRESENT_INTERMEDIATE_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        OffscreenTarget {
+            _texture: texture,
+            view,
+        }
+    }
+
+    fn ensure_frame_targets(&mut self, graph: &CompiledFrameGraph) {
+        let required_targets = Self::collect_frame_targets(graph);
+        self.offscreen_targets
+            .retain(|name, _| required_targets.iter().any(|required| required == name));
+        for name in required_targets {
+            if !self.offscreen_targets.contains_key(&name) {
+                let target =
+                    self.create_frame_target_texture(&format!("Frame Offscreen Target {name}"));
+                self.offscreen_targets.insert(name, target);
+            }
+        }
+    }
+
+    fn target_view(&self, target: &FrameTarget) -> Option<&wgpu::TextureView> {
+        match target {
+            FrameTarget::SceneColor => Some(self.present_host.scene_view()),
+            FrameTarget::Offscreen(name) => {
+                self.offscreen_targets.get(name).map(|target| &target.view)
+            }
+        }
+    }
+
+    fn source_view(&self, source: &FrameTarget) -> Option<&wgpu::TextureView> {
+        self.target_view(source)
+    }
+
+    fn target_size(&self, target: &FrameTarget) -> [u32; 2] {
+        match target {
+            FrameTarget::SceneColor => self.present_host.size(),
+            FrameTarget::Offscreen(_) => [self.config.width.max(1), self.config.height.max(1)],
+        }
+    }
+
+    fn execute_frame_graph(
+        &mut self,
+        graph: &CompiledFrameGraph,
+        encoder: &mut wgpu::CommandEncoder,
+        output_view: Option<&wgpu::TextureView>,
+        time: f32,
+    ) {
+        self.ensure_frame_targets(graph);
+        for pass in graph.passes() {
+            match pass {
+                CompiledFramePass::WorldView(packet) => {
+                    self.encode_world_view_pass(encoder, packet, time)
+                }
+                CompiledFramePass::UiLayer(packet) => {
+                    self.encode_ui_layer_pass(encoder, packet, time)
+                }
+                CompiledFramePass::Effect(packet) => self.encode_effect_pass(encoder, packet),
+                CompiledFramePass::Overlay(packet) => self.encode_overlay_packet(encoder, packet),
+                CompiledFramePass::Present(_packet) => {
+                    if let Some(output_view) = output_view {
+                        self.present_host.encode_present_pass(encoder, output_view);
+                    }
+                }
+            }
+        }
+    }
+
+    fn encode_world_view_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        packet: &WorldViewPacket,
+        time: f32,
+    ) {
+        let Some(view) = self.target_view(&packet.target) else {
+            return;
+        };
+        self.encode_demo_scene_pass(
+            encoder,
+            view,
+            packet.label.as_ref(),
+            packet.composite_mode.load_op(packet.clear_color),
+            time,
+            |demo, render_pass, queue, time| {
+                demo.render_world_view(packet, render_pass, queue, time);
+            },
+        );
+    }
+
+    fn encode_ui_layer_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        packet: &UiLayerPacket,
+        time: f32,
+    ) {
+        let Some(view) = self.target_view(&packet.target) else {
+            return;
+        };
+        self.encode_demo_scene_pass(
+            encoder,
+            view,
+            packet.label.as_ref(),
+            packet.composite_mode.load_op(packet.clear_color),
+            time,
+            |demo, render_pass, queue, time| {
+                demo.render_ui_layer(packet, render_pass, queue, time);
+            },
+        );
+    }
+
+    fn encode_effect_pass(&self, encoder: &mut wgpu::CommandEncoder, packet: &EffectPacket) {
+        let Some(source_view) = self.source_view(&packet.source) else {
+            return;
+        };
+        let Some(target_view) = self.target_view(&packet.target) else {
+            return;
+        };
+        self.composite_host.encode_pass(
+            &self.device,
+            &self.queue,
+            encoder,
+            packet.label.as_ref(),
+            source_view,
+            target_view,
+            packet.composite_mode.load_op(packet.clear_color),
+            self.target_size(&packet.target),
+            packet.source_rect.as_vec4(),
+            packet.target_rect.as_vec4(),
+        );
+    }
+
+    fn encode_demo_scene_pass<F>(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
+        label: &str,
+        load: wgpu::LoadOp<wgpu::Color>,
         time: f32,
-    ) {
+        render_fn: F,
+    ) where
+        F: for<'a> FnOnce(&'a dyn Demo, &mut wgpu::RenderPass<'a>, &wgpu::Queue, f32),
+    {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Scene Render Pass"),
+            label: Some(label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -1136,13 +1338,20 @@ impl DemoRunner {
             occlusion_query_set: None,
         });
 
-        self.current_demo
-            .render(&mut render_pass, &self.queue, time);
+        render_fn(
+            self.current_demo.as_ref(),
+            &mut render_pass,
+            &self.queue,
+            time,
+        );
     }
 
-    fn encode_overlay_pass(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+    fn encode_overlay_packet(&self, encoder: &mut wgpu::CommandEncoder, packet: &OverlayPacket) {
+        let Some(view) = self.target_view(&packet.target) else {
+            return;
+        };
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Overlay Render Pass"),
+            label: Some(packet.label.as_ref()),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target: None,
@@ -1206,6 +1415,7 @@ impl DemoRunner {
                 self.config.format,
                 "Native",
             );
+            self.offscreen_targets.clear();
             self.mark_needs_redraw();
         }
     }
@@ -1226,45 +1436,65 @@ impl DemoRunner {
 
     fn handle_key_pressed(&mut self, code: KeyCode, _event_loop: &ActiveEventLoop) {
         // Number keys for demo switching
-        match code {
+        let switched = match code {
             KeyCode::Digit0 => {
                 let _ = self.switch_demo(DemoId::Empty);
+                true
             }
             KeyCode::Digit1 => {
                 let _ = self.switch_demo(DemoId::Objects);
+                true
             }
             KeyCode::Digit2 => {
                 let _ = self.switch_demo(DemoId::Spheres);
+                true
             }
             KeyCode::Digit3 => {
                 let _ = self.switch_demo(DemoId::Towers);
+                true
             }
             KeyCode::Digit4 => {
                 let _ = self.switch_demo(DemoId::Text2D);
+                true
             }
             KeyCode::Digit5 => {
                 let _ = self.switch_demo(DemoId::Clay);
+                true
             }
             KeyCode::Digit6 => {
                 let _ = self.switch_demo(DemoId::TextShadow);
+                true
             }
             KeyCode::Digit7 => {
                 let _ = self.switch_demo(DemoId::TodoMvc);
+                true
             }
             KeyCode::Digit8 => {
                 let _ = self.switch_demo(DemoId::TodoMvc3D);
+                true
             }
             KeyCode::Digit9 => {
                 let _ = self.switch_demo(DemoId::RetainedUi);
+                true
             }
             KeyCode::Minus => {
                 let _ = self.switch_demo(DemoId::RetainedUiPhysical);
+                true
             }
             KeyCode::Equal => {
                 let _ = self.switch_demo(DemoId::TextPhysical);
+                true
+            }
+            KeyCode::KeyV => {
+                let _ = self.switch_demo(DemoId::MixedUiWorld);
+                true
             }
             // Escape handled at top of window_event before keyboard_paused check
-            _ => {}
+            _ => false,
+        };
+
+        if switched {
+            return;
         }
 
         let _ = self.current_demo.handle_key_pressed(code);

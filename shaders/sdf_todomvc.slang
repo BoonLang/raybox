@@ -8,6 +8,7 @@ struct Uniforms {
     float4 textParams;   // x = charCount, y = scale, z = rotation, w = uiPrimCount
     float4 charGridParams;  // xy = gridDims, zw = cellSize
     float4 charGridBounds;  // xy = gridMin, zw = gridMax
+    float4 renderFlags;  // x = transparent background
 };
 
 // Bézier curve (packed format)
@@ -427,16 +428,19 @@ float4 fs_main(VertexOutput input) : SV_Target {
     // Outside the 700x700 virtual viewport: dark gray
     bool outsideViewport = pixelPos.x < 0.0 || pixelPos.x > VIRTUAL_SIZE.x ||
                            pixelPos.y < 0.0 || pixelPos.y > VIRTUAL_SIZE.y;
+    bool transparentBackground = uniforms.renderFlags.x > 0.5;
     // All compositing in sRGB space (matches browser text rendering behavior).
     // Final result converted to linear for the Rgba8UnormSrgb framebuffer.
-    float3 finalColor;
+    float4 finalColor;
 
     if (outsideViewport) {
-        finalColor = float3(0.25, 0.25, 0.25);
+        finalColor = transparentBackground
+            ? float4(0.0, 0.0, 0.0, 0.0)
+            : float4(0.25, 0.25, 0.25, 1.0);
     } else {
-        // Background: #f5f5f5 (sRGB)
-        float3 bgColor = float3(0.96078, 0.96078, 0.96078);
-        float4 color = float4(bgColor, 1.0);
+        float4 color = transparentBackground
+            ? float4(0.0, 0.0, 0.0, 0.0)
+            : float4(float3(0.96078, 0.96078, 0.96078), 1.0);
 
         // Render UI primitives (shadows, rects, borders, circles, lines)
         float4 uiColor = renderUiPrimitives(pixelPos, uiPrimCount);
@@ -446,9 +450,14 @@ float4 fs_main(VertexOutput input) : SV_Target {
         float4 textColor = renderText(pixelPos, scale);
         color = blendOver(color, textColor);
 
-        finalColor = color.rgb;
+        finalColor = color;
     }
 
     // Convert sRGB composited result → linear for sRGB framebuffer hardware encode
-    return float4(srgbToLinear(finalColor.r), srgbToLinear(finalColor.g), srgbToLinear(finalColor.b), 1.0);
+    return float4(
+        srgbToLinear(finalColor.r),
+        srgbToLinear(finalColor.g),
+        srgbToLinear(finalColor.b),
+        finalColor.a
+    );
 }

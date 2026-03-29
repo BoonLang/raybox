@@ -10,13 +10,12 @@
 //! - assets/todomvc_3d/reference_neumorphism.jpg
 
 use super::{
-    todomvc_common::{create_todomvc_ui_physical_deck, CLASSIC_DECAL_PRIM_START},
-    ui_physical_runtime::{StateBackedUiPhysicalSceneDeck, ThemedUiPhysicalHost},
+    todomvc_common::{create_todomvc_themed_ui_physical_host, TodoMvcThemedUiPhysicalHost},
     Demo, DemoContext, DemoId, DemoType, ListCommandTarget, NamedScrollTarget,
 };
 use crate::camera::FlyCamera;
 use crate::demo_core::UiPhysicalCameraPreset;
-use crate::demos::todomvc_common::TodoMvcRetainedState;
+use crate::demos::ui_physical_runtime::UiPhysicalBackgroundMode;
 use crate::input::CameraConfig;
 use anyhow::Result;
 
@@ -39,26 +38,21 @@ const KEYBINDINGS_TODOMVC_3D: &[(&str, &str)] = &[
 // ---- Demo struct ----
 
 pub struct TodoMvc3DDemo {
-    host: ThemedUiPhysicalHost<StateBackedUiPhysicalSceneDeck<TodoMvcRetainedState>>,
+    host: TodoMvcThemedUiPhysicalHost,
 }
 
 impl TodoMvc3DDemo {
     pub fn new(ctx: &DemoContext) -> Result<Self> {
         let current_theme = ThemeId::Classic2D;
         let dark_mode = false;
-        let theme_state = UiPhysicalThemeState::new(current_theme, dark_mode);
-        let colors = theme_state.text_colors();
-        let deck =
-            create_todomvc_ui_physical_deck(ctx, &colors, "TodoMVC 3D UI Primitives Buffer")?;
-        let theme_uniforms = theme_state.theme_uniforms();
-        let host = ThemedUiPhysicalHost::new(
+        let host = create_todomvc_themed_ui_physical_host(
             ctx,
             "TodoMVC 3D",
-            deck,
-            theme_state,
-            CLASSIC_DECAL_PRIM_START as f32,
-            &theme_uniforms,
-        );
+            current_theme,
+            dark_mode,
+            "TodoMVC 3D UI Primitives Buffer",
+            UiPhysicalBackgroundMode::Opaque,
+        )?;
 
         Ok(Self { host })
     }

@@ -1,7 +1,11 @@
 use super::{
     gpu_runtime_common::{
-        build_font_gpu_data, create_bind_group_layout_with_storage, create_bind_group_with_storage,
-        create_fullscreen_pipeline, create_storage_buffers, UiStorageBuffers,
+        create_fullscreen_pipeline, storage_bind_group_entries, storage_bind_group_layout_entries,
+        uniform_bind_group_layout_entry, UiStorageBuffers,
+    },
+    retained_ui_runtime_shared::{create_retained_ui_storage_buffers, RetainedUiRuntimeState},
+    retained_ui_shared::{
+        PreparedRetainedUiScene, SharedRetainedUiSceneState, SharedRetainedUiUpdate,
     },
     ui_physical_theme::{
         tune_generic_ui_physical_text_colors, ThemeUniforms, UiPhysicalThemeState,
@@ -17,17 +21,15 @@ use crate::retained::fixed_scene::{
 use crate::retained::samples::{SampleSceneAction, SampleSceneDeckTarget, SampleSceneModel};
 use crate::retained::showcase::{ShowcaseSceneAction, ShowcaseSceneDeckTarget, ShowcaseSceneModel};
 use crate::retained::text::{
-    apply_fixed_text_runtime_update, build_fixed_text_scene_state_for_scene, gpu_char_instance_ex,
-    FixedTextRuntimeUpdate, FixedTextSceneData, FixedTextSceneState, GpuCharInstanceEx, TextColors,
-    TextRenderSpace,
+    build_fixed_text_scene_state_for_scene, gpu_char_instance_ex, FixedTextRuntimeUpdate,
+    FixedTextSceneData, FixedTextSceneState, GpuCharInstanceEx, TextColors, TextRenderSpace,
 };
 use crate::retained::text_scene::WrappedTextSceneModel;
 use crate::retained::ui::{
-    apply_gpu_ui_runtime_update, build_gpu_ui_scene, GpuUiPrimitive, GpuUiRuntimeUpdate,
-    GpuUiSceneData, UiRenderSpace,
+    build_gpu_ui_scene, GpuUiPrimitive, GpuUiRuntimeUpdate, GpuUiSceneData, UiRenderSpace,
 };
 use crate::retained::{NamedScrollSceneModel, Rect, RetainedScene, UiVisualRole};
-use crate::text::{CharGridCell, VectorFontAtlas};
+use crate::text::VectorFontAtlas;
 use crate::ui_physical_shader_bindings as retained_ui_physical_shader;
 use bytemuck::Pod;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,9 +37,27 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 static STORAGE_REVISION_SEED: AtomicU64 = AtomicU64::new(1u64 << 32);
+const UI_PHYSICAL_STORAGE_BINDINGS: [u32; 6] = [2, 3, 4, 5, 6, 7];
+const UI_PHYSICAL_TEXT_DISTANCE_BINDING: u32 = 8;
 
 fn next_storage_revision_seed() -> u64 {
     STORAGE_REVISION_SEED.fetch_add(1u64 << 32, Ordering::Relaxed)
+}
+
+fn create_char_grid_distance_buffer(
+    device: &wgpu::Device,
+    label: &str,
+    distances: &[u32],
+) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: bytemuck::cast_slice(if distances.is_empty() {
+            &[0u32]
+        } else {
+            distances
+        }),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    })
 }
 
 pub struct UiPhysicalSceneBootstrap {
@@ -55,6 +75,12 @@ pub struct UiPhysicalRuntimeUpdate {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiPhysicalBackgroundMode {
+    Opaque,
+    Transparent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiPhysicalGeometryMode {
     GenericCard,
     StackedCard,
@@ -64,6 +90,8 @@ pub enum UiPhysicalGeometryMode {
 pub struct UiPhysicalLayout {
     pub center_px: [f32; 2],
     pub bounds_px: [f32; 4],
+    pub text_bounds_px: [f32; 4],
+    pub hero_text_bounds_px: [f32; 4],
     pub corner_radius_px: f32,
     pub content_inset_px: f32,
     pub elevation_px: f32,
@@ -94,14 +122,6 @@ pub struct UiPhysicalHostConfig {
     pub max_ui_primitives: usize,
     pub max_grid_indices: usize,
     pub grid_cell_capacity: usize,
-}
-
-impl UiPhysicalSceneBootstrap {
-    fn fits_config(&self, config: &UiPhysicalHostConfig) -> bool {
-        self.text_data.char_instances.len() <= config.max_char_instances
-            && self.text_data.char_grid_indices.len() <= config.max_grid_indices
-            && self.ui_data.primitive_count <= config.max_ui_primitives
-    }
 }
 
 impl UiPhysicalLayout {
@@ -340,6 +360,9 @@ impl UiPhysicalLayout {
         Self {
             center_px: [(min_x + max_x) * 0.5, (min_y + max_y) * 0.5],
             bounds_px: [min_x, min_y, max_x, max_y],
+            text_bounds_px: text_scene_bounds(text_data).unwrap_or([min_x, min_y, max_x, max_y]),
+            hero_text_bounds_px: text_scene_bounds_for_flag(text_data, 2.0)
+                .unwrap_or([min_x, min_y, max_x, max_y]),
             corner_radius_px,
             content_inset_px,
             elevation_px,
@@ -403,6 +426,17 @@ fn gpu_ui_primitive_bounds(primitive: &GpuUiPrimitive) -> [f32; 4] {
 }
 
 fn text_scene_bounds(text_data: &FixedTextSceneData) -> Option<[f32; 4]> {
+    text_scene_bounds_with_filter(text_data, |_| true)
+}
+
+fn text_scene_bounds_for_flag(text_data: &FixedTextSceneData, flag: f32) -> Option<[f32; 4]> {
+    text_scene_bounds_with_filter(text_data, |inst| inst.colorFlags_0[3] == flag)
+}
+
+fn text_scene_bounds_with_filter<F>(text_data: &FixedTextSceneData, include: F) -> Option<[f32; 4]>
+where
+    F: Fn(&GpuCharInstanceEx) -> bool,
+{
     let count = (text_data.char_count as usize).min(text_data.char_instances.len());
     if count == 0 {
         return None;
@@ -415,6 +449,9 @@ fn text_scene_bounds(text_data: &FixedTextSceneData) -> Option<[f32; 4]> {
     let mut found = false;
 
     for inst in text_data.char_instances.iter().take(count) {
+        if !include(inst) {
+            continue;
+        }
         let x = inst.posAndChar_0[0];
         let y = inst.posAndChar_0[1];
         let font_size = inst.posAndChar_0[2].abs();
@@ -534,15 +571,95 @@ pub trait UiPhysicalSceneState {
     fn physical_layout(&self) -> UiPhysicalLayout;
 }
 
+pub trait SharedRetainedUiPhysicalSceneState: SharedRetainedUiSceneState {
+    fn physical_layout_for_prepared_retained_ui(
+        &self,
+        prepared: &PreparedRetainedUiScene,
+    ) -> UiPhysicalLayout;
+}
+
+fn ui_physical_bootstrap_from_prepared(
+    prepared: PreparedRetainedUiScene,
+    layout: UiPhysicalLayout,
+) -> UiPhysicalSceneBootstrap {
+    UiPhysicalSceneBootstrap {
+        text_data: prepared.text_data,
+        ui_data: prepared.ui_data,
+        layout,
+    }
+}
+
+impl From<SharedRetainedUiUpdate> for UiPhysicalRuntimeUpdate {
+    fn from(update: SharedRetainedUiUpdate) -> Self {
+        match update {
+            SharedRetainedUiUpdate::Full(prepared) => Self {
+                text: Some(UiPhysicalRuntimeTextUpdate::Full(prepared.text_data)),
+                ui: Some(UiPhysicalRuntimeUiUpdate::Full(prepared.ui_data)),
+            },
+            SharedRetainedUiUpdate::Partial { text, ui } => Self { text, ui },
+        }
+    }
+}
+
+impl<T: SharedRetainedUiPhysicalSceneState> UiPhysicalSceneState for T {
+    fn atlas(&self) -> &VectorFontAtlas {
+        self.shared_atlas()
+    }
+
+    fn text_state(&self) -> &FixedTextSceneState {
+        self.shared_text_state()
+    }
+
+    fn build_ui_physical_bootstrap(&self, colors: &TextColors) -> UiPhysicalSceneBootstrap {
+        let prepared = self.build_prepared_retained_ui_scene(colors);
+        let layout = self.physical_layout_for_prepared_retained_ui(&prepared);
+        ui_physical_bootstrap_from_prepared(prepared, layout)
+    }
+
+    fn take_ui_physical_resource_update(
+        &mut self,
+        colors: &TextColors,
+    ) -> Option<UiPhysicalRuntimeUpdate> {
+        self.take_prepared_retained_ui_update(colors)
+            .map(Into::into)
+    }
+
+    fn mark_view_transform_dirty(&mut self) {
+        self.mark_retained_ui_view_transform_dirty();
+    }
+
+    fn set_viewport_size(&mut self, width: u32, height: u32) {
+        self.set_retained_ui_viewport_size(width, height);
+    }
+
+    fn scene(&self) -> &RetainedScene {
+        self.shared_scene()
+    }
+
+    fn scene_mut(&mut self) -> &mut RetainedScene {
+        self.shared_scene_mut()
+    }
+
+    fn physical_layout(&self) -> UiPhysicalLayout {
+        let colors = TextColors {
+            heading: [0.0; 3],
+            active: [0.0; 3],
+            completed: [0.0; 3],
+            placeholder: [0.0; 3],
+            body: [0.0; 3],
+            info: [0.0; 3],
+        };
+        let prepared = self.build_prepared_retained_ui_scene(&colors);
+        self.physical_layout_for_prepared_retained_ui(&prepared)
+    }
+}
+
 pub struct StateBackedUiPhysicalHost<S> {
     state: S,
     text_colors: TextColors,
     storage_buffers: UiStorageBuffers,
-    char_instances: Vec<GpuCharInstanceEx>,
-    char_count: u32,
-    ui_prim_count: u32,
-    char_grid_params: [f32; 4],
-    char_grid_bounds: [f32; 4],
+    char_grid_distance_buffer: wgpu::Buffer,
+    retained_ui: RetainedUiRuntimeState,
     layout: UiPhysicalLayout,
     storage_revision: u64,
     config: UiPhysicalHostConfig,
@@ -583,6 +700,7 @@ pub trait UiPhysicalRuntimeScene {
         theme_state: &mut UiPhysicalThemeState,
     );
     fn storage_buffers(&self) -> &UiStorageBuffers;
+    fn char_grid_distance_buffer(&self) -> &wgpu::Buffer;
     fn storage_revision(&self) -> u64;
     fn char_count(&self) -> u32;
     fn ui_prim_count(&self) -> u32;
@@ -626,6 +744,8 @@ fn default_ui_physical_uniforms() -> UiPhysicalUniforms {
         [0.0; 4],
         [0.0; 4],
         [75.0, 225.8, 625.0, 570.0],
+        [75.0, 225.8, 625.0, 570.0],
+        [0.0; 4],
     )
 }
 
@@ -665,6 +785,7 @@ pub struct UiPhysicalFullscreenRenderer {
     width: u32,
     height: u32,
     scale_factor: f32,
+    background_mode: UiPhysicalBackgroundMode,
 }
 
 pub struct UiPhysicalRuntimeHost {
@@ -681,6 +802,81 @@ pub struct ThemedUiPhysicalHost<S> {
 }
 
 impl UiPhysicalPassHost {
+    fn create_bind_group_layout(
+        device: &wgpu::Device,
+        label_prefix: &str,
+    ) -> wgpu::BindGroupLayout {
+        let mut entries = vec![
+            uniform_bind_group_layout_entry(
+                0,
+                wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                std::num::NonZeroU64::new(std::mem::size_of::<UiPhysicalUniforms>() as u64)
+                    .expect("UiPhysicalUniforms must be non-zero"),
+            ),
+            uniform_bind_group_layout_entry(
+                1,
+                wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                std::num::NonZeroU64::new(std::mem::size_of::<ThemeUniforms>() as u64)
+                    .expect("ThemeUniforms must be non-zero"),
+            ),
+        ];
+        entries.extend(storage_bind_group_layout_entries(
+            &UI_PHYSICAL_STORAGE_BINDINGS,
+            wgpu::ShaderStages::FRAGMENT,
+        ));
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: UI_PHYSICAL_TEXT_DISTANCE_BINDING,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: Some(
+                    std::num::NonZeroU64::new(std::mem::size_of::<u32>() as u64)
+                        .expect("u32 must be non-zero"),
+                ),
+            },
+            count: None,
+        });
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some(&format!("{label_prefix} Bind Group Layout")),
+            entries: &entries,
+        })
+    }
+
+    fn create_bind_group<'a>(
+        device: &wgpu::Device,
+        label_prefix: &str,
+        layout: &wgpu::BindGroupLayout,
+        uniform_buffer: &'a wgpu::Buffer,
+        theme_buffer: &'a wgpu::Buffer,
+        storage_buffers: &'a UiStorageBuffers,
+        char_grid_distance_buffer: &'a wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        let mut entries = vec![
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: theme_buffer.as_entire_binding(),
+            },
+        ];
+        entries.extend(storage_bind_group_entries(
+            storage_buffers,
+            &UI_PHYSICAL_STORAGE_BINDINGS,
+        ));
+        entries.push(wgpu::BindGroupEntry {
+            binding: UI_PHYSICAL_TEXT_DISTANCE_BINDING,
+            resource: char_grid_distance_buffer.as_entire_binding(),
+        });
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("{label_prefix} Bind Group")),
+            layout,
+            entries: &entries,
+        })
+    }
+
     pub fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
@@ -688,35 +884,18 @@ impl UiPhysicalPassHost {
         uniform_buffer: &wgpu::Buffer,
         theme_buffer: &wgpu::Buffer,
         storage_buffers: &UiStorageBuffers,
+        char_grid_distance_buffer: &wgpu::Buffer,
         storage_revision: u64,
     ) -> Self {
-        let bind_group_layout = create_bind_group_layout_with_storage(
+        let bind_group_layout = Self::create_bind_group_layout(device, label_prefix);
+        let bind_group = Self::create_bind_group(
             device,
-            &format!("{label_prefix} Bind Group Layout"),
-            &[
-                (
-                    0,
-                    wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    std::num::NonZeroU64::new(std::mem::size_of::<UiPhysicalUniforms>() as u64)
-                        .expect("UiPhysicalUniforms must be non-zero"),
-                ),
-                (
-                    1,
-                    wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    std::num::NonZeroU64::new(std::mem::size_of::<ThemeUniforms>() as u64)
-                        .expect("ThemeUniforms must be non-zero"),
-                ),
-            ],
-            &[2, 3, 4, 5, 6, 7],
-            wgpu::ShaderStages::FRAGMENT,
-        );
-        let bind_group = create_bind_group_with_storage(
-            device,
-            &format!("{label_prefix} Bind Group"),
+            label_prefix,
             &bind_group_layout,
-            &[(0, uniform_buffer), (1, theme_buffer)],
+            uniform_buffer,
+            theme_buffer,
             storage_buffers,
-            &[2, 3, 4, 5, 6, 7],
+            char_grid_distance_buffer,
         );
         let shader_module = retained_ui_physical_shader::create_shader_module_embed_source(device);
         let pipeline = create_fullscreen_pipeline(
@@ -741,19 +920,21 @@ impl UiPhysicalPassHost {
         uniform_buffer: &wgpu::Buffer,
         theme_buffer: &wgpu::Buffer,
         storage_buffers: &UiStorageBuffers,
+        char_grid_distance_buffer: &wgpu::Buffer,
         storage_revision: u64,
     ) {
         if self.storage_revision == storage_revision {
             return;
         }
 
-        self.bind_group = create_bind_group_with_storage(
+        self.bind_group = Self::create_bind_group(
             device,
-            &format!("{label_prefix} Bind Group"),
+            label_prefix,
             &self.bind_group_layout,
-            &[(0, uniform_buffer), (1, theme_buffer)],
+            uniform_buffer,
+            theme_buffer,
             storage_buffers,
-            &[2, 3, 4, 5, 6, 7],
+            char_grid_distance_buffer,
         );
         self.storage_revision = storage_revision;
     }
@@ -772,7 +953,9 @@ impl UiPhysicalFullscreenRenderer {
         initial_uniforms: &UiPhysicalUniforms,
         initial_theme_uniforms: &T,
         storage_buffers: &UiStorageBuffers,
+        char_grid_distance_buffer: &wgpu::Buffer,
         storage_revision: u64,
+        background_mode: UiPhysicalBackgroundMode,
     ) -> Self {
         let uniform_buffer = ctx
             .device
@@ -795,6 +978,7 @@ impl UiPhysicalFullscreenRenderer {
             &uniform_buffer,
             &theme_buffer,
             storage_buffers,
+            char_grid_distance_buffer,
             storage_revision,
         );
         Self {
@@ -804,6 +988,7 @@ impl UiPhysicalFullscreenRenderer {
             width: ctx.width,
             height: ctx.height,
             scale_factor: ctx.scale_factor,
+            background_mode,
         }
     }
 
@@ -812,6 +997,7 @@ impl UiPhysicalFullscreenRenderer {
         device: &wgpu::Device,
         label_prefix: &str,
         storage_buffers: &UiStorageBuffers,
+        char_grid_distance_buffer: &wgpu::Buffer,
         storage_revision: u64,
     ) {
         self.pass_host.sync_storage_buffers_if_needed(
@@ -820,6 +1006,7 @@ impl UiPhysicalFullscreenRenderer {
             &self.uniform_buffer,
             &self.theme_buffer,
             storage_buffers,
+            char_grid_distance_buffer,
             storage_revision,
         );
     }
@@ -882,19 +1069,26 @@ impl UiPhysicalFullscreenRenderer {
         uniforms.layoutParams5_0 = [
             layout.shadow_offset_px[0],
             layout.shadow_offset_px[1],
-            0.0,
-            0.0,
+            layout.text_bounds_px[0],
+            layout.text_bounds_px[1],
         ];
         uniforms.layoutParams6_0 = [
             layout.shadow_extra_size_px[0],
             layout.shadow_extra_size_px[1],
-            0.0,
-            0.0,
+            layout.text_bounds_px[2],
+            layout.text_bounds_px[3],
         ];
         uniforms.layoutParams7_0 = [layout.outline_width_px, 0.0, 0.0, 0.0];
         uniforms.layoutParams7_0[1] = layout.content_inset_px;
         uniforms.layoutBounds_0 = layout.bounds_px;
+        uniforms.heroTextBounds_0 = layout.hero_text_bounds_px;
         uniforms.lightDirIntensity_0 = light_dir_intensity;
+        uniforms.renderFlags_0 = [
+            matches!(self.background_mode, UiPhysicalBackgroundMode::Transparent) as u32 as f32,
+            0.0,
+            0.0,
+            0.0,
+        ];
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
@@ -946,6 +1140,7 @@ impl UiPhysicalRuntimeHost {
         scene: &S,
         classic_decal_prim_start: f32,
         light_dir_intensity: [f32; 4],
+        background_mode: UiPhysicalBackgroundMode,
     ) -> Self {
         let mut uniforms = default_ui_physical_uniforms();
         uniforms.textParams_0[0] = scene.char_count() as f32;
@@ -983,19 +1178,26 @@ impl UiPhysicalRuntimeHost {
         uniforms.layoutParams5_0 = [
             layout.shadow_offset_px[0],
             layout.shadow_offset_px[1],
-            0.0,
-            0.0,
+            layout.text_bounds_px[0],
+            layout.text_bounds_px[1],
         ];
         uniforms.layoutParams6_0 = [
             layout.shadow_extra_size_px[0],
             layout.shadow_extra_size_px[1],
-            0.0,
-            0.0,
+            layout.text_bounds_px[2],
+            layout.text_bounds_px[3],
         ];
         uniforms.layoutParams7_0 = [layout.outline_width_px, 0.0, 0.0, 0.0];
         uniforms.layoutParams7_0[1] = layout.content_inset_px;
         uniforms.layoutBounds_0 = layout.bounds_px;
+        uniforms.heroTextBounds_0 = layout.hero_text_bounds_px;
         uniforms.lightDirIntensity_0 = light_dir_intensity;
+        uniforms.renderFlags_0 = [
+            matches!(background_mode, UiPhysicalBackgroundMode::Transparent) as u32 as f32,
+            0.0,
+            0.0,
+            0.0,
+        ];
 
         let renderer = UiPhysicalFullscreenRenderer::new(
             ctx,
@@ -1003,7 +1205,9 @@ impl UiPhysicalRuntimeHost {
             &uniforms,
             initial_theme_uniforms,
             scene.storage_buffers(),
+            scene.char_grid_distance_buffer(),
             scene.storage_revision(),
+            background_mode,
         );
 
         Self {
@@ -1024,6 +1228,7 @@ impl UiPhysicalRuntimeHost {
             &self.device,
             &self.label,
             scene.storage_buffers(),
+            scene.char_grid_distance_buffer(),
             scene.storage_revision(),
         );
     }
@@ -1087,6 +1292,26 @@ impl<S: UiPhysicalRuntimeScene> ThemedUiPhysicalHost<S> {
         classic_decal_prim_start: f32,
         initial_theme_uniforms: &T,
     ) -> Self {
+        Self::new_with_background_mode(
+            ctx,
+            label,
+            scene,
+            theme_state,
+            classic_decal_prim_start,
+            initial_theme_uniforms,
+            UiPhysicalBackgroundMode::Opaque,
+        )
+    }
+
+    pub fn new_with_background_mode<T: Pod>(
+        ctx: &DemoContext,
+        label: &str,
+        scene: S,
+        theme_state: UiPhysicalThemeState,
+        classic_decal_prim_start: f32,
+        initial_theme_uniforms: &T,
+        background_mode: UiPhysicalBackgroundMode,
+    ) -> Self {
         let runtime_host = UiPhysicalRuntimeHost::new(
             ctx,
             label,
@@ -1094,6 +1319,7 @@ impl<S: UiPhysicalRuntimeScene> ThemedUiPhysicalHost<S> {
             &scene,
             classic_decal_prim_start,
             theme_state.light_dir_intensity(),
+            background_mode,
         );
         Self {
             scene,
@@ -1202,55 +1428,45 @@ impl<S: ShowcaseSceneDeckTarget + UiPhysicalRuntimeScene> ShowcaseSceneDeckTarge
 
 impl<S: UiPhysicalSceneState> StateBackedUiPhysicalHost<S> {
     fn rebuild_storage_buffers_from_bootstrap(&mut self, bootstrap: UiPhysicalSceneBootstrap) {
-        let gpu_font_data = build_font_gpu_data(self.state.atlas());
-        self.storage_buffers = create_storage_buffers(
+        self.storage_buffers = create_retained_ui_storage_buffers(
             &self.device,
             &self.queue,
-            &gpu_font_data,
-            bytemuck::cast_slice(&bootstrap.text_data.char_instances),
-            self.config.max_char_instances * std::mem::size_of::<GpuCharInstanceEx>(),
-            &bootstrap.text_data.char_grid_cells,
-            &bootstrap.text_data.char_grid_indices,
+            self.state.atlas(),
+            &bootstrap.text_data,
+            self.config.max_char_instances,
             self.config.max_grid_indices,
-            bytemuck::cast_slice(&bootstrap.ui_data.primitives),
-            self.config.max_ui_primitives * std::mem::size_of::<GpuUiPrimitive>(),
+            &bootstrap.ui_data.primitives,
+            self.config.max_ui_primitives,
             &self.config.label,
         );
-        self.char_instances = bootstrap.text_data.char_instances;
-        self.char_count = bootstrap.text_data.char_count;
-        self.ui_prim_count = bootstrap.ui_data.primitive_count as u32;
-        self.char_grid_params = bootstrap.text_data.char_grid_params;
-        self.char_grid_bounds = bootstrap.text_data.char_grid_bounds;
+        self.char_grid_distance_buffer = create_char_grid_distance_buffer(
+            &self.device,
+            &format!("{} Text Grid Distance Buffer", self.config.label),
+            &bootstrap.text_data.char_grid_distances,
+        );
+        self.retained_ui = RetainedUiRuntimeState::new(
+            &bootstrap.text_data,
+            &bootstrap.ui_data.primitives,
+            self.config.max_char_instances,
+            self.config.max_grid_indices,
+            self.config.max_ui_primitives,
+        );
         self.layout = bootstrap.layout;
         self.storage_revision += 1;
     }
 
     fn sync_bootstrap_into_buffers(&mut self, bootstrap: UiPhysicalSceneBootstrap) {
-        self.queue.write_buffer(
-            &self.storage_buffers.char_instances_buffer,
-            0,
-            bytemuck::cast_slice(&bootstrap.text_data.char_instances),
+        self.retained_ui.sync_scene_data(
+            &self.queue,
+            &self.storage_buffers,
+            &bootstrap.text_data,
+            &bootstrap.ui_data.primitives,
         );
         self.queue.write_buffer(
-            &self.storage_buffers.char_grid_cells_buffer,
+            &self.char_grid_distance_buffer,
             0,
-            bytemuck::cast_slice(&bootstrap.text_data.char_grid_cells),
+            bytemuck::cast_slice(&bootstrap.text_data.char_grid_distances),
         );
-        self.queue.write_buffer(
-            &self.storage_buffers.char_grid_indices_buffer,
-            0,
-            bytemuck::cast_slice(&bootstrap.text_data.char_grid_indices),
-        );
-        self.queue.write_buffer(
-            &self.storage_buffers.ui_primitives_buffer,
-            0,
-            bytemuck::cast_slice(&bootstrap.ui_data.primitives),
-        );
-        self.char_instances = bootstrap.text_data.char_instances;
-        self.char_count = bootstrap.text_data.char_count;
-        self.ui_prim_count = bootstrap.ui_data.primitive_count as u32;
-        self.char_grid_params = bootstrap.text_data.char_grid_params;
-        self.char_grid_bounds = bootstrap.text_data.char_grid_bounds;
         self.layout = bootstrap.layout;
     }
 
@@ -1262,30 +1478,35 @@ impl<S: UiPhysicalSceneState> StateBackedUiPhysicalHost<S> {
         config: UiPhysicalHostConfig,
     ) -> Self {
         let config = config.grown_to_fit(&bootstrap);
-        let gpu_font_data = build_font_gpu_data(state.atlas());
-        let storage_buffers = create_storage_buffers(
+        let storage_buffers = create_retained_ui_storage_buffers(
             &ctx.device,
             &ctx.queue,
-            &gpu_font_data,
-            bytemuck::cast_slice(&bootstrap.text_data.char_instances),
-            config.max_char_instances * std::mem::size_of::<GpuCharInstanceEx>(),
-            &bootstrap.text_data.char_grid_cells,
-            &bootstrap.text_data.char_grid_indices,
+            state.atlas(),
+            &bootstrap.text_data,
+            config.max_char_instances,
             config.max_grid_indices,
-            bytemuck::cast_slice(&bootstrap.ui_data.primitives),
-            config.max_ui_primitives * std::mem::size_of::<GpuUiPrimitive>(),
+            &bootstrap.ui_data.primitives,
+            config.max_ui_primitives,
             &config.label,
+        );
+        let char_grid_distance_buffer = create_char_grid_distance_buffer(
+            &ctx.device,
+            &format!("{} Text Grid Distance Buffer", config.label),
+            &bootstrap.text_data.char_grid_distances,
         );
 
         Self {
             state,
             text_colors: colors,
             storage_buffers,
-            char_instances: bootstrap.text_data.char_instances,
-            char_count: bootstrap.text_data.char_count,
-            ui_prim_count: bootstrap.ui_data.primitive_count as u32,
-            char_grid_params: bootstrap.text_data.char_grid_params,
-            char_grid_bounds: bootstrap.text_data.char_grid_bounds,
+            char_grid_distance_buffer,
+            retained_ui: RetainedUiRuntimeState::new(
+                &bootstrap.text_data,
+                &bootstrap.ui_data.primitives,
+                config.max_char_instances,
+                config.max_grid_indices,
+                config.max_ui_primitives,
+            ),
             layout: bootstrap.layout,
             storage_revision: next_storage_revision_seed(),
             config,
@@ -1304,15 +1525,12 @@ impl<S: UiPhysicalSceneState> StateBackedUiPhysicalHost<S> {
         Self::from_bootstrap(ctx, state, *colors, bootstrap, config)
     }
 
-    fn rebuild_storage_buffers(&mut self) {
-        let bootstrap = self.state.build_ui_physical_bootstrap(&self.text_colors);
-        self.config = self.config.grown_to_fit(&bootstrap);
-        self.rebuild_storage_buffers_from_bootstrap(bootstrap);
-    }
-
     pub fn replace_state_and_bootstrap(&mut self, state: S, bootstrap: UiPhysicalSceneBootstrap) {
         self.state = state;
-        if bootstrap.fits_config(&self.config) {
+        if self
+            .retained_ui
+            .can_fit_scene_data(&bootstrap.text_data, &bootstrap.ui_data.primitives)
+        {
             self.sync_bootstrap_into_buffers(bootstrap);
         } else {
             self.config = self.config.grown_to_fit(&bootstrap);
@@ -1322,6 +1540,10 @@ impl<S: UiPhysicalSceneState> StateBackedUiPhysicalHost<S> {
 
     pub fn storage_buffers(&self) -> &UiStorageBuffers {
         &self.storage_buffers
+    }
+
+    pub fn char_grid_distance_buffer(&self) -> &wgpu::Buffer {
+        &self.char_grid_distance_buffer
     }
 
     pub fn state(&self) -> &S {
@@ -1348,23 +1570,23 @@ impl<S: UiPhysicalSceneState> StateBackedUiPhysicalHost<S> {
     }
 
     pub fn char_instances(&self) -> &[GpuCharInstanceEx] {
-        &self.char_instances
+        &self.retained_ui.char_instances
     }
 
     pub fn char_count(&self) -> u32 {
-        self.char_count
+        self.retained_ui.char_count
     }
 
     pub fn ui_prim_count(&self) -> u32 {
-        self.ui_prim_count
+        self.retained_ui.ui_prim_count
     }
 
     pub fn char_grid_params(&self) -> [f32; 4] {
-        self.char_grid_params
+        self.retained_ui.char_grid_params
     }
 
     pub fn char_grid_bounds(&self) -> [f32; 4] {
-        self.char_grid_bounds
+        self.retained_ui.char_grid_bounds
     }
 
     pub fn physical_layout(&self) -> UiPhysicalLayout {
@@ -1389,87 +1611,35 @@ impl<S: UiPhysicalSceneState> StateBackedUiPhysicalHost<S> {
 
         if updates.needs_full_rebuild() {
             let bootstrap = self.state.build_ui_physical_bootstrap(&self.text_colors);
-            if !bootstrap.fits_config(&self.config) {
+            if !self
+                .retained_ui
+                .can_fit_scene_data(&bootstrap.text_data, &bootstrap.ui_data.primitives)
+            {
                 self.config = self.config.grown_to_fit(&bootstrap);
-                self.rebuild_storage_buffers();
+                self.rebuild_storage_buffers_from_bootstrap(bootstrap);
                 return;
             }
+            self.sync_bootstrap_into_buffers(bootstrap);
+            return;
         }
 
         if let Some(text_update) = updates.text {
-            apply_fixed_text_runtime_update(
+            self.retained_ui.apply_text_runtime_update(
+                queue,
+                &self.storage_buffers,
                 text_update,
                 self.state.text_state(),
-                &mut self.char_instances,
-                &mut self.char_count,
-                &mut self.char_grid_params,
-                &mut self.char_grid_bounds,
-                self.config.max_char_instances,
-                self.config.max_grid_indices,
-                |instances| instances,
-                |instances| {
-                    queue.write_buffer(
-                        &self.storage_buffers.char_instances_buffer,
-                        0,
-                        bytemuck::cast_slice(instances),
-                    );
-                },
-                |offset, run_slots| {
-                    queue.write_buffer(
-                        &self.storage_buffers.char_instances_buffer,
-                        (offset * std::mem::size_of::<GpuCharInstanceEx>()) as u64,
-                        bytemuck::cast_slice(run_slots),
-                    );
-                },
-                |cells, indices| {
-                    queue.write_buffer(
-                        &self.storage_buffers.char_grid_cells_buffer,
-                        0,
-                        bytemuck::cast_slice(cells),
-                    );
-                    queue.write_buffer(
-                        &self.storage_buffers.char_grid_indices_buffer,
-                        0,
-                        bytemuck::cast_slice(indices),
-                    );
-                },
-                |cell_idx, cell| {
-                    queue.write_buffer(
-                        &self.storage_buffers.char_grid_cells_buffer,
-                        (cell_idx * std::mem::size_of::<CharGridCell>()) as u64,
-                        bytemuck::bytes_of(cell),
-                    );
-                },
-                |offset, indices| {
-                    queue.write_buffer(
-                        &self.storage_buffers.char_grid_indices_buffer,
-                        (offset * std::mem::size_of::<u32>()) as u64,
-                        bytemuck::cast_slice(indices),
-                    );
-                },
+            );
+            queue.write_buffer(
+                &self.char_grid_distance_buffer,
+                0,
+                bytemuck::cast_slice(&self.state.text_state().text_grid.cell_distances),
             );
         }
 
         if let Some(ui_update) = updates.ui {
-            apply_gpu_ui_runtime_update(
-                ui_update,
-                &mut self.ui_prim_count,
-                self.config.max_ui_primitives,
-                |primitives| {
-                    queue.write_buffer(
-                        &self.storage_buffers.ui_primitives_buffer,
-                        0,
-                        bytemuck::cast_slice(primitives),
-                    );
-                },
-                |offset, primitives| {
-                    queue.write_buffer(
-                        &self.storage_buffers.ui_primitives_buffer,
-                        (offset * std::mem::size_of::<GpuUiPrimitive>()) as u64,
-                        bytemuck::cast_slice(primitives),
-                    );
-                },
-            );
+            self.retained_ui
+                .apply_ui_runtime_update(queue, &self.storage_buffers, ui_update);
         }
     }
 
@@ -1515,16 +1685,16 @@ impl FixedUiPhysicalSceneState {
     }
 }
 
-impl UiPhysicalSceneState for FixedUiPhysicalSceneState {
-    fn atlas(&self) -> &VectorFontAtlas {
+impl SharedRetainedUiSceneState for FixedUiPhysicalSceneState {
+    fn shared_atlas(&self) -> &VectorFontAtlas {
         &self.atlas
     }
 
-    fn text_state(&self) -> &FixedTextSceneState {
+    fn shared_text_state(&self) -> &FixedTextSceneState {
         &self.scene_state.text_state
     }
 
-    fn build_ui_physical_bootstrap(&self, colors: &TextColors) -> UiPhysicalSceneBootstrap {
+    fn build_prepared_retained_ui_scene(&self, colors: &TextColors) -> PreparedRetainedUiScene {
         let (_, text_data) = build_fixed_text_scene_state_for_scene(
             &self.scene_state.scene,
             self.scene_state.text_state.layout(),
@@ -1533,19 +1703,13 @@ impl UiPhysicalSceneState for FixedUiPhysicalSceneState {
             self.text_render_space,
         );
         let ui_data = build_gpu_ui_scene(&self.scene_state.scene, self.ui_render_space);
-        let layout =
-            UiPhysicalLayout::generic_from_scene(&self.scene_state.scene, &text_data, &ui_data);
-        UiPhysicalSceneBootstrap {
-            text_data,
-            ui_data,
-            layout,
-        }
+        PreparedRetainedUiScene { text_data, ui_data }
     }
 
-    fn take_ui_physical_resource_update(
+    fn take_prepared_retained_ui_update(
         &mut self,
         colors: &TextColors,
-    ) -> Option<UiPhysicalRuntimeUpdate> {
+    ) -> Option<SharedRetainedUiUpdate> {
         self.scene_state
             .take_update(
                 &self.atlas,
@@ -1556,42 +1720,52 @@ impl UiPhysicalSceneState for FixedUiPhysicalSceneState {
             .map(Into::into)
     }
 
-    fn mark_view_transform_dirty(&mut self) {
+    fn ui2d_scene_init_capacities(
+        &self,
+        prepared: &PreparedRetainedUiScene,
+    ) -> super::retained_ui_shared::Ui2dSceneInitCapacities {
+        super::retained_ui_shared::Ui2dSceneInitCapacities {
+            text_capacity: prepared.text_data.char_instances.len().max(1),
+            grid_index_capacity: self
+                .scene_state
+                .text_state
+                .layout()
+                .grid_index_capacity()
+                .max(1),
+            primitive_capacity: prepared.ui_data.primitive_count.max(1),
+        }
+    }
+
+    fn mark_retained_ui_view_transform_dirty(&mut self) {
         let root = self.scene_state.scene.root();
         self.scene_state.scene.mark_node_dirty(root);
     }
 
-    fn set_viewport_size(&mut self, width: u32, height: u32) {
+    fn set_retained_ui_viewport_size(&mut self, width: u32, height: u32) {
         let _ = (width, height);
         let root = self.scene_state.scene.root();
         self.scene_state.scene.mark_node_dirty(root);
     }
 
-    fn scene(&self) -> &RetainedScene {
+    fn shared_scene(&self) -> &RetainedScene {
         &self.scene_state.scene
     }
 
-    fn scene_mut(&mut self) -> &mut RetainedScene {
+    fn shared_scene_mut(&mut self) -> &mut RetainedScene {
         &mut self.scene_state.scene
     }
+}
 
-    fn physical_layout(&self) -> UiPhysicalLayout {
-        let (_, text_data) = build_fixed_text_scene_state_for_scene(
+impl SharedRetainedUiPhysicalSceneState for FixedUiPhysicalSceneState {
+    fn physical_layout_for_prepared_retained_ui(
+        &self,
+        prepared: &PreparedRetainedUiScene,
+    ) -> UiPhysicalLayout {
+        UiPhysicalLayout::generic_from_scene(
             &self.scene_state.scene,
-            self.scene_state.text_state.layout(),
-            &self.atlas,
-            &TextColors {
-                heading: [0.0; 3],
-                active: [0.0; 3],
-                completed: [0.0; 3],
-                placeholder: [0.0; 3],
-                body: [0.0; 3],
-                info: [0.0; 3],
-            },
-            self.text_render_space,
-        );
-        let ui_data = build_gpu_ui_scene(&self.scene_state.scene, self.ui_render_space);
-        UiPhysicalLayout::generic_from_scene(&self.scene_state.scene, &text_data, &ui_data)
+            &prepared.text_data,
+            &prepared.ui_data,
+        )
     }
 }
 
@@ -1632,6 +1806,10 @@ impl FixedUiPhysicalSceneHost {
 
     pub fn storage_buffers(&self) -> &UiStorageBuffers {
         self.state_host.storage_buffers()
+    }
+
+    pub fn char_grid_distance_buffer(&self) -> &wgpu::Buffer {
+        self.state_host.char_grid_distance_buffer()
     }
 
     pub fn char_instances(&self) -> &[GpuCharInstanceEx] {
@@ -1797,6 +1975,10 @@ impl<M: FixedUi2dSceneModelBuilder> ModeledFixedUiPhysicalSceneHost<M> {
 
     pub fn storage_buffers(&self) -> &UiStorageBuffers {
         self.host.storage_buffers()
+    }
+
+    pub fn char_grid_distance_buffer(&self) -> &wgpu::Buffer {
+        self.host.char_grid_distance_buffer()
     }
 
     pub fn char_instances(&self) -> &[GpuCharInstanceEx] {
@@ -2051,6 +2233,10 @@ impl<M: FixedUi2dSceneModelBuilder> UiPhysicalSceneDeck<ModeledFixedUiPhysicalSc
         self.active_host().storage_buffers()
     }
 
+    pub fn char_grid_distance_buffer(&self) -> &wgpu::Buffer {
+        self.active_host().char_grid_distance_buffer()
+    }
+
     pub fn char_instances(&self) -> &[GpuCharInstanceEx] {
         self.active_host().char_instances()
     }
@@ -2110,6 +2296,10 @@ impl<M: FixedUi2dSceneModelBuilder> UiPhysicalRuntimeScene
 
     fn storage_buffers(&self) -> &UiStorageBuffers {
         self.active_host().storage_buffers()
+    }
+
+    fn char_grid_distance_buffer(&self) -> &wgpu::Buffer {
+        self.active_host().char_grid_distance_buffer()
     }
 
     fn storage_revision(&self) -> u64 {
@@ -2277,6 +2467,10 @@ impl<S: UiPhysicalSceneState> UiPhysicalRuntimeScene
 
     fn storage_buffers(&self) -> &UiStorageBuffers {
         self.active_host().storage_buffers()
+    }
+
+    fn char_grid_distance_buffer(&self) -> &wgpu::Buffer {
+        self.active_host().char_grid_distance_buffer()
     }
 
     fn storage_revision(&self) -> u64 {
@@ -2584,6 +2778,7 @@ mod tests {
                     count: 0,
                 }],
                 char_grid_indices: vec![0; 16],
+                char_grid_distances: vec![0],
             },
             ui_data: GpuUiSceneData {
                 primitives: vec![GpuUiPrimitive::new([0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]); 4],
@@ -2592,6 +2787,8 @@ mod tests {
             layout: UiPhysicalLayout {
                 center_px: [350.0, 398.0],
                 bounds_px: [75.0, 225.8, 625.0, 570.0],
+                text_bounds_px: [75.0, 225.8, 625.0, 570.0],
+                hero_text_bounds_px: [75.0, 225.8, 625.0, 570.0],
                 corner_radius_px: 12.0,
                 content_inset_px: 0.0,
                 elevation_px: 0.0,
@@ -2718,6 +2915,7 @@ mod tests {
             char_grid_bounds: [0.0; 4],
             char_grid_cells: Vec::new(),
             char_grid_indices: Vec::new(),
+            char_grid_distances: Vec::new(),
         };
         let ui_data = GpuUiSceneData {
             primitives: Vec::new(),
@@ -2767,6 +2965,7 @@ mod tests {
             char_grid_bounds: [0.0; 4],
             char_grid_cells: Vec::new(),
             char_grid_indices: Vec::new(),
+            char_grid_distances: Vec::new(),
         };
         let ui_data = GpuUiSceneData {
             primitives: vec![GpuUiPrimitive::new(

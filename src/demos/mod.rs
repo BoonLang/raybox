@@ -5,10 +5,14 @@
 
 pub mod clay;
 pub mod empty;
+pub mod frame_graph;
 pub mod gpu_runtime_common;
+pub mod mixed_ui_world;
 pub mod objects;
 pub mod retained_ui;
 pub mod retained_ui_physical;
+pub mod retained_ui_runtime_shared;
+pub mod retained_ui_shared;
 pub mod runner;
 pub mod spheres;
 pub mod text2d;
@@ -27,6 +31,11 @@ pub mod world3d_runtime;
 pub use crate::demo_core::{
     CameraConfig, CameraController, DemoContext, DemoId, DemoType, ListCommandTarget, ListFilter,
     NamedScrollTarget, UiPhysicalCameraPreset, KEYBINDINGS_2D, KEYBINDINGS_3D, KEYBINDINGS_COMMON,
+};
+pub use frame_graph::{
+    CompiledFrameGraph, CompiledFramePass, ComposedScene, CompositeMode, EffectLayer, EffectPacket,
+    FramePacket, FramePacketItem, FrameTarget, NormalizedRect, OverlayPacket, PresentPacket,
+    UiLayer, UiLayerPacket, UiLayerStyle, WorldView, WorldViewPacket,
 };
 
 use crate::camera::FlyCamera;
@@ -64,6 +73,39 @@ pub trait Demo: Send {
 
     /// Optional per-frame preparation before render encoding.
     fn prepare_frame(&mut self, _queue: &wgpu::Queue) {}
+
+    /// Extract this demo's frame contribution into the runner-owned frame graph.
+    ///
+    /// The default implementation preserves current behavior by emitting one
+    /// main scene packet matching the demo family. Mixed demos can override
+    /// this later to emit multiple ordered packet items.
+    fn build_frame_packet(&self, _time: f32) -> FramePacket {
+        FramePacket::for_demo(self.demo_type(), self.name())
+    }
+
+    /// Render a world view packet. Mixed demos can override this to dispatch to
+    /// a specific internal world renderer.
+    fn render_world_view<'a>(
+        &'a self,
+        _packet: &WorldViewPacket,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        queue: &wgpu::Queue,
+        time: f32,
+    ) {
+        self.render(render_pass, queue, time);
+    }
+
+    /// Render a UI layer packet. Mixed demos can override this to dispatch to a
+    /// specific internal UI renderer.
+    fn render_ui_layer<'a>(
+        &'a self,
+        _packet: &UiLayerPacket,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        queue: &wgpu::Queue,
+        time: f32,
+    ) {
+        self.render(render_pass, queue, time);
+    }
 
     /// Optional shared 2D view controls for retained-style demos.
     fn apply_2d_view_controls(
@@ -201,5 +243,6 @@ pub fn create_demo(id: DemoId, ctx: &DemoContext) -> anyhow::Result<Box<dyn Demo
             retained_ui_physical::RetainedUiPhysicalDemo::new(ctx)?,
         )),
         DemoId::TextPhysical => Ok(Box::new(text_physical::TextPhysicalDemo::new(ctx)?)),
+        DemoId::MixedUiWorld => Ok(Box::new(mixed_ui_world::MixedUiWorldDemo::new(ctx)?)),
     }
 }

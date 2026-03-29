@@ -1,4 +1,5 @@
 use super::{ElementKind, NodeId, RetainedScene, TextRole};
+use crate::text::char_grid::compute_char_grid_cell_distances;
 use crate::text::{
     build_fixed_char_grid, fixed_char_grid_cells_for_instance, CharGridCell, FixedCharGridSpec,
     VectorFontAtlas,
@@ -334,6 +335,7 @@ pub struct FixedTextSceneData {
     pub char_grid_bounds: [f32; 4],
     pub char_grid_cells: Vec<CharGridCell>,
     pub char_grid_indices: Vec<u32>,
+    pub char_grid_distances: Vec<u32>,
 }
 
 pub struct FixedTextScenePatch {
@@ -384,6 +386,7 @@ where
         char_grid_bounds: layout.grid_spec.bounds,
         char_grid_cells: text_grid.cells.clone(),
         char_grid_indices: text_grid.indices.clone(),
+        char_grid_distances: text_grid.cell_distances.clone(),
     }
 }
 
@@ -591,6 +594,7 @@ where
 pub struct FixedTextGridCache {
     pub cells: Vec<CharGridCell>,
     pub indices: Vec<u32>,
+    pub cell_distances: Vec<u32>,
     cell_chars: Vec<Vec<u32>>,
     char_cells: Vec<Vec<usize>>,
     grid_spec: FixedCharGridSpec,
@@ -616,6 +620,7 @@ impl FixedTextGridCache {
         let mut cache = Self {
             cells: grid.cells,
             indices: grid.char_indices,
+            cell_distances: grid.cell_distances,
             cell_chars: vec![Vec::new(); layout.grid_cell_count()],
             char_cells: vec![Vec::new(); instances.len()],
             grid_spec: layout.grid_spec,
@@ -652,6 +657,11 @@ impl FixedTextGridCache {
         };
         self.indices[offset..offset + self.grid_spec.cell_capacity].fill(0);
         self.indices[offset..offset + cell_chars.len()].copy_from_slice(cell_chars);
+    }
+
+    fn refresh_cell_distances(&mut self) {
+        self.cell_distances =
+            compute_char_grid_cell_distances(&self.cell_chars, self.grid_spec.dims);
     }
 
     pub fn cell_index_offset(&self, cell_idx: usize) -> usize {
@@ -701,6 +711,10 @@ impl FixedTextGridCache {
 
         for &cell_idx in &changed_cells {
             self.refresh_cell_storage(cell_idx);
+        }
+
+        if !changed_cells.is_empty() {
+            self.refresh_cell_distances();
         }
 
         changed_cells.into_iter().collect()
@@ -865,6 +879,27 @@ mod tests {
         assert!(run_count > 0);
         assert!(!changed_cells.is_empty());
         assert_eq!(scene_data.char_count, run_count);
+    }
+
+    #[test]
+    fn fixed_text_scene_data_carries_grid_distance_field() {
+        let atlas = load_test_atlas();
+        let scene = build_settings_panel_scene();
+        let layout = sample_text_run_layout();
+        let scene_data = build_fixed_text_scene_state_for_scene(
+            &scene,
+            layout.layout(),
+            &atlas,
+            &sample_colors(),
+            sample_space(),
+        )
+        .1;
+
+        assert_eq!(
+            scene_data.char_grid_distances.len(),
+            scene_data.char_grid_cells.len()
+        );
+        assert!(scene_data.char_grid_distances.iter().any(|&dist| dist == 0));
     }
 
     #[test]

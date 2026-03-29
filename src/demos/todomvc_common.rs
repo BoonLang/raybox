@@ -1,14 +1,19 @@
 use super::{
     gpu_runtime_common::{load_shared_vector_font_atlas, ITALIC_CODEPOINT_OFFSET},
+    retained_ui_shared::{
+        PreparedRetainedUiScene, SharedRetainedUiSceneState, SharedRetainedUiUpdate,
+        Ui2dSceneInitCapacities,
+    },
     ui2d_runtime::{
-        StateBackedUi2dHost, StateBackedUi2dSceneDeck, Ui2dRuntimeTextUpdate, Ui2dRuntimeUiUpdate,
-        Ui2dRuntimeUpdate, Ui2dSceneInitData, Ui2dSceneState,
+        StateBackedUi2dHost, StateBackedUi2dSceneDeck, Ui2DBackgroundMode, Ui2dRuntimeTextUpdate,
+        Ui2dRuntimeUiUpdate, Ui2dRuntimeUpdate,
     },
     ui_physical_runtime::{
-        StateBackedUiPhysicalHost, StateBackedUiPhysicalSceneDeck, UiPhysicalGeometryMode,
-        UiPhysicalHostConfig, UiPhysicalLayout, UiPhysicalRuntimeUpdate, UiPhysicalSceneBootstrap,
-        UiPhysicalSceneState,
+        SharedRetainedUiPhysicalSceneState, StateBackedUiPhysicalHost,
+        StateBackedUiPhysicalSceneDeck, ThemedUiPhysicalHost, UiPhysicalBackgroundMode,
+        UiPhysicalGeometryMode, UiPhysicalHostConfig, UiPhysicalLayout,
     },
+    ui_physical_theme::{ThemeId, UiPhysicalThemeState},
     DemoContext, NamedScrollTarget,
 };
 use crate::demo_core::{ListCommandTarget, ListFilter};
@@ -56,6 +61,7 @@ pub type TodoMvcUi2dHost = StateBackedUi2dHost<TodoMvcRetainedState>;
 pub type TodoMvcUi2dDeck = StateBackedUi2dSceneDeck<TodoMvcRetainedState>;
 pub type TodoMvcUiPhysicalHost = StateBackedUiPhysicalHost<TodoMvcRetainedState>;
 pub type TodoMvcUiPhysicalDeck = StateBackedUiPhysicalSceneDeck<TodoMvcRetainedState>;
+pub type TodoMvcThemedUiPhysicalHost = ThemedUiPhysicalHost<TodoMvcUiPhysicalDeck>;
 
 pub const TODO_UI_STATIC_PRIM_COUNT: usize = 15;
 pub const TODO_UI_PRIMS_PER_ITEM: usize = 3;
@@ -151,9 +157,27 @@ pub fn create_todomvc_ui2d_host(ctx: &DemoContext) -> Result<TodoMvcUi2dHost> {
     Ok(StateBackedUi2dHost::new(ctx, "TodoMVC", state, text_colors))
 }
 
+pub fn create_todomvc_ui2d_host_transparent(ctx: &DemoContext) -> Result<TodoMvcUi2dHost> {
+    let text_colors = classic_text_colors();
+    let state = TodoMvcRetainedState::new(crate::retained::SceneMode::Ui2D, ctx.width, ctx.height)?;
+    Ok(StateBackedUi2dHost::new_with_background_mode(
+        ctx,
+        "TodoMVC Overlay",
+        state,
+        text_colors,
+        Ui2DBackgroundMode::Transparent,
+    ))
+}
+
 pub fn create_todomvc_ui2d_deck(ctx: &DemoContext) -> Result<TodoMvcUi2dDeck> {
     Ok(StateBackedUi2dSceneDeck::new(vec![
         create_todomvc_ui2d_host(ctx)?,
+    ]))
+}
+
+pub fn create_todomvc_ui2d_transparent_deck(ctx: &DemoContext) -> Result<TodoMvcUi2dDeck> {
+    Ok(StateBackedUi2dSceneDeck::new(vec![
+        create_todomvc_ui2d_host_transparent(ctx)?,
     ]))
 }
 
@@ -191,10 +215,44 @@ pub fn create_todomvc_ui_physical_deck(
     ]))
 }
 
+pub fn create_todomvc_themed_ui_physical_host(
+    ctx: &DemoContext,
+    label: &str,
+    current_theme: ThemeId,
+    dark_mode: bool,
+    ui_primitives_label: &str,
+    background_mode: UiPhysicalBackgroundMode,
+) -> Result<TodoMvcThemedUiPhysicalHost> {
+    let theme_state = UiPhysicalThemeState::new(current_theme, dark_mode);
+    let theme_uniforms = theme_state.theme_uniforms();
+    let colors = theme_state.text_colors();
+    let deck = create_todomvc_ui_physical_deck(ctx, &colors, ui_primitives_label)?;
+    Ok(ThemedUiPhysicalHost::new_with_background_mode(
+        ctx,
+        label,
+        deck,
+        theme_state,
+        CLASSIC_DECAL_PRIM_START as f32,
+        &theme_uniforms,
+        background_mode,
+    ))
+}
+
 fn todomvc_physical_layout(scene: &RetainedScene) -> UiPhysicalLayout {
+    let heading_bounds_px = scene
+        .node_named("heading")
+        .and_then(|node| scene.resolved_bounds(node.id))
+        .map(|bounds| {
+            let min_y_up = SCREEN_H - (bounds.y + bounds.height);
+            let max_y_up = SCREEN_H - bounds.y;
+            [bounds.x, min_y_up, bounds.x + bounds.width, max_y_up]
+        })
+        .unwrap_or([252.1, SCREEN_H - 98.0, 447.8, SCREEN_H - 8.4]);
     let fallback = UiPhysicalLayout {
         center_px: [350.0, 398.0],
         bounds_px: [75.0, 225.8, 625.0, 570.0],
+        text_bounds_px: [75.0, 225.8, 625.0, 570.0],
+        hero_text_bounds_px: heading_bounds_px,
         corner_radius_px: 12.0,
         content_inset_px: 0.0,
         elevation_px: 0.0,
@@ -224,6 +282,8 @@ fn todomvc_physical_layout(scene: &RetainedScene) -> UiPhysicalLayout {
     UiPhysicalLayout {
         center_px: [bounds.x + bounds.width * 0.5, (min_y_up + max_y_up) * 0.5],
         bounds_px: [bounds.x, min_y_up, bounds.x + bounds.width, max_y_up],
+        text_bounds_px: [bounds.x, min_y_up, bounds.x + bounds.width, max_y_up],
+        hero_text_bounds_px: heading_bounds_px,
         corner_radius_px: 12.0,
         content_inset_px: 0.0,
         elevation_px: 0.0,
@@ -333,108 +393,76 @@ fn build_fixed_text_scene_data_from_scene(
     })
 }
 
-fn build_fixed_text_state_from_scene(
-    scene: &RetainedScene,
-    atlas: &VectorFontAtlas,
-    colors: &TextColors,
-) -> (FixedTextSceneState, FixedTextSceneData) {
-    crate::retained::text::build_fixed_text_scene_state_for_scene(
-        scene,
-        todo_text_run_layout(),
-        atlas,
-        colors,
-        text_render_space(),
-    )
-}
-
 fn build_gpu_ui_scene_data_from_scene(scene: &RetainedScene) -> GpuUiSceneData {
     build_retained_gpu_ui_scene(scene, render_space())
 }
 
-impl Ui2dSceneState for TodoMvcRetainedState {
-    fn atlas(&self) -> &VectorFontAtlas {
+impl SharedRetainedUiSceneState for TodoMvcRetainedState {
+    fn shared_atlas(&self) -> &VectorFontAtlas {
         &self.atlas
     }
 
-    fn text_state(&self) -> &FixedTextSceneState {
+    fn shared_text_state(&self) -> &FixedTextSceneState {
         &self.text_state
     }
 
-    fn build_ui2d_init_data(&self) -> Ui2dSceneInitData {
-        let (_, text_data) =
-            build_fixed_text_state_from_scene(self.scene(), self.atlas(), &classic_text_colors());
-        let ui_data = build_gpu_ui_scene_data_from_scene(self.scene());
-        Ui2dSceneInitData {
-            text_data,
-            ui_primitives: ui_data.primitives,
+    fn build_prepared_retained_ui_scene(&self, colors: &TextColors) -> PreparedRetainedUiScene {
+        PreparedRetainedUiScene {
+            text_data: build_fixed_text_scene_data_from_scene(self.scene(), self.atlas(), colors),
+            ui_data: build_gpu_ui_scene_data_from_scene(self.scene()),
+        }
+    }
+
+    fn take_prepared_retained_ui_update(
+        &mut self,
+        colors: &TextColors,
+    ) -> Option<SharedRetainedUiUpdate> {
+        let update = self.take_scene_resource_update(colors)?;
+        match (update.text, update.ui) {
+            (
+                Some(Ui2dRuntimeTextUpdate::Full(text_data)),
+                Some(Ui2dRuntimeUiUpdate::Full(ui_data)),
+            ) => Some(SharedRetainedUiUpdate::Full(PreparedRetainedUiScene {
+                text_data,
+                ui_data,
+            })),
+            (text, ui) => Some(SharedRetainedUiUpdate::Partial { text, ui }),
+        }
+    }
+
+    fn ui2d_scene_init_capacities(
+        &self,
+        _prepared: &PreparedRetainedUiScene,
+    ) -> Ui2dSceneInitCapacities {
+        Ui2dSceneInitCapacities {
             text_capacity: 512,
             grid_index_capacity: self.text_state.layout().grid_index_capacity().max(1),
             primitive_capacity: 256,
         }
     }
 
-    fn take_ui2d_runtime_update(&mut self, colors: &TextColors) -> Option<Ui2dRuntimeUpdate> {
-        self.take_scene_resource_update(colors)
-    }
-
-    fn mark_view_transform_dirty(&mut self) {
+    fn mark_retained_ui_view_transform_dirty(&mut self) {
         self.retained_scene.mark_view_transform_dirty();
     }
 
-    fn set_viewport_size(&mut self, width: u32, height: u32) {
+    fn set_retained_ui_viewport_size(&mut self, width: u32, height: u32) {
         self.retained_scene.set_viewport_size(width, height);
     }
 
-    fn scene(&self) -> &RetainedScene {
+    fn shared_scene(&self) -> &RetainedScene {
         self.retained_scene.scene()
     }
 
-    fn scene_mut(&mut self) -> &mut RetainedScene {
+    fn shared_scene_mut(&mut self) -> &mut RetainedScene {
         self.retained_scene.scene_mut()
     }
 }
 
-impl UiPhysicalSceneState for TodoMvcRetainedState {
-    fn atlas(&self) -> &VectorFontAtlas {
-        &self.atlas
-    }
-
-    fn text_state(&self) -> &FixedTextSceneState {
-        &self.text_state
-    }
-
-    fn build_ui_physical_bootstrap(&self, colors: &TextColors) -> UiPhysicalSceneBootstrap {
-        UiPhysicalSceneBootstrap {
-            text_data: build_fixed_text_scene_data_from_scene(self.scene(), self.atlas(), colors),
-            ui_data: build_gpu_ui_scene_data_from_scene(self.scene()),
-            layout: todomvc_physical_layout(self.scene()),
-        }
-    }
-
-    fn take_ui_physical_resource_update(
-        &mut self,
-        colors: &TextColors,
-    ) -> Option<UiPhysicalRuntimeUpdate> {
-        self.take_scene_resource_update(colors).map(Into::into)
-    }
-
-    fn mark_view_transform_dirty(&mut self) {
-        self.retained_scene.mark_view_transform_dirty();
-    }
-
-    fn set_viewport_size(&mut self, width: u32, height: u32) {
-        self.retained_scene.set_viewport_size(width, height);
-    }
-
-    fn scene(&self) -> &RetainedScene {
-        self.retained_scene.scene()
-    }
-
-    fn scene_mut(&mut self) -> &mut RetainedScene {
-        self.retained_scene.scene_mut()
-    }
-
-    fn physical_layout(&self) -> UiPhysicalLayout {
+impl SharedRetainedUiPhysicalSceneState for TodoMvcRetainedState {
+    fn physical_layout_for_prepared_retained_ui(
+        &self,
+        _prepared: &PreparedRetainedUiScene,
+    ) -> UiPhysicalLayout {
         todomvc_physical_layout(self.scene())
     }
 }

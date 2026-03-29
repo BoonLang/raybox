@@ -14,12 +14,14 @@ struct Uniforms {
     float4 layoutParams2;     // generic fill rgba
     float4 layoutParams3;     // generic outline rgba
     float4 layoutParams4;     // generic shadow rgba
-    float4 layoutParams5;     // generic shadow offset xy in px
-    float4 layoutParams6;     // generic shadow extra size xy in px
+    float4 layoutParams5;     // generic shadow offset xy in px, text bounds min xy in px
+    float4 layoutParams6;     // generic shadow extra size xy in px, text bounds max xy in px
     float4 layoutParams7;     // generic outline width px, content inset px
     float4 layoutParams8;     // generic accent rgba
     float4 layoutParams9;     // generic detail rgba
     float4 layoutBounds;      // xy = layoutMinPx, zw = layoutMaxPx
+    float4 heroTextBounds;    // xy = hero text min px, zw = hero text max px
+    float4 renderFlags;       // x = transparent background
 };
 
 struct ThemeUniforms {
@@ -86,6 +88,9 @@ StructuredBuffer<uint> charGridIndices;
 [[vk::binding(7, 0)]]
 StructuredBuffer<UiPrimitive> uiPrimitives;
 
+[[vk::binding(8, 0)]]
+StructuredBuffer<uint> charGridCellDistances;
+
 struct VertexOutput {
     float4 position : SV_Position;
     float2 uv : TEXCOORD0;
@@ -133,8 +138,56 @@ float genericCardContentInsetPx() { return max(uniforms.layoutParams7.y, 0.0); }
 float4 genericCardShadowColor() { return uniforms.layoutParams4; }
 float2 genericCardShadowOffsetPx() { return uniforms.layoutParams5.xy; }
 float2 genericCardShadowExtraSizePx() { return uniforms.layoutParams6.xy; }
+float4 layoutTextBoundsPx() { return float4(uniforms.layoutParams5.zw, uniforms.layoutParams6.zw); }
 float4 genericCardAccentColor() { return uniforms.layoutParams8; }
 float4 genericCardDetailColor() { return uniforms.layoutParams9; }
+float charGridCellStepWorld() { return min(uniforms.charGridParams.z, uniforms.charGridParams.w) * layoutPixelToWorld(); }
+
+bool hasValidTextBounds(float4 bounds) {
+    return all(bounds.zw > bounds.xy);
+}
+
+float4 activeReliefTextBoundsPx() {
+    float4 textBounds = layoutTextBoundsPx();
+    if (isGlassTheme()) {
+        float4 heroBounds = uniforms.heroTextBounds;
+        if (hasValidTextBounds(heroBounds)) {
+            return heroBounds;
+        }
+    }
+    return textBounds;
+}
+
+float sceneTextHintDist(float3 p, float padPx) {
+    if (!useStackedCardGeometry()) {
+        return 1e10;
+    }
+
+    float4 textBounds = activeReliefTextBoundsPx();
+    if (!hasValidTextBounds(textBounds)) {
+        return 1e10;
+    }
+
+    float textScale = uniforms.renderParams.w;
+    float textReliefDepth = theme.extraParams.x;
+    float cardElev = theme.geometryParams.y;
+    float halfDepth = max(textReliefDepth * 0.5, 0.001);
+    float verticalPad = 0.3 * textScale;
+
+    float3 textBoxMin = float3(
+        (textBounds.x - padPx - layoutCenterX()) * layoutPixelToWorld(),
+        cardElev + 0.04 - halfDepth - verticalPad,
+        -(textBounds.w + padPx - layoutCenterY()) * layoutPixelToWorld()
+    );
+    float3 textBoxMax = float3(
+        (textBounds.z + padPx - layoutCenterX()) * layoutPixelToWorld(),
+        cardElev + 0.04 + halfDepth + verticalPad,
+        -(textBounds.y - padPx - layoutCenterY()) * layoutPixelToWorld()
+    );
+    float3 textBoxCenter = (textBoxMin + textBoxMax) * 0.5;
+    float3 textBoxHalf = (textBoxMax - textBoxMin) * 0.5;
+    return sdBox(p - textBoxCenter, textBoxHalf);
+}
 
 float2 genericCardHalfExtents() {
     float4 bounds = uniforms.layoutBounds;
@@ -476,10 +529,25 @@ static const float ITEM2_Z = -0.168;       // between SEP1 and SEP2
 static const float ITEM3_Z = 0.428;        // between SEP2 and SEP3
 static const float ITEM4_Z = 1.020;        // between SEP3 and FOOTER
 static const float ITEM_HALF_H = 0.28;     // item half-height in Z (slightly smaller than spacing)
+static const float ITEM_SPACING = ITEM2_Z - ITEM1_Z;
+static const float SEP_SPACING = SEP2_Z - SEP1_Z;
 // Checkbox position
 static const float CB_X = -2.49;           // pixel x=101: (101-350)/100
 static const float CB_RADIUS = 0.17;       // 17 pixels
 static const float CB_TUBE_R = 0.006;      // tube radius for torus ring
+
+bool withinRepeatedBand(float z, float firstCenter, float lastCenter, float halfExtent, float pad) {
+    return z >= firstCenter - halfExtent - pad && z <= lastCenter + halfExtent + pad;
+}
+
+int nearestRepeatedIndex(float z, float firstCenter, float spacing, int count) {
+    return clamp(int(round((z - firstCenter) / spacing)), 0, count - 1);
+}
+
+int neighborRepeatedIndex(float z, float center, int baseIndex, int count) {
+    int direction = z >= center ? 1 : -1;
+    return clamp(baseIndex + direction, 0, count - 1);
+}
 
 // ---- Text relief with per-character color ----
 
@@ -487,20 +555,134 @@ struct TextHit {
     float dist;
     float3 color;
     bool valid;
+    uint charIdx;
+    float planarDist;
+    float verticalDist;
+    float localY;
 };
 
-TextHit sdTextRelief3D(float3 p, float depth) {
-    TextHit result;
-    result.dist = 1e10;
-    result.color = float3(0.5);
-    result.valid = false;
+static const uint INVALID_CHAR_INDEX = 0xffffffffu;
+static const int2 TEXT_NEIGHBOR_OFFSETS[9] = {
+    int2(0, 0),
+    int2(-1, 0),
+    int2(1, 0),
+    int2(0, -1),
+    int2(0, 1),
+    int2(-1, -1),
+    int2(1, -1),
+    int2(-1, 1),
+    int2(1, 1),
+};
+
+TextHit invalidTextHit(float dist) {
+    TextHit hit;
+    hit.dist = dist;
+    hit.color = float3(0.5);
+    hit.valid = false;
+    hit.charIdx = INVALID_CHAR_INDEX;
+    hit.planarDist = 1e10;
+    hit.verticalDist = 1e10;
+    hit.localY = 0.0;
+    return hit;
+}
+
+TextHit sampleCachedTextRelief3D(float3 p, float depth, uint charIdx) {
+    TextHit result = invalidTextHit(1e10);
+
+    uint charCount = uint(uniforms.textParams.x);
+    if (charIdx == INVALID_CHAR_INDEX || charIdx >= charCount) {
+        return result;
+    }
 
     float halfDepth = depth * 0.5;
+    bool glassTheme = isGlassTheme();
+    CharInstanceEx ch = charInstances[charIdx];
+    if (glassTheme && ch.colorFlags.w != 2.0) {
+        return result;
+    }
+
+    float2 textPos = float2(
+        p.x / layoutPixelToWorld() + layoutCenterX(),
+        -p.z / layoutPixelToWorld() + layoutCenterY()
+    );
+    float2 charPos = ch.posAndChar.xy;
+    float charScalePx = ch.posAndChar.z;
+    float charScaleWorld = charScalePx * layoutPixelToWorld();
+    uint glyphIdx = uint(ch.posAndChar.w);
+    GlyphData glyph = glyphData[glyphIdx];
+    float4 bounds = glyph.bounds;
+    float2 localP = (textPos - charPos) / charScalePx;
+
+    if (localP.x < bounds.x - 0.15 || localP.x > bounds.z + 0.15 ||
+        localP.y < bounds.y - 0.15 || localP.y > bounds.w + 0.15) {
+        return result;
+    }
+
+    float d2d = glassTheme
+        ? sdGlyphBruteForce(localP, glyph.curveInfo) * charScaleWorld
+        : sdGlyph(localP, bounds, glyph.curveInfo) * charScaleWorld;
+    float roundR = 0.0;
+    if (glassTheme && ch.colorFlags.w == 2.0) {
+        roundR = 0.015;
+    }
+    float d3d = (roundR > 0.0)
+        ? opExtrusionRound(d2d, p.y, max(halfDepth - roundR, 0.001), roundR)
+        : opExtrusion(d2d, p.y, halfDepth);
+
+    result.dist = d3d;
+    result.color = ch.colorFlags.xyz;
+    result.valid = true;
+    result.charIdx = charIdx;
+    result.planarDist = d2d;
+    result.verticalDist = abs(p.y) - halfDepth;
+    result.localY = p.y;
+    return result;
+}
+
+TextHit sdTextRelief3D(float3 p, float depth) {
+    TextHit result = invalidTextHit(1e10);
+
+    float halfDepth = depth * 0.5;
+    bool glassTheme = isGlassTheme();
+    float aabbPadY = 0.3; // extra Y padding so raymarcher sees text slab from further away
+
+    // Coarse all-text hint from CPU-side character bounds. This is padded on
+    // purpose and only used to skip work well outside any visible text.
+    float4 hintedTextBounds = activeReliefTextBoundsPx();
+    bool hasHintedTextBounds = hasValidTextBounds(hintedTextBounds);
+    if (hasHintedTextBounds) {
+        float hintPadPx = 48.0;
+        float3 hintedTextBoxMin = float3(
+            (hintedTextBounds.x - hintPadPx - layoutCenterX()) * layoutPixelToWorld(),
+            -halfDepth - aabbPadY,
+            -(hintedTextBounds.w + hintPadPx - layoutCenterY()) * layoutPixelToWorld()
+        );
+        float3 hintedTextBoxMax = float3(
+            (hintedTextBounds.z + hintPadPx - layoutCenterX()) * layoutPixelToWorld(),
+            halfDepth + aabbPadY,
+            -(hintedTextBounds.y - hintPadPx - layoutCenterY()) * layoutPixelToWorld()
+        );
+        float3 hintedTextBoxCenter = (hintedTextBoxMin + hintedTextBoxMax) * 0.5;
+        float3 hintedTextBoxHalf = (hintedTextBoxMax - hintedTextBoxMin) * 0.5;
+        float hintedTextBoxDist = sdBox(p - hintedTextBoxCenter, hintedTextBoxHalf);
+        if (hintedTextBoxDist > 0.12) {
+            result.dist = hintedTextBoxDist;
+            return result;
+        }
+    }
 
     // Text AABB early-exit (with padded Y extent for conservative raymarching)
     float2 gridMin = uniforms.charGridBounds.xy;
     float2 gridMax = uniforms.charGridBounds.zw;
-    float aabbPadY = 0.3; // extra Y padding so raymarcher sees text slab from further away
+    if (glassTheme) {
+        float2 heroMin = uniforms.heroTextBounds.xy;
+        float2 heroMax = uniforms.heroTextBounds.zw;
+        bool hasHeroBounds = all(heroMax > heroMin);
+        if (hasHeroBounds) {
+            gridMin = heroMin;
+            gridMax = heroMax;
+        }
+    }
     float3 textBoxMin = float3(
         (gridMin.x - layoutCenterX()) * layoutPixelToWorld(),
         -halfDepth - aabbPadY,
@@ -528,56 +710,80 @@ TextHit sdTextRelief3D(float3 p, float depth) {
     // Check 3x3 neighborhood of grid cells to avoid missing chars at cell boundaries
     int2 centerCell = charGridCellCoord(textPos);
     int2 gridDims = int2(uniforms.charGridParams.xy);
+    if (centerCell.x < 0 || centerCell.y < 0 || centerCell.x >= gridDims.x || centerCell.y >= gridDims.y) {
+        result.dist = textBoxDist;
+        return result;
+    }
+    uint centerCellIdx = charGridCellIndex(centerCell);
+    uint centerCellDist = charGridCellDistances[centerCellIdx];
+    if (centerCellDist > 1u) {
+        float slabDist = max(abs(p.y) - halfDepth, 0.0);
+        float safeDist = max(float(centerCellDist) - 0.5, 0.5) * charGridCellStepWorld();
+        result.dist = max(textBoxDist, max(slabDist, safeDist));
+        return result;
+    }
 
-    for (int dy = -1; dy <= 1; dy++) {
+    TextHit cachedTraceHit = sampleCachedTextRelief3D(p, depth, g_textTraceCharIdx);
+    if (cachedTraceHit.valid) {
+        bool safelyInsideCachedGlyph =
+            cachedTraceHit.dist < -0.008 &&
+            cachedTraceHit.planarDist < -0.004 &&
+            abs(cachedTraceHit.verticalDist) < max(halfDepth * 0.45, 0.003);
+        if (safelyInsideCachedGlyph) {
+            return cachedTraceHit;
+        }
+        result = cachedTraceHit;
+    }
+
+    [unroll]
+    for (int neighborIdx = 0; neighborIdx < 9; neighborIdx++) {
         if (result.dist < 0.005) break;
-        for (int dx = -1; dx <= 1; dx++) {
-            if (result.dist < 0.005) break;
-            int2 cell = centerCell + int2(dx, dy);
-            if (cell.x < 0 || cell.y < 0 || cell.x >= gridDims.x || cell.y >= gridDims.y)
-                continue;
+        int2 cell = centerCell + TEXT_NEIGHBOR_OFFSETS[neighborIdx];
+        if (cell.x < 0 || cell.y < 0 || cell.x >= gridDims.x || cell.y >= gridDims.y)
+            continue;
 
-            uint cellIdx = charGridCellIndex(cell);
-            CharGridCellData cgCell = charGridCells[cellIdx];
-            uint start = cgCell.offset;
-            uint count = cgCell.count;
+        uint cellIdx = charGridCellIndex(cell);
+        CharGridCellData cgCell = charGridCells[cellIdx];
+        uint start = cgCell.offset;
+        uint count = cgCell.count;
 
-            for (uint i = 0u; i < count && i < 16u; i++) {
-                uint charIdx = charGridIndices[start + i];
-                CharInstanceEx ch = charInstances[charIdx];
+        for (uint i = 0u; i < count && i < 16u; i++) {
+            uint charIdx = charGridIndices[start + i];
+            CharInstanceEx ch = charInstances[charIdx];
+            // Glass theme: only 3D-render heading chars (flag==2), body text is decal
+            if (glassTheme && ch.colorFlags.w != 2.0) continue;
 
-                // Glass theme: only 3D-render heading chars (flag==2), body text is decal
-                bool glassTheme = isGlassTheme();
-                if (glassTheme && ch.colorFlags.w != 2.0) continue;
+            float2 charPos = ch.posAndChar.xy;
+            float charScalePx = ch.posAndChar.z;
+            float charScaleWorld = charScalePx * layoutPixelToWorld();
+            uint glyphIdx = uint(ch.posAndChar.w);
 
-                float2 charPos = ch.posAndChar.xy;
-                float charScalePx = ch.posAndChar.z;
-                float charScaleWorld = charScalePx * layoutPixelToWorld();
-                uint glyphIdx = uint(ch.posAndChar.w);
+            GlyphData glyph = glyphData[glyphIdx];
+            float4 bounds = glyph.bounds;
 
-                GlyphData glyph = glyphData[glyphIdx];
-                float4 bounds = glyph.bounds;
+            float2 localP = (textPos - charPos) / charScalePx;
 
-                float2 localP = (textPos - charPos) / charScalePx;
-
-                if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
-                    localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
-                    float d2d = glassTheme
-                        ? sdGlyphBruteForce(localP, glyph.curveInfo) * charScaleWorld
-                        : sdGlyph(localP, bounds, glyph.curveInfo) * charScaleWorld;
-                    // Glass heading: subtle rounding for smooth edges
-                    float roundR = 0.0;
-                    if (glassTheme && ch.colorFlags.w == 2.0) {
-                        roundR = 0.015;
-                    }
-                    float d3d = (roundR > 0.0)
-                        ? opExtrusionRound(d2d, p.y, max(halfDepth - roundR, 0.001), roundR)
-                        : opExtrusion(d2d, p.y, halfDepth);
-                    if (d3d < result.dist) {
-                        result.dist = d3d;
-                        result.color = ch.colorFlags.xyz;
-                        result.valid = true;
-                    }
+            if (localP.x >= bounds.x - 0.15 && localP.x <= bounds.z + 0.15 &&
+                localP.y >= bounds.y - 0.15 && localP.y <= bounds.w + 0.15) {
+                float d2d = glassTheme
+                    ? sdGlyphBruteForce(localP, glyph.curveInfo) * charScaleWorld
+                    : sdGlyph(localP, bounds, glyph.curveInfo) * charScaleWorld;
+                // Glass heading: subtle rounding for smooth edges
+                float roundR = 0.0;
+                if (glassTheme && ch.colorFlags.w == 2.0) {
+                    roundR = 0.015;
+                }
+                float d3d = (roundR > 0.0)
+                    ? opExtrusionRound(d2d, p.y, max(halfDepth - roundR, 0.001), roundR)
+                    : opExtrusion(d2d, p.y, halfDepth);
+                if (d3d < result.dist) {
+                    result.dist = d3d;
+                    result.color = ch.colorFlags.xyz;
+                    result.valid = true;
+                    result.charIdx = charIdx;
+                    result.planarDist = d2d;
+                    result.verticalDist = abs(p.y) - halfDepth;
+                    result.localY = p.y;
                 }
             }
         }
@@ -587,13 +793,30 @@ TextHit sdTextRelief3D(float3 p, float depth) {
     // to prevent the raymarcher from taking huge steps through the text region
     if (!result.valid) {
         float slabDist = max(abs(p.y) - halfDepth, 0.0);
-        // Use distance to nearest cell boundary as XZ component
-        float2 cellSize = uniforms.charGridParams.zw;
-        float cellMinDist = min(cellSize.x, cellSize.y) * 0.5;
-        result.dist = max(slabDist, cellMinDist);
+        float safeCellDist = max(float(centerCellDist) - 0.5, 0.5) * charGridCellStepWorld();
+        result.dist = max(textBoxDist, max(slabDist, safeCellDist));
     }
 
     return result;
+}
+
+TextHit sampleSceneTextRelief(float3 p) {
+    float textScale = uniforms.renderParams.w;
+    float textReliefDepth = theme.extraParams.x;
+    float cardElev = theme.geometryParams.y;
+    float3 textP = (p - float3(0, cardElev + 0.04, 0)) / textScale;
+    TextHit cachedHit = sampleCachedTextRelief3D(textP, textReliefDepth / textScale, g_textNormalCharIdx);
+    if (cachedHit.valid) {
+        g_textTraceCharIdx = cachedHit.charIdx;
+        cachedHit.dist *= textScale;
+        return cachedHit;
+    }
+    TextHit textHit = sdTextRelief3D(textP, textReliefDepth / textScale);
+    if (textHit.valid) {
+        g_textTraceCharIdx = textHit.charIdx;
+    }
+    textHit.dist *= textScale;
+    return textHit;
 }
 
 // ---- Coarse scene (for shadow/AO) ----
@@ -690,6 +913,8 @@ Hit mapSceneCoarse(float3 p) {
 
 // Thread-local for text color passing from mapScene to shading
 static float3 g_textColor = float3(0.5);
+static uint g_textTraceCharIdx = INVALID_CHAR_INDEX;
+static uint g_textNormalCharIdx = INVALID_CHAR_INDEX;
 
 Hit mapScene(float3 p) {
     Hit result;
@@ -697,13 +922,10 @@ Hit mapScene(float3 p) {
     result.materialId = 0;
     result.textColor = float3(0.5);
 
-    float textScale = uniforms.renderParams.w;
-    float textDepth = uniforms.renderParams.z;
     float edgeR = theme.geometryParams.x;
     float cardElev = theme.geometryParams.y;
     float itemElev = theme.geometryParams.z;
     float inputDepth = theme.geometryParams.w;
-    float textReliefDepth = theme.extraParams.x;
     float textReliefMode = theme.extraParams.y;
 
     if (!useStackedCardGeometry()) {
@@ -776,52 +998,111 @@ Hit mapScene(float3 p) {
 
     // Main card
     float3 cardP = p - float3(0, cardElev, 0);
-    float cardDist = sdRoundBox(cardP, float3(CARD_W, 0.04, CARD_D), edgeR);
+    float baseCardDist = sdRoundBox(cardP, float3(CARD_W, 0.04, CARD_D), edgeR);
+    float cardDist = baseCardDist;
+
+    float detailBandHalfHeight = max(0.16, 0.08 + inputDepth + itemElev);
+    float detailRegionDist = sdBox(
+        cardP - float3(0, 0.06 + itemElev * 0.25, 0),
+        float3(CARD_W + 0.18, detailBandHalfHeight, CARD_D + 0.18)
+    );
+    bool nearTextRelief = sceneTextHintDist(p, 48.0) < 0.12;
+    bool needsTopDetail = detailRegionDist < 0.08 || nearTextRelief;
+
+    if (!needsTopDetail) {
+        Hit stack1;
+        float3 stack1P = p - float3(0, cardElev - 0.005, 0.04);
+        stack1.dist = sdRoundBox(stack1P, float3(CARD_W - 0.02, 0.035, CARD_D), edgeR);
+        stack1.materialId = 6;
+        stack1.textColor = float3(0);
+        result = opUnionHit(result, stack1);
+
+        Hit stack2;
+        float3 stack2P = p - float3(0, cardElev - 0.01, 0.08);
+        stack2.dist = sdRoundBox(stack2P, float3(CARD_W - 0.04, 0.03, CARD_D), edgeR);
+        stack2.materialId = 6;
+        stack2.textColor = float3(0);
+        result = opUnionHit(result, stack2);
+
+        Hit card;
+        card.dist = baseCardDist;
+        card.materialId = 2;
+        card.textColor = float3(0);
+        result = opUnionHit(result, card);
+        return result;
+    }
 
     // Input well (CSG subtract from top of card)
     // Input area: pixel Y=130 to 195.8 → Z = -1.72 to -1.062
     float inputCenterZ = (INPUT_TOP_Z + INPUT_BOT_Z) * 0.5;  // -1.391
     float inputHalfZ = (INPUT_BOT_Z - INPUT_TOP_Z) * 0.5;    // 0.329
-    float3 inputP = cardP - float3(0, 0.02, inputCenterZ);
-    float inputWell = sdRoundBox(inputP, float3(CARD_W - 0.04, inputDepth, inputHalfZ), edgeR * 0.5);
-    cardDist = max(cardDist, -inputWell);  // CSG subtract
+    float featurePad = max(edgeR * 2.0, 0.08);
+    if (abs(cardP.z - inputCenterZ) < inputHalfZ + featurePad) {
+        float3 inputP = cardP - float3(0, 0.02, inputCenterZ);
+        float inputWell = sdRoundBox(inputP, float3(CARD_W - 0.04, inputDepth, inputHalfZ), edgeR * 0.5);
+        cardDist = max(cardDist, -inputWell);  // CSG subtract
+    }
 
-    // Raised stacked-card item panels (4 items)
+    // Raised stacked-card item panels
     float itemCenters[4] = { ITEM1_Z, ITEM2_Z, ITEM3_Z, ITEM4_Z };
-    for (int i = 0; i < 4; i++) {
-        float3 itemP = cardP - float3(0, 0, itemCenters[i]);
-        float itemDist = sdRoundBox(itemP, float3(CARD_W - 0.04, 0.04 + itemElev, ITEM_HALF_H), edgeR * 0.3);
-        Hit item;
-        item.dist = itemDist;
-        item.materialId = 3;  // todo item material
-        item.textColor = float3(0);
-        result = opUnionHit(result, item);
+    if (withinRepeatedBand(cardP.z, ITEM1_Z, ITEM4_Z, ITEM_HALF_H, featurePad)) {
+        int nearestItem = nearestRepeatedIndex(cardP.z, ITEM1_Z, ITEM_SPACING, 4);
+        int neighborItem = neighborRepeatedIndex(cardP.z, itemCenters[nearestItem], nearestItem, 4);
+        bool nearCheckboxColumn = abs(cardP.x - CB_X) < CB_RADIUS + 0.18;
+        if (nearCheckboxColumn) {
+            float3 cbP = cardP - float3(CB_X, 0.04, itemCenters[nearestItem]);
+            float2 torusQ = float2(length(cbP.xz) - CB_RADIUS, cbP.y);
+            float cbDist = length(torusQ) - CB_TUBE_R;
+            Hit cbHit;
+            cbHit.dist = cbDist;
+            cbHit.materialId = 4;  // checkbox ring
+            cbHit.textColor = float3(0);
+            result = opUnionHit(result, cbHit);
+        }
 
-        // Checkbox circle ring (torus lying flat on card surface)
-        float3 cbP = cardP - float3(CB_X, 0.04, itemCenters[i]);
-        float2 torusQ = float2(length(cbP.xz) - CB_RADIUS, cbP.y);
-        float cbDist = length(torusQ) - CB_TUBE_R;
-        Hit cbHit;
-        cbHit.dist = cbDist;
-        cbHit.materialId = 4;  // checkbox ring
-        cbHit.textColor = float3(0);
-        result = opUnionHit(result, cbHit);
+        [unroll]
+        for (int candidateIdx = 0; candidateIdx < 2; candidateIdx++) {
+            int itemIndex = candidateIdx == 0 ? nearestItem : neighborItem;
+            if (candidateIdx == 1 && itemIndex == nearestItem) {
+                continue;
+            }
+
+            float itemCenterZ = itemCenters[itemIndex];
+            float3 itemP = cardP - float3(0, 0, itemCenterZ);
+            float itemDist = sdRoundBox(itemP, float3(CARD_W - 0.04, 0.04 + itemElev, ITEM_HALF_H), edgeR * 0.3);
+            Hit item;
+            item.dist = itemDist;
+            item.materialId = 3;  // todo item material
+            item.textColor = float3(0);
+            result = opUnionHit(result, item);
+        }
     }
 
     // Separator lines between items
     float sepZs[3] = { SEP1_Z, SEP2_Z, SEP3_Z };
-    for (int s = 0; s < 3; s++) {
-        float3 sepP = cardP - float3(0, 0.04, sepZs[s]);
-        float sepDist = sdRoundBox(sepP, float3(CARD_W - 0.06, 0.002, 0.002), 0.001);
-        Hit sep;
-        sep.dist = sepDist;
-        sep.materialId = 5;  // separator
-        sep.textColor = float3(0);
-        result = opUnionHit(result, sep);
+    if (withinRepeatedBand(cardP.z, SEP1_Z, SEP3_Z, 0.0, featurePad)) {
+        int nearestSep = nearestRepeatedIndex(cardP.z, SEP1_Z, SEP_SPACING, 3);
+        int neighborSep = neighborRepeatedIndex(cardP.z, sepZs[nearestSep], nearestSep, 3);
+
+        [unroll]
+        for (int candidateIdx = 0; candidateIdx < 2; candidateIdx++) {
+            int sepIndex = candidateIdx == 0 ? nearestSep : neighborSep;
+            if (candidateIdx == 1 && sepIndex == nearestSep) {
+                continue;
+            }
+
+            float3 sepP = cardP - float3(0, 0.04, sepZs[sepIndex]);
+            float sepDist = sdRoundBox(sepP, float3(CARD_W - 0.06, 0.002, 0.002), 0.001);
+            Hit sep;
+            sep.dist = sepDist;
+            sep.materialId = 5;  // separator
+            sep.textColor = float3(0);
+            result = opUnionHit(result, sep);
+        }
     }
 
     // Input/list border (between input area and first todo item)
-    {
+    if (abs(cardP.z - INPUT_BOT_Z) < featurePad) {
         float3 borderP = cardP - float3(0, 0.04, INPUT_BOT_Z);
         float borderDist = sdRoundBox(borderP, float3(CARD_W - 0.06, 0.002, 0.002), 0.001);
         Hit border;
@@ -832,7 +1113,7 @@ Hit mapScene(float3 p) {
     }
 
     // Footer border (between last item and footer)
-    {
+    if (abs(cardP.z - FOOTER_Z) < featurePad) {
         float3 footerP = cardP - float3(0, 0.04, FOOTER_Z);
         float footerDist = sdRoundBox(footerP, float3(CARD_W - 0.04, 0.002, 0.002), 0.001);
         Hit footer;
@@ -866,37 +1147,38 @@ Hit mapScene(float3 p) {
 
     // Text relief — always include text distance in scene SDF to prevent
     // the raymarcher from stepping through the thin text slab
-    float3 textP = (p - float3(0, cardElev + 0.04, 0)) / textScale;
-    TextHit textHit = sdTextRelief3D(textP, textReliefDepth / textScale);
-    float textDist = textHit.dist * textScale;
+    if (nearTextRelief) {
+        TextHit textHit = sampleSceneTextRelief(p);
+        float textDist = textHit.dist;
 
-    if (textHit.valid) {
-        if (textReliefMode < 0.5) {
-            // Raised text: union above card surface
-            Hit text;
-            text.dist = textDist;
-            text.materialId = 7;  // text material
-            text.textColor = textHit.color;
-            result = opUnionHit(result, text);
-            if (textDist < result.dist + 0.001) {
-                g_textColor = textHit.color;
-
-            }
-        } else {
-            // Carved text: subtract from card
-            if (textDist < 0.1) {
-                result.dist = max(result.dist, -textDist);
-                if (-textDist > result.dist - 0.002) {
-                    result.materialId = 7;
+        if (textHit.valid) {
+            if (textReliefMode < 0.5) {
+                // Raised text: union above card surface
+                Hit text;
+                text.dist = textDist;
+                text.materialId = 7;  // text material
+                text.textColor = textHit.color;
+                result = opUnionHit(result, text);
+                if (textDist < result.dist + 0.001) {
                     g_textColor = textHit.color;
-    
+                    g_textNormalCharIdx = textHit.charIdx;
+                }
+            } else {
+                // Carved text: subtract from card
+                if (textDist < 0.1) {
+                    result.dist = max(result.dist, -textDist);
+                    if (-textDist > result.dist - 0.002) {
+                        result.materialId = 7;
+                        g_textColor = textHit.color;
+                        g_textNormalCharIdx = textHit.charIdx;
+                    }
                 }
             }
+        } else {
+            // No specific character found, but include text AABB/slab distance
+            // so the raymarcher slows down near the text region
+            result.dist = min(result.dist, textDist);
         }
-    } else {
-        // No specific character found, but include text AABB/slab distance
-        // so the raymarcher slows down near the text region
-        result.dist = min(result.dist, textDist);
     }
 
     return result;
@@ -944,28 +1226,75 @@ float mapSceneGeometryDist(float3 p) {
 
     // Main card
     float3 cardP = p - float3(0, cardElev, 0);
-    float cardDist = sdRoundBox(cardP, float3(CARD_W, 0.04, CARD_D), edgeR);
+    float baseCardDist = sdRoundBox(cardP, float3(CARD_W, 0.04, CARD_D), edgeR);
+    float cardDist = baseCardDist;
+    float detailBandHalfHeight = max(0.16, 0.08 + inputDepth + itemElev);
+    float detailRegionDist = sdBox(
+        cardP - float3(0, 0.06 + itemElev * 0.25, 0),
+        float3(CARD_W + 0.18, detailBandHalfHeight, CARD_D + 0.18)
+    );
+    bool nearTextRelief = sceneTextHintDist(p, 48.0) < 0.12;
+    bool needsTopDetail = detailRegionDist < 0.08 || nearTextRelief;
+
+    if (!needsTopDetail) {
+        result = min(result, sdRoundBox(p - float3(0, cardElev - 0.005, 0.04), float3(CARD_W - 0.02, 0.035, CARD_D), edgeR));
+        result = min(result, sdRoundBox(p - float3(0, cardElev - 0.01, 0.08), float3(CARD_W - 0.04, 0.03, CARD_D), edgeR));
+        result = min(result, baseCardDist);
+        return result;
+    }
+
     float inputCenterZ = (INPUT_TOP_Z + INPUT_BOT_Z) * 0.5;
     float inputHalfZ = (INPUT_BOT_Z - INPUT_TOP_Z) * 0.5;
-    float3 inputP = cardP - float3(0, 0.02, inputCenterZ);
-    float inputWell = sdRoundBox(inputP, float3(CARD_W - 0.04, inputDepth, inputHalfZ), edgeR * 0.5);
-    cardDist = max(cardDist, -inputWell);
+    float featurePad = max(edgeR * 2.0, 0.08);
+    if (abs(cardP.z - inputCenterZ) < inputHalfZ + featurePad) {
+        float3 inputP = cardP - float3(0, 0.02, inputCenterZ);
+        float inputWell = sdRoundBox(inputP, float3(CARD_W - 0.04, inputDepth, inputHalfZ), edgeR * 0.5);
+        cardDist = max(cardDist, -inputWell);
+    }
 
     // Items + checkboxes
     float itemCenters[4] = { ITEM1_Z, ITEM2_Z, ITEM3_Z, ITEM4_Z };
-    for (int i = 0; i < 4; i++) {
-        result = min(result, sdRoundBox(cardP - float3(0, 0, itemCenters[i]), float3(CARD_W - 0.04, 0.04 + itemElev, ITEM_HALF_H), edgeR * 0.3));
-        float3 cbP = cardP - float3(CB_X, 0.04, itemCenters[i]);
-        float2 torusQ = float2(length(cbP.xz) - CB_RADIUS, cbP.y);
-        result = min(result, length(torusQ) - CB_TUBE_R);
+    if (withinRepeatedBand(cardP.z, ITEM1_Z, ITEM4_Z, ITEM_HALF_H, featurePad)) {
+        int nearestItem = nearestRepeatedIndex(cardP.z, ITEM1_Z, ITEM_SPACING, 4);
+        int neighborItem = neighborRepeatedIndex(cardP.z, itemCenters[nearestItem], nearestItem, 4);
+        bool nearCheckboxColumn = abs(cardP.x - CB_X) < CB_RADIUS + 0.18;
+        if (nearCheckboxColumn) {
+            float3 cbP = cardP - float3(CB_X, 0.04, itemCenters[nearestItem]);
+            float2 torusQ = float2(length(cbP.xz) - CB_RADIUS, cbP.y);
+            result = min(result, length(torusQ) - CB_TUBE_R);
+        }
+
+        [unroll]
+        for (int candidateIdx = 0; candidateIdx < 2; candidateIdx++) {
+            int itemIndex = candidateIdx == 0 ? nearestItem : neighborItem;
+            if (candidateIdx == 1 && itemIndex == nearestItem) {
+                continue;
+            }
+
+            float itemCenterZ = itemCenters[itemIndex];
+            result = min(result, sdRoundBox(cardP - float3(0, 0, itemCenterZ), float3(CARD_W - 0.04, 0.04 + itemElev, ITEM_HALF_H), edgeR * 0.3));
+        }
     }
 
     // Separators
     float sepZs[3] = { SEP1_Z, SEP2_Z, SEP3_Z };
-    for (int s = 0; s < 3; s++)
-        result = min(result, sdRoundBox(cardP - float3(0, 0.04, sepZs[s]), float3(CARD_W - 0.06, 0.002, 0.002), 0.001));
-    result = min(result, sdRoundBox(cardP - float3(0, 0.04, INPUT_BOT_Z), float3(CARD_W - 0.06, 0.002, 0.002), 0.001));
-    result = min(result, sdRoundBox(cardP - float3(0, 0.04, FOOTER_Z), float3(CARD_W - 0.04, 0.002, 0.002), 0.001));
+    if (withinRepeatedBand(cardP.z, SEP1_Z, SEP3_Z, 0.0, featurePad)) {
+        int nearestSep = nearestRepeatedIndex(cardP.z, SEP1_Z, SEP_SPACING, 3);
+        int neighborSep = neighborRepeatedIndex(cardP.z, sepZs[nearestSep], nearestSep, 3);
+
+        [unroll]
+        for (int candidateIdx = 0; candidateIdx < 2; candidateIdx++) {
+            int sepIndex = candidateIdx == 0 ? nearestSep : neighborSep;
+            if (candidateIdx == 1 && sepIndex == nearestSep) {
+                continue;
+            }
+            result = min(result, sdRoundBox(cardP - float3(0, 0.04, sepZs[sepIndex]), float3(CARD_W - 0.06, 0.002, 0.002), 0.001));
+        }
+    }
+    if (abs(cardP.z - INPUT_BOT_Z) < featurePad)
+        result = min(result, sdRoundBox(cardP - float3(0, 0.04, INPUT_BOT_Z), float3(CARD_W - 0.06, 0.002, 0.002), 0.001));
+    if (abs(cardP.z - FOOTER_Z) < featurePad)
+        result = min(result, sdRoundBox(cardP - float3(0, 0.04, FOOTER_Z), float3(CARD_W - 0.04, 0.002, 0.002), 0.001));
 
     // Stacked cards
     result = min(result, sdRoundBox(p - float3(0, cardElev - 0.005, 0.04), float3(CARD_W - 0.02, 0.035, CARD_D), edgeR));
@@ -1001,6 +1330,150 @@ float3 calcNormalGeometry(float3 p) {
     );
 }
 
+float textSceneDist(float3 p) {
+    float textScale = uniforms.renderParams.w;
+    float textReliefDepth = theme.extraParams.x;
+    float cardElev = theme.geometryParams.y;
+    float3 textP = (p - float3(0, cardElev + 0.04, 0)) / textScale;
+    TextHit cachedHit = sampleCachedTextRelief3D(textP, textReliefDepth / textScale, g_textNormalCharIdx);
+    if (cachedHit.valid) {
+        return cachedHit.dist * textScale;
+    }
+    return sampleSceneTextRelief(p).dist;
+}
+
+bool shouldUseFlatTextFaceNormal(TextHit hit, float textScale) {
+    if (!hit.valid) {
+        return false;
+    }
+
+    float planarMargin = max(0.006 / max(textScale, 1e-5), 0.0015);
+    float verticalMargin = max(0.0015 / max(textScale, 1e-5), 0.0004);
+    return hit.planarDist < -planarMargin && abs(hit.verticalDist) < verticalMargin;
+}
+
+float3 calcTextNormal(float3 p) {
+    float textScale = uniforms.renderParams.w;
+    float textReliefDepth = theme.extraParams.x;
+    float cardElev = theme.geometryParams.y;
+    float3 textP = (p - float3(0, cardElev + 0.04, 0)) / textScale;
+    TextHit cachedHit = sampleCachedTextRelief3D(textP, textReliefDepth / textScale, g_textNormalCharIdx);
+    if (shouldUseFlatTextFaceNormal(cachedHit, textScale)) {
+        float ySign = cachedHit.localY >= 0.0 ? 1.0 : -1.0;
+        return float3(0.0, ySign, 0.0);
+    }
+
+    const float h = 0.0002;
+    const float2 k = float2(1, -1);
+    return normalize(
+        k.xyy * textSceneDist(p + k.xyy * h) +
+        k.yyx * textSceneDist(p + k.yyx * h) +
+        k.yxy * textSceneDist(p + k.yxy * h) +
+        k.xxx * textSceneDist(p + k.xxx * h)
+    );
+}
+
+bool tryAnalyticFlatUiNormal(float3 p, int materialId, out float3 normal) {
+    normal = float3(0.0, 1.0, 0.0);
+
+    if (!useStackedCardGeometry() || isClassicTheme()) {
+        return false;
+    }
+
+    float edgeR = theme.geometryParams.x;
+    float cardElev = theme.geometryParams.y;
+    float itemElev = theme.geometryParams.z;
+    float itemTopY = cardElev + 0.04 + itemElev;
+    float cardTopY = cardElev + 0.04;
+    float yPad = 0.0025;
+    float featurePad = max(edgeR * 2.0, 0.08);
+    float inputCenterZ = (INPUT_TOP_Z + INPUT_BOT_Z) * 0.5;
+    float inputHalfZ = (INPUT_BOT_Z - INPUT_TOP_Z) * 0.5;
+
+    if (materialId == 2) {
+        if (abs(p.y - cardTopY) >= yPad) {
+            return false;
+        }
+
+        float edgeInsetX = max(edgeR * 2.0, 0.10);
+        float edgeInsetZ = max(edgeR * 2.0, 0.10);
+        if (abs(p.x) >= (CARD_W - edgeInsetX) || abs(p.z) >= (CARD_D - edgeInsetZ)) {
+            return false;
+        }
+
+        if (sceneTextHintDist(p, 32.0) < 0.08) {
+            return false;
+        }
+
+        if (abs(p.z - inputCenterZ) < inputHalfZ + featurePad) {
+            return false;
+        }
+
+        if (withinRepeatedBand(p.z, ITEM1_Z, ITEM4_Z, ITEM_HALF_H, featurePad)) {
+            return false;
+        }
+
+        if (withinRepeatedBand(p.z, SEP1_Z, SEP3_Z, 0.0, featurePad)) {
+            return false;
+        }
+
+        if (abs(p.z - INPUT_BOT_Z) < featurePad || abs(p.z - FOOTER_Z) < featurePad) {
+            return false;
+        }
+
+        return true;
+    }
+
+    if (materialId == 3) {
+        if (abs(p.y - itemTopY) >= yPad) {
+            return false;
+        }
+
+        float itemCenters[4] = { ITEM1_Z, ITEM2_Z, ITEM3_Z, ITEM4_Z };
+        int nearestItem = nearestRepeatedIndex(p.z, ITEM1_Z, ITEM_SPACING, 4);
+        float itemInsetX = max(edgeR * 2.0, 0.08);
+        float itemInsetZ = max(edgeR * 1.5, 0.05);
+        float dz = abs(p.z - itemCenters[nearestItem]);
+        return abs(p.x) < (CARD_W - 0.04 - itemInsetX) && dz < (ITEM_HALF_H - itemInsetZ);
+    }
+
+    if (materialId == 5) {
+        if (abs(p.y - cardTopY) >= yPad) {
+            return false;
+        }
+
+        int nearestRepeatedSep = nearestRepeatedIndex(p.z, SEP1_Z, SEP_SPACING, 3);
+        float nearestSepDist = abs(p.z - (SEP1_Z + float(nearestRepeatedSep) * SEP_SPACING));
+        nearestSepDist = min(nearestSepDist, abs(p.z - INPUT_BOT_Z));
+        nearestSepDist = min(nearestSepDist, abs(p.z - FOOTER_Z));
+
+        return abs(p.x) < (CARD_W - 0.14) && nearestSepDist < 0.03;
+    }
+
+    if (materialId == 6) {
+        float3 stackCenters[2] = {
+            float3(0, cardElev - 0.005, 0.04),
+            float3(0, cardElev - 0.01, 0.08),
+        };
+        float3 stackHalfExtents[2] = {
+            float3(CARD_W - 0.02, 0.035, CARD_D),
+            float3(CARD_W - 0.04, 0.03, CARD_D),
+        };
+
+        [unroll]
+        for (int i = 0; i < 2; i++) {
+            float stackTopY = stackCenters[i].y + stackHalfExtents[i].y;
+            if (abs(p.y - stackTopY) < yPad &&
+                abs(p.x - stackCenters[i].x) < (stackHalfExtents[i].x - max(edgeR * 2.0, 0.08)) &&
+                abs(p.z - stackCenters[i].z) < (stackHalfExtents[i].z - max(edgeR * 2.0, 0.08))) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 float calcSoftShadow(float3 ro, float3 rd, float mint, float maxt, float k) {
     float res = 1.0;
     float t = mint;
@@ -1009,6 +1482,19 @@ float calcSoftShadow(float3 ro, float3 rd, float mint, float maxt, float k) {
         if (h < 0.001) return 0.0;
         res = min(res, k * h / t);
         t += clamp(h, 0.01, 0.2);
+    }
+    return clamp(res, 0.0, 1.0);
+}
+
+float calcSoftShadowFast(float3 ro, float3 rd, float mint, float maxt, float k) {
+    float res = 1.0;
+    float t = mint;
+    [unroll]
+    for (int i = 0; i < 12 && t < maxt; i++) {
+        float h = mapSceneCoarse(ro + rd * t).dist;
+        if (h < 0.001) return 0.0;
+        res = min(res, k * h / t);
+        t += clamp(h, 0.02, 0.3);
     }
     return clamp(res, 0.0, 1.0);
 }
@@ -1025,6 +1511,19 @@ float calcAO(float3 pos, float3 nor) {
     return clamp(1.0 - 3.0 * occ, 0.0, 1.0);
 }
 
+float calcAOFast(float3 pos, float3 nor) {
+    float occ = 0.0;
+    float sca = 1.0;
+    [unroll]
+    for (int i = 0; i < 3; i++) {
+        float h = 0.015 + 0.10 * float(i);
+        float d = mapSceneCoarse(pos + h * nor).dist;
+        occ += (h - d) * sca;
+        sca *= 0.92;
+    }
+    return clamp(1.0 - 2.4 * occ, 0.0, 1.0);
+}
+
 // ---- Raymarching ----
 
 struct RayHit {
@@ -1032,6 +1531,24 @@ struct RayHit {
     int materialId;
     bool hit;
 };
+
+float refineSceneHitT(float3 ro, float3 rd, float nearT, float farT) {
+    float a = nearT;
+    float b = farT;
+
+    [unroll]
+    for (int i = 0; i < 3; i++) {
+        float mid = (a + b) * 0.5;
+        float dist = mapScene(ro + rd * mid).dist;
+        if (dist > 0.0) {
+            a = mid;
+        } else {
+            b = mid;
+        }
+    }
+
+    return max(a, 0.0);
+}
 
 RayHit raymarch(float3 ro, float3 rd) {
     RayHit result;
@@ -1043,9 +1560,21 @@ RayHit raymarch(float3 ro, float3 rd) {
     // No over-relaxation: thin floating text slabs (0.06 units) get overshot with omega>1
     float omega = 1.0;
     float prevRadius = 0.0;
+    float detailBand = 0.08;
+    float textHintPadPx = 48.0;
 
     for (int i = 0; i < 128 && t < 20.0; i++) {
         float3 p = ro + rd * t;
+        Hit coarse = mapSceneCoarse(p);
+        float textHintDist = sceneTextHintDist(p, textHintPadPx);
+        float detailApproach = min(coarse.dist, max(textHintDist - detailBand, 0.0));
+
+        if (detailApproach > detailBand) {
+            t += detailApproach;
+            prevRadius = abs(detailApproach);
+            continue;
+        }
+
         Hit h = mapScene(p);
         float radius = abs(h.dist);
 
@@ -1057,8 +1586,11 @@ RayHit raymarch(float3 ro, float3 rd) {
             continue;
         }
 
-        if (h.dist < 0.001 + t * 0.00005) {
-            result.t = t;
+        float hitEpsilon = 0.001 + t * 0.00005;
+        if (h.dist < hitEpsilon) {
+            float refineStart = max(t - max(hitEpsilon * 2.0, 0.0025), 0.0);
+            float refinedT = refineSceneHitT(ro, rd, refineStart, t);
+            result.t = refinedT;
             result.materialId = h.materialId;
             result.hit = true;
             return result;
@@ -1094,13 +1626,19 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
 
     // Glass: blend base color with gradient BEFORE lighting so transparency is visible
     bool isGlassSurface = glassTheme && (materialId == 2 || materialId == 3 || materialId == 5 || materialId == 6);
+    float3 flatUiNormalHint;
+    bool fastFlatUiLighting = tryAnalyticFlatUiNormal(pos, materialId, flatUiNormalHint);
     float3 glassBg = float3(0);
     if (isGlassSurface) {
-        for (int tap = 0; tap < 3; tap++) {
-            float3 jitter = hash33(pos * 31.7 + float(tap) * 17.3) * 2.0 - 1.0;
-            glassBg += glassGradient(pos.xz + jitter.xz * 0.25);
+        if (fastFlatUiLighting) {
+            glassBg = glassGradient(pos.xz);
+        } else {
+            for (int tap = 0; tap < 3; tap++) {
+                float3 jitter = hash33(pos * 31.7 + float(tap) * 17.3) * 2.0 - 1.0;
+                glassBg += glassGradient(pos.xz + jitter.xz * 0.25);
+            }
+            glassBg /= 3.0;
         }
-        glassBg /= 3.0;
         float alpha = theme.materialColors[materialId].w;
         baseColor = lerp(glassBg, baseColor, alpha);
     }
@@ -1110,15 +1648,19 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
 
     float3 lightDir = normalize(worldToLegacyDirection(uniforms.lightDirIntensity.xyz));
     float lightIntensity = uniforms.lightDirIntensity.w;
-
+    bool fastGlassTextLighting = glassTheme && materialId == 7;
     float diff = max(dot(nor, lightDir), 0.0);
     float shadowK = glassTheme ? 8.0 : 24.0;
     float shadowMaxT = glassTheme ? 5.0 : 10.0;
-    float shadow = calcSoftShadow(pos + nor * 0.01, lightDir, 0.02, shadowMaxT, shadowK);
+    float shadow = fastGlassTextLighting
+        ? calcSoftShadowFast(pos + nor * 0.008, lightDir, 0.02, 4.0, 8.0)
+        : fastFlatUiLighting
+        ? calcSoftShadowFast(pos + nor * 0.01, lightDir, 0.02, shadowMaxT * 0.65, shadowK * 0.55)
+        : calcSoftShadow(pos + nor * 0.01, lightDir, 0.02, shadowMaxT, shadowK);
     if (glassTheme) shadow = lerp(1.0, shadow, 0.3);
     // Glass heading: moderate shadow/AO for 3D depth
     if (glassTheme && materialId == 7) shadow = lerp(1.0, shadow, 0.5);
-    float ao = calcAO(pos, nor);
+    float ao = (fastGlassTextLighting || fastFlatUiLighting) ? calcAOFast(pos, nor) : calcAO(pos, nor);
     if (glassTheme) ao = lerp(1.0, ao, 0.5);
     if (glassTheme && materialId == 7) ao = lerp(1.0, ao, 0.5);
 
@@ -1291,6 +1833,7 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
     // Glass: blue tint + fresnel rim + border glow
     if (isGlassSurface) {
         float2 cardHalfExtents = useStackedCardGeometry() ? float2(CARD_W, CARD_D) : genericCardHalfExtents();
+        bool fastInteriorGlassEffects = fastFlatUiLighting && materialId != 5;
         // Blue glass tint — stronger blue cast matching reference
         col *= float3(0.85, 0.90, 1.10);
 
@@ -1302,54 +1845,69 @@ float3 shade(float3 pos, float3 nor, float3 rd, int materialId) {
         col += rimFactor * float3(0.40, 0.50, 0.90) * 1.5;
         col *= lerp(1.0, 0.80, edgeRim * 0.5);
 
-        // Card border: wide blue glow + sharp inner rim line
-        float2 cardInset = cardHalfExtents - abs(pos.xz);
-        float edgeDist = min(cardInset.x, cardInset.y);
-        // Wide outer glow
-        float outerGlow = 1.0 - smoothstep(0.0, 0.80, edgeDist);
-        col.xy *= lerp(float2(1.0), float2(0.50), outerGlow);
-        col.z += outerGlow * 0.40;
-        // Sharp thin rim line (the defined blue border visible in reference)
-        float rimLine = smoothstep(0.02, 0.04, edgeDist) * (1.0 - smoothstep(0.04, 0.10, edgeDist));
-        col += rimLine * float3(0.15, 0.22, 0.55);
-        // Very edge highlight
-        float edgeHighlight = 1.0 - smoothstep(0.0, 0.04, edgeDist);
-        col += edgeHighlight * float3(0.10, 0.15, 0.35);
-
-        // Item panel borders (glass panels with thin blue rim + glow)
-        if (useStackedCardGeometry() && materialId == 3) {
-            float itemCenters[4] = { ITEM1_Z, ITEM2_Z, ITEM3_Z, ITEM4_Z };
-            float itemHW = CARD_W - 0.04;
-            float minItemEdge = 1e10;
-            for (int i = 0; i < 4; i++) {
-                float2 itemLocal = float2(abs(pos.x), abs(pos.z - itemCenters[i]));
-                float2 itemInset = float2(itemHW, ITEM_HALF_H) - itemLocal;
-                minItemEdge = min(minItemEdge, min(itemInset.x, itemInset.y));
+        if (!fastInteriorGlassEffects) {
+            // Card border: wide blue glow + sharp inner rim line
+            float2 cardInset = cardHalfExtents - abs(pos.xz);
+            float edgeDist = min(cardInset.x, cardInset.y);
+            if (edgeDist < 0.80) {
+                // Wide outer glow
+                float outerGlow = 1.0 - smoothstep(0.0, 0.80, edgeDist);
+                col.xy *= lerp(float2(1.0), float2(0.50), outerGlow);
+                col.z += outerGlow * 0.40;
             }
-            // Soft glow near edges
-            float itemGlow = 1.0 - smoothstep(0.0, 0.20, minItemEdge);
-            col.xy *= lerp(float2(1.0), float2(0.65), itemGlow);
-            col.z += itemGlow * 0.20;
-            // Sharp thin border line
-            float itemRim = smoothstep(0.01, 0.03, minItemEdge) * (1.0 - smoothstep(0.03, 0.07, minItemEdge));
-            col += itemRim * float3(0.08, 0.12, 0.30);
-        }
+            if (edgeDist < 0.10) {
+                // Sharp thin rim line (the defined blue border visible in reference)
+                float rimLine = smoothstep(0.02, 0.04, edgeDist) * (1.0 - smoothstep(0.04, 0.10, edgeDist));
+                col += rimLine * float3(0.15, 0.22, 0.55);
+            }
+            if (edgeDist < 0.04) {
+                // Very edge highlight
+                float edgeHighlight = 1.0 - smoothstep(0.0, 0.04, edgeDist);
+                col += edgeHighlight * float3(0.10, 0.15, 0.35);
+            }
 
-        // Input field glass panel border
-        if (useStackedCardGeometry() && materialId == 2) {
-            float inputCenterZ = (INPUT_TOP_Z + INPUT_BOT_Z) * 0.5;
-            float inputHalfZ = (INPUT_BOT_Z - INPUT_TOP_Z) * 0.5;
-            float2 inputLocal = float2(abs(pos.x), abs(pos.z - inputCenterZ));
-            float2 inputInset = float2(CARD_W - 0.04, inputHalfZ) - inputLocal;
-            float inputEdge = min(inputInset.x, inputInset.y);
-            if (inputEdge > -0.1 && inputEdge < 0.25) {
-                // Soft glow
-                float inputGlow = 1.0 - smoothstep(0.0, 0.20, max(inputEdge, 0.0));
-                col.xy *= lerp(float2(1.0), float2(0.65), inputGlow);
-                col.z += inputGlow * 0.20;
-                // Sharp thin border line
-                float inputRim = smoothstep(0.01, 0.03, max(inputEdge, 0.0)) * (1.0 - smoothstep(0.03, 0.07, max(inputEdge, 0.0)));
-                col += inputRim * float3(0.08, 0.12, 0.30);
+            // Item panel borders (glass panels with thin blue rim + glow)
+            if (useStackedCardGeometry() && materialId == 3) {
+                float itemCenters[4] = { ITEM1_Z, ITEM2_Z, ITEM3_Z, ITEM4_Z };
+                float itemHW = CARD_W - 0.04;
+                int nearestItem = nearestRepeatedIndex(pos.z, ITEM1_Z, ITEM_SPACING, 4);
+                float2 itemLocal = float2(abs(pos.x), abs(pos.z - itemCenters[nearestItem]));
+                float2 itemInset = float2(itemHW, ITEM_HALF_H) - itemLocal;
+                float minItemEdge = min(itemInset.x, itemInset.y);
+                if (minItemEdge < 0.20) {
+                    // Soft glow near edges
+                    float itemGlow = 1.0 - smoothstep(0.0, 0.20, minItemEdge);
+                    col.xy *= lerp(float2(1.0), float2(0.65), itemGlow);
+                    col.z += itemGlow * 0.20;
+                }
+                if (minItemEdge < 0.07) {
+                    // Sharp thin border line
+                    float itemRim = smoothstep(0.01, 0.03, minItemEdge) * (1.0 - smoothstep(0.03, 0.07, minItemEdge));
+                    col += itemRim * float3(0.08, 0.12, 0.30);
+                }
+            }
+
+            // Input field glass panel border
+            if (useStackedCardGeometry() && materialId == 2) {
+                float inputCenterZ = (INPUT_TOP_Z + INPUT_BOT_Z) * 0.5;
+                float inputHalfZ = (INPUT_BOT_Z - INPUT_TOP_Z) * 0.5;
+                float2 inputLocal = float2(abs(pos.x), abs(pos.z - inputCenterZ));
+                float2 inputInset = float2(CARD_W - 0.04, inputHalfZ) - inputLocal;
+                float inputEdge = min(inputInset.x, inputInset.y);
+                if (inputEdge > -0.1 && inputEdge < 0.25) {
+                    float clampedInputEdge = max(inputEdge, 0.0);
+                    if (clampedInputEdge < 0.20) {
+                        // Soft glow
+                        float inputGlow = 1.0 - smoothstep(0.0, 0.20, clampedInputEdge);
+                        col.xy *= lerp(float2(1.0), float2(0.65), inputGlow);
+                        col.z += inputGlow * 0.20;
+                    }
+                    if (clampedInputEdge < 0.07) {
+                        // Sharp thin border line
+                        float inputRim = smoothstep(0.01, 0.03, clampedInputEdge) * (1.0 - smoothstep(0.03, 0.07, clampedInputEdge));
+                        col += inputRim * float3(0.08, 0.12, 0.30);
+                    }
+                }
             }
         }
     }
@@ -1423,7 +1981,21 @@ float3 srgbToLinear(float3 c) {
         c.z <= 0.04045 ? c.z / 12.92 : pow((c.z + 0.055) / 1.055, 2.4));
 }
 
+bool withinTextBoundsHint(float2 textPos, float aaScale) {
+    float4 textBounds = layoutTextBoundsPx();
+    if (!all(textBounds.zw > textBounds.xy)) {
+        return true;
+    }
+    float pad = max(aaScale * 2.0, 2.0);
+    return textPos.x >= textBounds.x - pad && textPos.x <= textBounds.z + pad &&
+        textPos.y >= textBounds.y - pad && textPos.y <= textBounds.w + pad;
+}
+
 float4 evaluateTextDecal(float2 textPos, float aaScale, bool skipHeading) {
+    if (!withinTextBoundsHint(textPos, aaScale)) {
+        return float4(0.0);
+    }
+
     float4 result = float4(0.0);
     int2 gridDims = int2(uniforms.charGridParams.xy);
     int2 centerCell = charGridCellCoord(textPos);
@@ -1577,15 +2149,19 @@ float4 renderGenericCardDecal(float2 textPos, float aaScale) {
 
 // ---- Main render ----
 
-float3 render(float3 ro, float3 rd) {
+float4 render(float3 ro, float3 rd) {
     // Reset text color globals
     g_textColor = float3(0.5);
+    g_textTraceCharIdx = INVALID_CHAR_INDEX;
+    g_textNormalCharIdx = INVALID_CHAR_INDEX;
+    bool transparentBackground = uniforms.renderFlags.x > 0.5;
 
     bool isGlass = isGlassTheme();
     bool isClassic = isClassicTheme();
     RayHit hit = raymarch(ro, rd);
 
     float3 col;
+    float alpha = hit.hit ? 1.0 : 0.0;
     if (!hit.hit) {
         col = getSkyColor(rd);
     } else {
@@ -1596,10 +2172,11 @@ float3 render(float3 ro, float3 rd) {
         if (hit.materialId == 1) {
             nor = float3(0, 1, 0); // ground is always flat
         } else if (hit.materialId == 7) {
-            nor = calcNormal(pos);
-            mapScene(pos); // recapture text color after calcNormal overwrites globals
-        } else {
+            nor = calcTextNormal(pos);
+        } else if (!tryAnalyticFlatUiNormal(pos, hit.materialId, nor)) {
             nor = calcNormalGeometry(pos);
+        } else {
+            nor = normalize(nor);
         }
 
         col = shade(pos, nor, rd, hit.materialId);
@@ -1661,12 +2238,13 @@ float3 render(float3 ro, float3 rd) {
                     // Convert sRGB text color to linear for correct blending
                     float3 textLinear = srgbToLinear(decal.rgb);
                     col = lerp(col, textLinear, decal.a * decalOpacity);
+                    alpha = max(alpha, decal.a * decalOpacity);
                 }
             }
         }
     }
 
-    return col;
+    return float4(col, transparentBackground ? alpha : 1.0);
 }
 
 [shader("fragment")]
@@ -1682,8 +2260,8 @@ float4 fs_main(VertexOutput input) : SV_Target {
     float3 ro = worldToLegacyScene(uniforms.cameraPosTime.xyz);
     float3 rd = normalize(worldToLegacyDirection(farPoint.xyz - nearPoint.xyz));
 
-    float3 col = render(ro, rd);
-    col = pow(col, float3(1.0 / 2.2));
+    float4 col = render(ro, rd);
+    col.rgb = pow(col.rgb, float3(1.0 / 2.2));
 
-    return float4(col, 1.0);
+    return col;
 }

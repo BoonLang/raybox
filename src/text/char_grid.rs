@@ -78,7 +78,7 @@ fn char_bbox_for_instance(
     })
 }
 
-fn compute_cell_distances(cell_chars: &[Vec<u32>], grid_dims: [u32; 2]) -> Vec<u32> {
+pub fn compute_char_grid_cell_distances(cell_chars: &[Vec<u32>], grid_dims: [u32; 2]) -> Vec<u32> {
     let grid_w = grid_dims[0] as usize;
     let grid_h = grid_dims[1] as usize;
     let total_cells = grid_w * grid_h;
@@ -268,7 +268,7 @@ pub fn build_char_grid(
         cell_size: [cell_w, cell_h],
         cells,
         char_indices,
-        cell_distances: compute_cell_distances(&cell_chars, [grid_w, grid_h]),
+        cell_distances: compute_char_grid_cell_distances(&cell_chars, [grid_w, grid_h]),
     }
 }
 
@@ -313,6 +313,6 @@ pub fn build_fixed_char_grid(
         cell_size: [cell_w, cell_h],
         cells,
         char_indices,
-        cell_distances: compute_cell_distances(&cell_chars, [grid_w, grid_h]),
+        cell_distances: compute_char_grid_cell_distances(&cell_chars, [grid_w, grid_h]),
     }
 }

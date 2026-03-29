@@ -1,4 +1,4 @@
-use crate::shader_bindings::present;
+use crate::shader_bindings::{frame_composite, present};
 use crate::text::{CharGridCell, VectorFont, VectorFontAtlas};
 use anyhow::{Context, Result};
 use wgpu::util::DeviceExt;
@@ -326,6 +326,12 @@ pub struct PresentHost {
     height: u32,
 }
 
+pub struct TextureCompositeHost {
+    sampler: wgpu::Sampler,
+    uniform_buffer: wgpu::Buffer,
+    pipeline: wgpu::RenderPipeline,
+}
+
 impl PresentHost {
     pub fn new(
         device: &wgpu::Device,
@@ -491,6 +497,10 @@ impl PresentHost {
         &self.scene_view
     }
 
+    pub fn size(&self) -> [u32; 2] {
+        [self.width, self.height]
+    }
+
     pub fn encode_present_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -512,6 +522,102 @@ impl PresentHost {
         });
         render_pass.set_pipeline(&self.pipeline);
         self.bind_group.set(&mut render_pass);
+        render_pass.draw(0..3, 0..1);
+    }
+}
+
+impl TextureCompositeHost {
+    pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat, label: &str) -> Self {
+        let shader = frame_composite::create_shader_module_embed_source(device);
+        let pipeline_layout = frame_composite::create_pipeline_layout(device);
+        let vertex_entry = frame_composite::vs_main_entry();
+        let fragment_entry = frame_composite::fs_main_entry([Some(wgpu::ColorTargetState {
+            format: surface_format,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
+        })]);
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(&format!("{label} Composite Pipeline")),
+            layout: Some(&pipeline_layout),
+            vertex: frame_composite::vertex_state(&shader, &vertex_entry),
+            fragment: Some(frame_composite::fragment_state(&shader, &fragment_entry)),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some(&format!("{label} Composite Sampler")),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{label} Composite Uniform Buffer")),
+            contents: bytemuck::bytes_of(&frame_composite::Uniforms_std140_0::new(
+                [1.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 1.0],
+                [0.0, 0.0, 1.0, 1.0],
+            )),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        Self {
+            sampler,
+            uniform_buffer,
+            pipeline,
+        }
+    }
+
+    pub fn encode_pass(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        label: &str,
+        source_view: &wgpu::TextureView,
+        target_view: &wgpu::TextureView,
+        load: wgpu::LoadOp<wgpu::Color>,
+        target_size: [u32; 2],
+        source_rect: [f32; 4],
+        target_rect: [f32; 4],
+    ) {
+        queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&frame_composite::Uniforms_std140_0::new(
+                [target_size[0] as f32, target_size[1] as f32, 0.0, 0.0],
+                source_rect,
+                target_rect,
+            )),
+        );
+        let bind_group = frame_composite::WgpuBindGroup0::from_bindings(
+            device,
+            frame_composite::WgpuBindGroup0Entries::new(
+                frame_composite::WgpuBindGroup0EntriesParams {
+                    sourceTexture_0: source_view,
+                    sourceSampler_0: &self.sampler,
+                    uniforms_0: self.uniform_buffer.as_entire_buffer_binding(),
+                },
+            ),
+        );
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        render_pass.set_pipeline(&self.pipeline);
+        bind_group.set(&mut render_pass);
         render_pass.draw(0..3, 0..1);
     }
 }

@@ -8,8 +8,8 @@ pub mod vector_font;
 
 #[allow(unused_imports)]
 pub use char_grid::{
-    build_char_grid, build_fixed_char_grid, fixed_char_grid_cells_for_instance, CharGrid,
-    CharGridCell, FixedCharGridSpec,
+    build_char_grid, build_fixed_char_grid, compute_char_grid_cell_distances,
+    fixed_char_grid_cells_for_instance, CharGrid, CharGridCell, FixedCharGridSpec,
 };
 #[allow(unused_imports)]
 pub use glyph_atlas::{GlyphAtlasEntry, VectorFontAtlas};

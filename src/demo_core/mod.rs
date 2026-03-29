@@ -51,7 +51,7 @@ pub trait NamedScrollTarget {
     fn set_named_scroll_offset(&mut self, name: &str, offset_y: f32) -> bool;
 }
 
-/// Demo identifier (0-11)
+/// Demo identifier (0-12)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum DemoId {
@@ -67,6 +67,7 @@ pub enum DemoId {
     RetainedUi = 9,
     RetainedUiPhysical = 10,
     TextPhysical = 11,
+    MixedUiWorld = 12,
 }
 
 impl DemoId {
@@ -84,6 +85,7 @@ impl DemoId {
             9 => Some(Self::RetainedUi),
             10 => Some(Self::RetainedUiPhysical),
             11 => Some(Self::TextPhysical),
+            12 => Some(Self::MixedUiWorld),
             _ => None,
         }
     }
@@ -102,11 +104,12 @@ impl DemoId {
             Self::RetainedUi => "Retained UI",
             Self::RetainedUiPhysical => "Retained UI Physical",
             Self::TextPhysical => "Text Physical",
+            Self::MixedUiWorld => "Mixed UI World",
         }
     }
 
     pub fn count() -> u8 {
-        12
+        13
     }
 
     /// Get all demo IDs in order
@@ -124,6 +127,7 @@ impl DemoId {
             DemoId::RetainedUi,
             DemoId::RetainedUiPhysical,
             DemoId::TextPhysical,
+            DemoId::MixedUiWorld,
         ]
     }
 }
@@ -252,6 +256,7 @@ pub const KEYBINDINGS_2D: &[(&str, &str)] = &[
 /// Common keybindings shown for all demos
 pub const KEYBINDINGS_COMMON: &[(&str, &str)] = &[
     ("0-9/-/=", "Switch demo"),
+    ("V", "Mixed UI/World demo"),
     ("F", "Toggle stats"),
     ("G", "Full stats"),
     ("K", "Keybindings"),

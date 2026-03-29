@@ -41,6 +41,10 @@ fn main() -> Result<()> {
             entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },
         ShaderConfig {
+            name: "frame_composite",
+            entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
+        },
+        ShaderConfig {
             name: "sdf_raymarch",
             entries: vec![("vs_main", "vertex"), ("fs_main", "fragment")],
         },
